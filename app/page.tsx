@@ -137,9 +137,16 @@ export default function HomePage() {
       {/* メニューグリッド */}
       <div className="container mx-auto px-4 py-12">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          {menuItems.map((item, index) => (
-            <Link key={index} href={item.href}>
-              <div className="glass-card rounded-xl p-6 hover:scale-105 transition-transform cursor-pointer group">
+          {menuItems.map((item, index) => {
+  let cardClass = '';
+  if (index === 0) cardClass = 'ranking-card';
+  else if (index === 1) cardClass = 'members-card';
+  else if (index === 2) cardClass = 'matches-card';
+  else if (index === 3) cardClass = 'register-card';
+  
+  return (
+    <Link key={index} href={item.href}>
+      <div className={`${cardClass} glass-card rounded-xl p-6 hover:scale-105 transition-transform cursor-pointer group`}>
                 <div className="flex flex-col items-center text-center">
                   <div className="p-4 rounded-full bg-gradient-to-br from-purple-600/20 to-pink-600/20 mb-4 group-hover:scale-110 transition-transform">
                     <item.icon className="text-3xl text-purple-400" />
@@ -149,7 +156,7 @@ export default function HomePage() {
                 </div>
               </div>
             </Link>
-          ))}
+         )})}
         </div>
 
         {/* 統計セクション */}
