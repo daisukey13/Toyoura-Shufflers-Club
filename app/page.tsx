@@ -114,9 +114,9 @@ export default function HomePage() {
             <FaTrophy className="text-6xl text-yellow-400" />
           </div>
           
-          <h1 className="text-5xl font-bold mb-4 text-yellow-100">
-            豊浦シャッフラーズクラブ
-          </h1>
+          <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
+  豊浦シャッフラーズクラブ
+</h1>
           
           <p className="text-xl text-gray-300 mb-8">
             みんなで楽しくシャッフルボード！🎯<br />
