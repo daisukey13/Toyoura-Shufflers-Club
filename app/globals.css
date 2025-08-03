@@ -1,0 +1,169 @@
+/* app/globals.css */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 20 14 30;
+    --foreground: 210 40 98;
+    --card: 25 20 40;
+    --card-foreground: 210 40 98;
+    --primary: 250 95 65;
+    --primary-foreground: 210 40 98;
+    --secondary: 240 20 30;
+    --secondary-foreground: 210 40 98;
+    --accent: 280 65 60;
+    --accent-foreground: 210 40 98;
+    --border: 240 20 40;
+    --ring: 250 95 65;
+  }
+}
+
+body {
+  background: rgb(20, 14, 30);
+  background: linear-gradient(135deg, rgba(20,14,30,1) 0%, rgba(40,30,60,1) 100%);
+  min-height: 100vh;
+  position: relative;
+}
+
+/* シャッフルボードパックの背景 */
+body::before {
+  content: '';
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(80vw, 800px);
+  height: min(80vw, 800px);
+  background-image: url('/shuffleboard-puck-blue.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.05;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* コンテンツがパックの上に来るように */
+#__next {
+  position: relative;
+  z-index: 1;
+}
+
+/* カードのグラスモーフィズム効果 */
+.glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+}
+
+/* ネオンエフェクト */
+.neon-text {
+  text-shadow: 0 0 10px rgba(139, 92, 246, 0.8),
+               0 0 20px rgba(139, 92, 246, 0.6),
+               0 0 30px rgba(139, 92, 246, 0.4);
+}
+
+.neon-border {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.5),
+              inset 0 0 20px rgba(139, 92, 246, 0.1);
+}
+
+/* グラデーションボタン */
+.gradient-button {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  transition: all 0.3s ease;
+}
+
+.gradient-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px rgba(139, 92, 246, 0.4);
+}
+
+/* アニメーション */
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+  100% { transform: translateY(0px); }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.float-animation {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+/* スクロールバー */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.5);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.7);
+}
+
+/* モバイル対応 */
+@media (max-width: 768px) {
+  body::before {
+    width: min(90vw, 500px);
+    height: min(90vw, 500px);
+  }
+}
+
+/* ランキングカード - クマ */
+.ranking-card::before {
+  content: '';
+  position: absolute;
+  top: -20%;
+  left: -20%;
+  width: 140%;
+  height: 140%;
+  background-image: url('/avatars/bear-avatar.jpg');  /* .jpg に変更 */
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.05;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* メンバーカード - フクロウ */
+.members-card::before {
+  /* ... */
+  background-image: url('/avatars/owl-avatar.jpg');  /* .jpg に変更 */
+  /* ... */
+}
+
+/* 試合結果カード - キリン */
+.matches-card::before {
+  /* ... */
+  background-image: url('/avatars/giraffe-avatar.jpg');  /* .jpg に変更 */
+  /* ... */
+}
+
+/* 試合登録カード - ロバ */
+.register-card::before {
+  /* ... */
+  background-image: url('/avatars/donkey-avatar.jpg');  /* .jpg に変更 */
+  /* ... */
+}
