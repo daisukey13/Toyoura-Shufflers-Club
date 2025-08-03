@@ -41,7 +41,7 @@ body::before {
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
-  opacity: 0.05;
+  opacity: 0.1;
   pointer-events: none;
   z-index: 0;
 }
@@ -129,41 +129,90 @@ body::before {
     height: min(90vw, 500px);
   }
 }
-
 /* ランキングカード - クマ */
+.ranking-card {
+  position: relative;
+  overflow: hidden;
+}
+
 .ranking-card::before {
   content: '';
   position: absolute;
-  top: -20%;
-  left: -20%;
-  width: 140%;
-  height: 140%;
-  background-image: url('/avatars/bear-avatar.jpg');  /* .jpg に変更 */
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url('/avatars/bear-avatar.jpg');
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  opacity: 0.05;
+  opacity: 0.2;
   z-index: 0;
   pointer-events: none;
 }
 
 /* メンバーカード - フクロウ */
+.members-card {
+  position: relative;
+  overflow: hidden;
+}
+
 .members-card::before {
-  /* ... */
-  background-image: url('/avatars/owl-avatar.jpg');  /* .jpg に変更 */
-  /* ... */
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url('/avatars/owl-avatar.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.2;
+  z-index: 0;
+  pointer-events: none;
 }
 
 /* 試合結果カード - キリン */
+.matches-card {
+  position: relative;
+  overflow: hidden;
+}
+
 .matches-card::before {
-  /* ... */
-  background-image: url('/avatars/giraffe-avatar.jpg');  /* .jpg に変更 */
-  /* ... */
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url('/avatars/giraffe-avatar.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.2;
+  z-index: 0;
+  pointer-events: none;
 }
 
 /* 試合登録カード - ロバ */
+.register-card {
+  position: relative;
+  overflow: hidden;
+}
+
 .register-card::before {
-  /* ... */
-  background-image: url('/avatars/donkey-avatar.jpg');  /* .jpg に変更 */
-  /* ... */
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url('/avatars/donkey-avatar.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.2;
+  z-index: 0;
+  pointer-events: none;
 }
