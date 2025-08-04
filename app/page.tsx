@@ -23,6 +23,15 @@ interface TopPlayer {
   handicap: number;
 }
 
+interface Notice {
+  id: string;
+  title: string;
+  content: string;
+  date: string;
+  is_published: boolean;
+  created_by: string;
+}
+
 export default function HomePage() {
   const [stats, setStats] = useState<Stats>({
     totalMatches: 0,
@@ -31,11 +40,13 @@ export default function HomePage() {
   });
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
   const [recentMatches, setRecentMatches] = useState<any[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
 
   useEffect(() => {
     fetchStats();
     fetchTopPlayers();
     fetchRecentMatches();
+    fetchNotices();
   }, []);
 
   const fetchStats = async () => {
@@ -94,8 +105,30 @@ export default function HomePage() {
     }
   };
 
+  const fetchNotices = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('notices')
+        .select('*')
+        .eq('is_published', true)
+        .order('date', { ascending: false })
+        .limit(3);
+
+      if (error) {
+        console.error('Error fetching notices:', error);
+        return;
+      }
+
+      if (data) {
+        setNotices(data);
+      }
+    } catch (error) {
+      console.error('Error fetching notices:', error);
+    }
+  };
+
   const menuItems = [
-    { icon: FaChartLine, title: 'ランキング', description: '最新のランキングをチェック', href: '/rankings' },
+    { icon: FaChartLine, title: 'ランキング', description: '最新のランキング', href: '/rankings' },
     { icon: FaUsers, title: 'メンバー', description: 'クラブメンバーを見る', href: '/players' },
     { icon: FaHistory, title: '試合結果', description: '過去の試合をチェック', href: '/matches' },
     { icon: FaUserPlus, title: '試合登録', description: '新しい試合を登録', href: '/matches/register' },
@@ -115,11 +148,11 @@ export default function HomePage() {
           </div>
           
           <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
-  豊浦シャッフラーズクラブ
-</h1>
+            豊浦シャッフラーズクラブ
+          </h1>
           
           <p className="text-xl text-gray-300 mb-8">
-            みんなで楽しくシャッフルボード！🎯<br />
+            みんなで楽しくシャッフルボード！<br />
             友達と競い合い、スキルを磨こう
           </p>
           
@@ -131,6 +164,42 @@ export default function HomePage() {
               ログイン
             </Link>
           </div>
+
+          {/* お知らせセクション - 新規追加 */}
+          {notices.length > 0 && (
+            <div className="mt-12 max-w-2xl mx-auto">
+              <h3 className="text-lg font-semibold text-yellow-300 mb-4 flex items-center justify-center gap-2">
+                <span>📢</span> クラブからのお知らせ
+              </h3>
+              <div className="space-y-2">
+                {notices.map((notice) => (
+                  <Link 
+                    key={notice.id} 
+                    href={`/notices/${notice.id}`}
+                    className="block glass-card rounded-lg px-4 py-3 hover:bg-purple-900/20 transition-all group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm text-gray-400">
+                          {new Date(notice.date).toLocaleDateString('ja-JP', {
+                            year: 'numeric',
+                            month: 'numeric',
+                            day: 'numeric'
+                          })}
+                        </span>
+                        <span className="text-yellow-100 group-hover:text-yellow-300 transition-colors">
+                          {notice.title}
+                        </span>
+                      </div>
+                      <span className="text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                        →
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -138,25 +207,26 @@ export default function HomePage() {
       <div className="container mx-auto px-4 py-12">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           {menuItems.map((item, index) => {
-  let cardClass = '';
-  if (index === 0) cardClass = 'ranking-card';
-  else if (index === 1) cardClass = 'members-card';
-  else if (index === 2) cardClass = 'matches-card';
-  else if (index === 3) cardClass = 'register-card';
-  
-  return (
-    <Link key={index} href={item.href}>
-      <div className={`${cardClass} glass-card rounded-xl p-6 hover:scale-105 transition-transform cursor-pointer group`}>
-                <div className="flex flex-col items-center text-center">
-                  <div className="p-4 rounded-full bg-gradient-to-br from-purple-600/20 to-pink-600/20 mb-4 group-hover:scale-110 transition-transform">
-                    <item.icon className="text-3xl text-purple-400" />
+            let cardClass = '';
+            if (index === 0) cardClass = 'ranking-card';
+            else if (index === 1) cardClass = 'members-card';
+            else if (index === 2) cardClass = 'matches-card';
+            else if (index === 3) cardClass = 'register-card';
+            
+            return (
+              <Link key={index} href={item.href}>
+                <div className={`${cardClass} glass-card rounded-xl p-6 hover:scale-105 transition-transform cursor-pointer group`}>
+                  <div className="flex flex-col items-center text-center">
+                    <div className="p-4 rounded-full bg-gradient-to-br from-purple-600/20 to-pink-600/20 mb-4 group-hover:scale-110 transition-transform">
+                      <item.icon className="text-3xl text-purple-400" />
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2 text-yellow-100">{item.title}</h3>
+                    <p className="text-sm text-gray-400">{item.description}</p>
                   </div>
-                  <h3 className="text-lg font-semibold mb-2 text-yellow-100">{item.title}</h3>
-                  <p className="text-sm text-gray-400">{item.description}</p>
                 </div>
-              </div>
-            </Link>
-         )})}
+              </Link>
+            );
+          })}
         </div>
 
         {/* 統計セクション */}
@@ -228,33 +298,61 @@ export default function HomePage() {
           </h2>
           
           <div className="space-y-3">
-            {recentMatches.map((match) => (
-              <div key={match.id} className="glass-card rounded-lg p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={match.winner_avatar || '/default-avatar.png'}
-                      alt={match.winner_name}
-                      className="w-10 h-10 rounded-full"
-                    />
-                    <span className="font-medium text-yellow-100">{match.winner_name}</span>
-                    <span className="text-green-400">勝利</span>
+            {recentMatches.map((match) => {
+              const isUpset = (
+                (match.winner_current_points < match.loser_current_points - 100) ||
+                (match.winner_current_handicap > match.loser_current_handicap + 5)
+              );
+              
+              return (
+                <div key={match.id} className={`glass-card rounded-lg p-4 relative ${
+                  isUpset ? 'border border-yellow-500/50 shadow-lg shadow-yellow-500/10' : ''
+                }`}>
+                  {/* 番狂わせバッジ */}
+                  {isUpset && (
+                    <div className="absolute top-2 left-1/2 transform -translate-x-1/2">
+                      <span className="px-2 py-1 rounded-full bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 text-yellow-400 text-xs font-medium">
+                        番狂わせ
+                      </span>
+                    </div>
+                  )}
+                  
+                  {/* スコア（中央） */}
+                  <div className="text-center mb-3">
+                    <div className={`text-2xl font-bold text-yellow-100 ${isUpset ? 'mt-6' : 'mt-2'}`}>
+                      15 - {match.loser_score}
+                    </div>
                   </div>
-                  <div className="text-xl font-bold text-yellow-100">
-                    15 - {match.loser_score}
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="text-red-400">敗北</span>
-                    <span className="font-medium text-yellow-100">{match.loser_name}</span>
-                    <img
-                      src={match.loser_avatar || '/default-avatar.png'}
-                      alt={match.loser_name}
-                      className="w-10 h-10 rounded-full"
-                    />
+                  
+                  {/* プレイヤー情報（左右） */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={match.winner_avatar || '/default-avatar.png'}
+                        alt={match.winner_name}
+                        className="w-10 h-10 rounded-full"
+                      />
+                      <div>
+                        <div className="font-medium text-yellow-100">{match.winner_name}</div>
+                        <div className="text-sm text-green-400">勝利</div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <div className="font-medium text-yellow-100">{match.loser_name}</div>
+                        <div className="text-sm text-red-400">敗北</div>
+                      </div>
+                      <img
+                        src={match.loser_avatar || '/default-avatar.png'}
+                        alt={match.loser_name}
+                        className="w-10 h-10 rounded-full"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           
           <div className="text-center mt-6">
