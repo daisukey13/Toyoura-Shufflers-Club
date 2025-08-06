@@ -85,7 +85,7 @@ export default function MatchesPage() {
     return { totalMatches, todayMatches, tournamentMatches, avgScoreDiff };
   }, [matches]);
 
-  const formatDate = (dateString) => {
+  const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
     const diffTime = Math.abs(now.getTime() - date.getTime());
@@ -105,7 +105,7 @@ export default function MatchesPage() {
     }
   };
 
-  const getScoreDifferenceColor = (scoreDiff) => {
+  const getScoreDifferenceColor = (scoreDiff: number) => {
     if (scoreDiff >= 10) return 'from-red-500 to-red-600';
     if (scoreDiff >= 5) return 'from-orange-500 to-orange-600';
     return 'from-blue-500 to-blue-600';
