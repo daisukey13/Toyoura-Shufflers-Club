@@ -26,7 +26,7 @@ const LazyImage = ({ src, alt, className }: { src: string; alt: string; classNam
 };
 
 // ランクバッジコンポーネント（メモ化）
-const RankBadge = memo(({ rank }: { rank: number }) => {
+const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
   if (rank === 1) {
     return (
       <div className="relative">
@@ -63,7 +63,7 @@ const RankBadge = memo(({ rank }: { rank: number }) => {
 });
 
 // プレイヤーカードコンポーネント（メモ化）
-const PlayerCard = memo(({ player, rank }: { player: any; rank: number }) => {
+const PlayerCard = memo(function PlayerCard({ player, rank }: { player: any; rank: number }) {
   const isTop3 = rank <= 3;
   const winRate = useMemo(() => {
     return player.matches_played > 0 
@@ -153,7 +153,7 @@ const PlayerCard = memo(({ player, rank }: { player: any; rank: number }) => {
 });
 
 // 統計カードコンポーネント（メモ化）
-const StatsCards = memo(({ stats }: { stats: any }) => {
+const StatsCards = memo(function StatsCards({ stats }: { stats: any }) {
   return (
     <div className="mb-6 sm:mb-8 overflow-x-auto">
       <div className="flex gap-4 min-w-max sm:min-w-0 sm:grid sm:grid-cols-3">
