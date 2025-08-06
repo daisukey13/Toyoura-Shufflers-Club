@@ -1,19 +1,25 @@
 // app/(main)/layout.tsx
 
-import Header from '@/components/layout/Header';
-import { AuthProvider } from '@/contexts/AuthContext';
+'use client';
+
+import GlobalNavigation from '@/components/GlobalNavigation';
+import { useEffect } from 'react';
 
 export default function MainLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  useEffect(() => {
+    console.log('MainLayout mounted');
+  }, []);
+
   return (
-    <AuthProvider>
-      <div className="min-h-screen text-gray-100">
-        <Header />
-        <main>{children}</main>
-      </div>
-    </AuthProvider>
+    <>
+      <GlobalNavigation />
+      <main className="min-h-screen bg-[#2a2a3e]">
+        {children}
+      </main>
+    </>
   );
 }

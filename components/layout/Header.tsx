@@ -30,12 +30,11 @@ export default function Header() {
         <div className="flex justify-between items-center h-16">
           {/* ロゴ */}
           <Link href="/" className="text-xl font-bold flex items-center gap-2 group">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-purple-600/20 to-pink-600/20 group-hover:scale-110 transition-transform">
-              <FaTrophy className="text-yellow-400" />
-            </div>
-            <span className="bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-              ShuffleRank
-            </span>
+            <img  src="/shuffleboard-puck-red.png" alt="Red Puck"  className="w-8 h-8"/>
+            <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+  Toyoura Shufflers Club
+</span>
+
           </Link>
 
           {/* デスクトップメニュー */}

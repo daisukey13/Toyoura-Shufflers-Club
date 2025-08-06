@@ -1,12 +1,10 @@
-// app/(main)/register/page.tsx
-
 'use client';
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { FaUserPlus, FaUser, FaEnvelope, FaPhone, FaMapMarkerAlt, FaGamepad, FaImage, FaCheckCircle, FaExclamationCircle, FaSpinner } from 'react-icons/fa';
+import { FaUserPlus, FaUser, FaEnvelope, FaPhone, FaMapMarkerAlt, FaGamepad, FaImage, FaCheckCircle, FaExclamationCircle, FaSpinner, FaLock } from 'react-icons/fa';
 
 const supabase = createClient();
 
@@ -14,6 +12,8 @@ interface FormData {
   handle_name: string;
   full_name: string;
   email: string;
+  password: string;
+  passwordConfirm: string;
   phone: string;
   address: string;
   avatar_url: string;
@@ -32,6 +32,8 @@ export default function RegisterPage() {
     handle_name: '',
     full_name: '',
     email: '',
+    password: '',
+    passwordConfirm: '',
     phone: '',
     address: '',
     avatar_url: '',
@@ -41,6 +43,7 @@ export default function RegisterPage() {
   const [avatarOptions, setAvatarOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [handleNameError, setHandleNameError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   const [checkingHandleName, setCheckingHandleName] = useState(false);
 
   useEffect(() => {
@@ -77,6 +80,17 @@ export default function RegisterPage() {
     const timeoutId = setTimeout(checkHandleName, 500);
     return () => clearTimeout(timeoutId);
   }, [formData.handle_name]);
+
+  useEffect(() => {
+    // パスワードの検証
+    if (formData.password && formData.password.length < 6) {
+      setPasswordError('パスワードは6文字以上で設定してください');
+    } else if (formData.password && formData.passwordConfirm && formData.password !== formData.passwordConfirm) {
+      setPasswordError('パスワードが一致しません');
+    } else {
+      setPasswordError('');
+    }
+  }, [formData.password, formData.passwordConfirm]);
 
   const fetchAvatarOptions = async () => {
     try {
@@ -121,13 +135,38 @@ export default function RegisterPage() {
       return;
     }
 
+    if (passwordError) {
+      alert('パスワードを確認してください。');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // プレイヤー登録
+      // 1. Supabase Authでユーザーを作成
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            handle_name: formData.handle_name,
+            full_name: formData.full_name,
+          },
+          emailRedirectTo: `${window.location.origin}/auth/callback`
+        }
+      });
+
+      if (authError) throw authError;
+
+      if (!authData.user) {
+        throw new Error('ユーザー作成に失敗しました');
+      }
+
+      // 2. プレイヤー情報を登録
       const { data, error } = await supabase
         .from('players')
         .insert({
+          id: authData.user.id, // user_idと同じ値を使用
           handle_name: formData.handle_name,
           full_name: formData.full_name,
           email: formData.email,
@@ -147,12 +186,18 @@ export default function RegisterPage() {
 
       if (error) throw error;
 
-      // 成功時はプレイヤー一覧へリダイレクト
-      alert('プレイヤー登録が完了しました！');
-      router.push('/players');
-    } catch (error) {
+      // 3. 登録完了メールを送信（Supabaseが自動で確認メールを送信）
+      alert('プレイヤー登録が完了しました！確認メールを送信しましたので、メールアドレスの確認をお願いします。');
+      
+      // ログインページへリダイレクト
+      router.push('/login');
+    } catch (error: any) {
       console.error('Registration error:', error);
-      alert('登録中にエラーが発生しました。');
+      if (error.message?.includes('already registered')) {
+        alert('このメールアドレスは既に登録されています。');
+      } else {
+        alert('登録中にエラーが発生しました: ' + error.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -241,18 +286,18 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            {/* 連絡先情報 */}
+            {/* アカウント情報 */}
             <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 space-y-6">
               <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                <FaPhone className="text-purple-400" />
-                連絡先情報
+                <FaLock className="text-purple-400" />
+                アカウント情報
               </h2>
               
               {/* メールアドレス */}
               <div>
                 <label htmlFor="email" className="block text-sm font-medium text-purple-300 mb-2">
                   <FaEnvelope className="inline mr-2" />
-                  メールアドレス（非公開）
+                  メールアドレス（ログインに使用）
                 </label>
                 <input
                   type="email"
@@ -264,6 +309,55 @@ export default function RegisterPage() {
                   placeholder="例: example@email.com"
                 />
               </div>
+
+              {/* パスワード */}
+              <div>
+                <label htmlFor="password" className="block text-sm font-medium text-purple-300 mb-2">
+                  <FaLock className="inline mr-2" />
+                  パスワード（6文字以上）
+                </label>
+                <input
+                  type="password"
+                  id="password"
+                  required
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  className={`w-full px-4 py-3 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                    passwordError && formData.password ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
+                  }`}
+                  placeholder="パスワードを入力"
+                />
+              </div>
+
+              {/* パスワード確認 */}
+              <div>
+                <label htmlFor="passwordConfirm" className="block text-sm font-medium text-purple-300 mb-2">
+                  <FaLock className="inline mr-2" />
+                  パスワード（確認）
+                </label>
+                <input
+                  type="password"
+                  id="passwordConfirm"
+                  required
+                  value={formData.passwordConfirm}
+                  onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
+                  className={`w-full px-4 py-3 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                    passwordError && formData.passwordConfirm ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
+                  }`}
+                  placeholder="パスワードを再入力"
+                />
+                {passwordError && (
+                  <p className="mt-1 text-sm text-red-400">{passwordError}</p>
+                )}
+              </div>
+            </div>
+
+            {/* 連絡先情報 */}
+            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 space-y-6">
+              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                <FaPhone className="text-purple-400" />
+                連絡先情報
+              </h2>
 
               {/* 電話番号 */}
               <div>
@@ -378,14 +472,14 @@ export default function RegisterPage() {
             <div className="flex justify-center gap-4">
               <button
                 type="button"
-                onClick={() => router.push('/players')}
+                onClick={() => router.push('/')}
                 className="px-8 py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-all transform hover:scale-105 shadow-lg font-medium"
               >
                 キャンセル
               </button>
               <button
                 type="submit"
-                disabled={loading || !!handleNameError || !formData.isHighSchoolOrAbove || !formData.agreeToTerms}
+                disabled={loading || !!handleNameError || !!passwordError || !formData.isHighSchoolOrAbove || !formData.agreeToTerms}
                 className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all transform hover:scale-105 shadow-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center gap-2"
               >
                 {loading ? (

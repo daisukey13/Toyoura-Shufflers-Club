@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Player } from '@/types/player';
 import { Tournament, MatchFormData } from '@/types/matches';
-import { FaTrophy, FaCalendar, FaMapMarkerAlt, FaStickyNote, FaMedal, FaGamepad, FaUsers, FaDice } from 'react-icons/fa';
+import { FaTrophy, FaCalendar, FaMapMarkerAlt, FaStickyNote, FaMedal, FaGamepad, FaUsers, FaDice, FaLock } from 'react-icons/fa';
 import { useRouter } from 'next/navigation';
 
 // Supabaseクライアントをコンポーネント外で作成
@@ -21,6 +21,8 @@ export default function MatchRegisterPage() {
   const [success, setSuccess] = useState(false);
   const [matchType, setMatchType] = useState<'normal' | 'tournament'>('normal');
   const [previewMode, setPreviewMode] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [formData, setFormData] = useState<MatchFormData>({
     match_date: new Date().toISOString().slice(0, 16),
     winner_id: '',
@@ -32,11 +34,33 @@ export default function MatchRegisterPage() {
   });
 
   useEffect(() => {
-    fetchPlayers();
-    fetchTournaments();
-    // Supabase接続テスト
-    testSupabaseConnection();
+    checkAuthAndInitialize();
   }, []);
+
+  const checkAuthAndInitialize = async () => {
+    try {
+      // ログインチェック
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        // 未ログインの場合はログインページへリダイレクト
+        router.push('/login?redirect=/matches/register');
+        return;
+      }
+
+      setCurrentUser(user);
+      
+      // ログイン済みの場合はデータを取得
+      await Promise.all([
+        fetchPlayers(),
+        fetchTournaments(),
+        testSupabaseConnection()
+      ]);
+    } catch (error) {
+      console.error('Error in initialization:', error);
+    } finally {
+      setCheckingAuth(false);
+    }
+  };
 
   const testSupabaseConnection = async () => {
     try {
@@ -209,6 +233,7 @@ export default function MatchRegisterPage() {
         loser_points_change: changes.loserPointsChange,
         winner_handicap_change: changes.winnerHandicapChange,
         loser_handicap_change: changes.loserHandicapChange,
+        registered_by: currentUser.id // 登録者を記録
       };
 
       // オプショナルフィールドを追加
@@ -304,6 +329,18 @@ export default function MatchRegisterPage() {
   const winner = getSelectedPlayer(formData.winner_id);
   const loser = getSelectedPlayer(formData.loser_id);
 
+  // 認証確認中の表示
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400 mx-auto mb-4"></div>
+          <div className="text-xl text-gray-400">認証確認中...</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto px-4 py-8">
       {/* ヘッダー */}
@@ -317,6 +354,11 @@ export default function MatchRegisterPage() {
         <p className="text-gray-400">
           熱戦の記録を残そう
         </p>
+        {/* ログイン状態の表示 */}
+        <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-green-500/20 rounded-full">
+          <FaLock className="text-green-400 text-sm" />
+          <span className="text-green-400 text-sm">ログイン済み</span>
+        </div>
       </div>
 
       {error && (
@@ -601,6 +643,16 @@ export default function MatchRegisterPage() {
           </button>
         </div>
       </form>
+
+      {/* 注意事項 */}
+      <div className="max-w-4xl mx-auto mt-8">
+        <div className="glass-card rounded-lg p-4 border border-blue-500/30 bg-blue-900/20">
+          <p className="text-sm text-blue-400">
+            ※ 試合結果の登録にはログインが必要です。<br />
+            ※ 登録後の修正は管理者にお問い合わせください。
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,109 +1,146 @@
-// app/(main)/admin/login/page.tsx
+// app/login/page.tsx
 
 'use client';
 
 import { useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
-import { FaLock, FaUser } from 'react-icons/fa';
+import Link from 'next/link';
+import { FaLock, FaArrowLeft } from 'react-icons/fa';
 
-export default function AdminLoginPage() {
+const supabase = createClient();
+
+export default function LoginPage() {
   const [handleName, setHandleName] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const [error, setError] = useState('');
   const router = useRouter();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
+  // リダイレクト先を取得
+  const searchParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+  const redirectTo = searchParams.get('redirect') || null;
 
-    const success = await login(handleName, password);
-    
-    if (success) {
-      router.push('/admin/dashboard');
-    } else {
-      setError('ハンドルネームまたはパスワードが正しくありません');
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      // ハンドルネームからプレーヤー情報を取得
+      const { data: player, error: playerError } = await supabase
+        .from('players')
+        .select('id, email, is_admin, is_active')
+        .eq('handle_name', handleName)
+        .single();
+
+      if (playerError || !player) {
+        throw new Error('ユーザーが見つかりません');
+      }
+
+      if (!player.is_active) {
+        throw new Error('このアカウントは無効化されています');
+      }
+
+      // メールアドレスでログイン
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: player.email,
+        password,
+      });
+
+      if (authError) throw new Error('パスワードが正しくありません');
+
+      // ログイン成功後のリダイレクト
+      if (redirectTo) {
+        // リダイレクト先が指定されている場合
+        router.push(redirectTo);
+      } else if (player.is_admin) {
+        // 管理者の場合は管理者ダッシュボードへ
+        router.push('/admin/dashboard');
+      } else {
+        // 一般プレーヤーの場合は自分のプロフィールへ
+        router.push(`/players/${player.id}`);
+      }
+    } catch (error: any) {
+      setError(error.message || 'ログインに失敗しました');
+    } finally {
+      setLoading(false);
     }
-    
-    setLoading(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
-            管理者ログイン
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
-            管理者権限でシステムにアクセス
-          </p>
-        </div>
-        
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="handle-name" className="sr-only">
-                ハンドルネーム
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <FaUser className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="handle-name"
-                  name="handle-name"
-                  type="text"
-                  required
-                  value={handleName}
-                  onChange={(e) => setHandleName(e.target.value)}
-                  className="appearance-none rounded-none relative block w-full px-3 py-2 pl-10 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                  placeholder="ハンドルネーム"
-                />
-              </div>
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 text-purple-400 hover:text-purple-300 mb-8 transition-colors"
+        >
+          <FaArrowLeft /> トップページに戻る
+        </Link>
+
+        <div className="glass-card rounded-xl p-8">
+          <div className="text-center mb-8">
+            <div className="inline-block p-4 rounded-full bg-purple-600/20 mb-4">
+              <FaLock className="text-3xl text-purple-400" />
             </div>
-            
-            <div>
-              <label htmlFor="password" className="sr-only">
-                パスワード
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <FaLock className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="appearance-none rounded-none relative block w-full px-3 py-2 pl-10 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                  placeholder="パスワード"
-                />
-              </div>
-            </div>
+            <h1 className="text-2xl font-bold text-yellow-100">ログイン</h1>
+            <p className="text-gray-400 mt-2">ハンドルネームでログインしてください</p>
           </div>
 
-          {error && (
-            <div className="rounded-md bg-red-50 dark:bg-red-900 p-4">
-              <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
-            </div>
-          )}
+          <form onSubmit={handleLogin} className="space-y-6">
+            {error && (
+              <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-400 text-sm">
+                {error}
+              </div>
+            )}
 
-          <div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                ハンドルネーム
+              </label>
+              <input
+                type="text"
+                value={handleName}
+                onChange={(e) => setHandleName(e.target.value)}
+                className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none transition-colors"
+                placeholder="あなたのハンドルネーム"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                パスワード
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none transition-colors"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+              className="w-full px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
               {loading ? 'ログイン中...' : 'ログイン'}
             </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <p className="text-sm text-gray-400 mb-2">まだアカウントをお持ちでない方</p>
+            <Link
+              href="/register"
+              className="text-purple-400 hover:text-purple-300 transition-colors"
+            >
+              新規登録はこちら
+            </Link>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

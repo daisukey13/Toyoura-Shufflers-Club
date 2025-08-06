@@ -20,7 +20,7 @@ interface RankingConfig {
 }
 
 export default function AdminDashboard() {
-  const { isAdmin, logout, loading: authLoading } = useAuth();
+  const { isAdmin, signOut, loading: authLoading } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'overview' | 'settings'>('overview');
   const [stats, setStats] = useState({
@@ -38,9 +38,16 @@ export default function AdminDashboard() {
   });
   const [saving, setSaving] = useState(false);
 
+  // デバッグ用のログを追加
+  useEffect(() => {
+    console.log('AdminDashboard - authLoading:', authLoading);
+    console.log('AdminDashboard - isAdmin:', isAdmin);
+  }, [authLoading, isAdmin]);
+
   useEffect(() => {
     if (!authLoading && !isAdmin) {
-      router.push('/admin/login');
+      console.log('非管理者のためリダイレクト中...');
+      router.push('/');  // /loginではなくトップページへ
     }
   }, [isAdmin, authLoading, router]);
 
@@ -94,9 +101,9 @@ export default function AdminDashboard() {
     }, 500);
   };
 
-  const handleLogout = () => {
-    logout();
-    router.push('/');
+  const handleLogout = async () => {
+    await signOut();
+    // signOutの中でrouter.push('/')が実行されるので、追加のリダイレクトは不要
   };
 
   if (authLoading) {
@@ -108,7 +115,11 @@ export default function AdminDashboard() {
   }
 
   if (!isAdmin) {
-    return null;
+    return (
+      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center">
+        <div className="text-white text-xl">アクセス権限がありません</div>
+      </div>
+    );
   }
 
   return (

@@ -48,67 +48,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchPlayer = async (userId: string) => {
     console.log('Fetching player for user:', userId)
     
-    try {
-      // まずidフィールドで検索
-      const { data, error } = await supabase
-        .from('players')
-        .select('*')
-        .eq('id', userId)
-        .single()
+    const { data, error } = await supabase
+      .from('players')
+      .select('id, display_name, is_admin')
+      .eq('user_id', userId)
+      .single()
 
-      if (!error && data) {
-        console.log('Player found by id:', data)
-        const playerInfo = {
-          id: data.id,
-          display_name: data.handle_name || data.display_name || 'Unknown',
-          is_admin: data.is_admin
-        }
-        console.log('Returning player info:', playerInfo)
-        return playerInfo
-      }
-
-      // idで見つからなければuser_idで検索
-      console.log('Not found by id, trying user_id...')
-      const { data: userData, error: userError } = await supabase
-        .from('players')
-        .select('*')
-        .eq('user_id', userId)
-        .single()
-      
-      if (userError) {
-        console.error('Error fetching player:', userError)
-        return null
-      }
-      
-      if (userData) {
-        console.log('Player found by user_id:', userData)
-        const playerInfo = {
-          id: userData.id,
-          display_name: userData.handle_name || userData.display_name || 'Unknown',
-          is_admin: userData.is_admin
-        }
-        console.log('Returning player info:', playerInfo)
-        return playerInfo
-      }
-
-      console.log('No player found for user:', userId)
-      return null
-    } catch (error) {
-      console.error('Unexpected error in fetchPlayer:', error)
+    if (error) {
+      console.error('Error fetching player:', error)
+      console.error('Error details:', {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      })
       return null
     }
+
+    console.log('Player data fetched successfully:', data)
+    console.log('Is admin?', data.is_admin)
+    console.log('Display name:', data.display_name)
+    return data
   }
 
   // 認証状態を更新する関数
   const refreshAuth = async () => {
-    console.log('Refreshing auth state...')
+    console.log('refreshAuth: Starting auth refresh...')
     
     try {
       // 現在のセッションを取得
       const { data: { session }, error } = await supabase.auth.getSession()
       
       if (error) {
-        console.error('Error getting session:', error)
+        console.error('refreshAuth: Error getting session:', error)
         setUser(null)
         setPlayer(null)
         setLoading(false)
@@ -116,50 +88,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (session?.user) {
-        console.log('Session found, user:', session.user.id)
+        console.log('refreshAuth: Session found, user:', session.user.id)
         setUser(session.user)
         
         // プレーヤー情報を取得
         const playerData = await fetchPlayer(session.user.id)
         if (playerData) {
+          console.log('refreshAuth: Setting player data:', playerData)
           setPlayer(playerData)
-          console.log('Player set with admin status:', playerData.is_admin)
+          console.log('refreshAuth: Player set with admin status:', playerData.is_admin)
         } else {
+          console.log('refreshAuth: No player data found')
           setPlayer(null)
         }
       } else {
-        console.log('No session found')
+        console.log('refreshAuth: No session found')
         setUser(null)
         setPlayer(null)
       }
     } catch (error) {
-      console.error('Error in refreshAuth:', error)
+      console.error('refreshAuth: Unexpected error:', error)
       setUser(null)
       setPlayer(null)
     } finally {
+      console.log('refreshAuth: Setting loading to false')
       setLoading(false)
     }
   }
 
   // 初回マウント時とセッション変更時の処理
   useEffect(() => {
-    console.log('AuthProvider mounted, checking session...')
+    console.log('AuthProvider: Component mounted, checking session...')
     
     // 初回の認証チェック
     refreshAuth()
 
     // 認証状態の変更を監視
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth state changed:', event, session?.user?.id)
+      console.log('AuthProvider: Auth state changed:', event, session?.user?.id)
       
       if (event === 'SIGNED_IN' && session) {
+        console.log('AuthProvider: User signed in, updating state...')
         setUser(session.user)
         const playerData = await fetchPlayer(session.user.id)
         if (playerData) {
+          console.log('AuthProvider: Player data in auth change:', playerData)
           setPlayer(playerData)
         }
         setLoading(false)
       } else if (event === 'SIGNED_OUT') {
+        console.log('AuthProvider: User signed out')
         setUser(null)
         setPlayer(null)
         setLoading(false)
@@ -168,38 +146,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // トークンがリフレッシュされた場合も更新
         setUser(session.user)
         const playerData = await fetchPlayer(session.user.id)
-        console.log('Token refresh - player data:', playerData)
         if (playerData) {
           setPlayer(playerData)
-          console.log('Token refresh - player set with admin status:', playerData.is_admin)
         }
         setLoading(false)
       }
     })
 
     return () => {
+      console.log('AuthProvider: Cleaning up subscription')
       subscription.unsubscribe()
     }
-  }, [supabase])
+  }, [])  // supabaseを依存配列から除外
 
   // ログアウト処理
   const signOut = async () => {
     try {
+      console.log('signOut: Starting sign out process...')
       await supabase.auth.signOut()
       setUser(null)
       setPlayer(null)
       router.push('/')
     } catch (error) {
-      console.error('Error signing out:', error)
+      console.error('signOut: Error signing out:', error)
     }
   }
 
   // isAdminの計算
   const isAdmin = player?.is_admin === true
 
-  // デバッグ用：状態が変化したときにログ出力
+  // デバッグ用：状態が更新されるたびにログ出力
   useEffect(() => {
-    console.log('AuthContext state updated:', {
+    console.log('AuthProvider State Update:', {
       user: user?.id,
       player: player,
       isAdmin: isAdmin,

@@ -1,11 +1,11 @@
-// app/page.tsx
-
 'use client';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
-import { FaTrophy, FaUsers, FaChartLine, FaHistory, FaUserPlus, FaCalendar, FaMedal } from 'react-icons/fa';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { FaTrophy, FaUsers, FaChartLine, FaHistory, FaUserPlus, FaCalendar, FaMedal, FaSignInAlt, FaTimes } from 'react-icons/fa';
 
 const supabase = createClient();
 
@@ -41,6 +41,16 @@ export default function HomePage() {
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
   const [recentMatches, setRecentMatches] = useState<any[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
+  
+  // ログイン関連の状態
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [handleName, setHandleName] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  
+  const router = useRouter();
+  const { refreshAuth, user, player, isAdmin, loading } = useAuth();
 
   useEffect(() => {
     fetchStats();
@@ -48,6 +58,67 @@ export default function HomePage() {
     fetchRecentMatches();
     fetchNotices();
   }, []);
+
+  // ユーザーがログイン済みの場合、適切なページへリダイレクト
+  useEffect(() => {
+    if (user && player && !loading) {
+      if (player.is_admin) {
+        router.push('/admin/dashboard');
+      } else {
+        router.push(`/players/${player.id}`);
+      }
+    }
+  }, [user, player, loading, router]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    setIsLoggingIn(true);
+
+    try {
+      // 1. ハンドルネームからプレーヤー情報を取得
+      const { data: playerData, error: playerError } = await supabase
+        .from('players')
+        .select('id, email, is_admin')
+        .eq('handle_name', handleName)
+        .single();
+
+      if (playerError || !playerData) {
+        setLoginError('ユーザーが見つかりません');
+        setIsLoggingIn(false);
+        return;
+      }
+
+      // 2. メールアドレスとパスワードでログイン
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: playerData.email,
+        password: password,
+      });
+
+      if (signInError) {
+        setLoginError('パスワードが正しくありません');
+        setIsLoggingIn(false);
+        return;
+      }
+
+      // 3. 認証情報を更新
+      await refreshAuth();
+
+      // 4. リダイレクト処理
+      setShowLoginModal(false);
+      if (playerData.is_admin) {
+        router.push('/admin/dashboard');
+      } else {
+        router.push(`/players/${playerData.id}`);
+      }
+
+    } catch (error: any) {
+      console.error('ログインエラー:', error);
+      setLoginError(error.message || 'ログインに失敗しました');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
 
   const fetchStats = async () => {
     try {
@@ -160,12 +231,15 @@ export default function HomePage() {
             <Link href="/register" className="gradient-button px-8 py-3 rounded-full text-white font-medium flex items-center gap-2">
               <FaUserPlus /> 新規登録
             </Link>
-            <Link href="/admin/login" className="px-8 py-3 rounded-full border border-purple-500 text-purple-400 hover:bg-purple-500/10 transition-colors font-medium">
-              ログイン
-            </Link>
+            <button 
+              onClick={() => setShowLoginModal(true)}
+              className="px-8 py-3 rounded-full border border-purple-500 text-purple-400 hover:bg-purple-500/10 transition-colors font-medium flex items-center gap-2"
+            >
+              <FaSignInAlt /> ログイン
+            </button>
           </div>
 
-          {/* お知らせセクション - 新規追加 */}
+          {/* お知らせセクション */}
           {notices.length > 0 && (
             <div className="mt-12 max-w-2xl mx-auto">
               <h3 className="text-lg font-semibold text-yellow-300 mb-4 flex items-center justify-center gap-2">
@@ -362,6 +436,82 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+
+      {/* ログインモーダル */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowLoginModal(false)} />
+          <div className="relative glass-card rounded-2xl p-8 max-w-md w-full">
+            <button
+              onClick={() => setShowLoginModal(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-200"
+            >
+              <FaTimes />
+            </button>
+            
+            <h2 className="text-2xl font-bold text-yellow-100 mb-6 text-center">ログイン</h2>
+            
+            <form onSubmit={handleLogin} className="space-y-4">
+              {loginError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                  <p className="text-sm text-red-400">{loginError}</p>
+                </div>
+              )}
+              
+              <div>
+                <label htmlFor="handle-name" className="block text-sm font-medium text-gray-300 mb-2">
+                  ハンドルネーム
+                </label>
+                <input
+                  id="handle-name"
+                  name="handle-name"
+                  type="text"
+                  autoComplete="username"
+                  required
+                  className="w-full px-4 py-2 rounded-lg bg-gray-800/50 border border-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="ハンドルネーム"
+                  value={handleName}
+                  onChange={(e) => setHandleName(e.target.value)}
+                />
+              </div>
+              
+              <div>
+                <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
+                  パスワード
+                </label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  className="w-full px-4 py-2 rounded-lg bg-gray-800/50 border border-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="パスワード"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              
+              <button
+                type="submit"
+                disabled={isLoggingIn}
+                className="w-full gradient-button py-3 rounded-lg text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLoggingIn ? 'ログイン中...' : 'ログイン'}
+              </button>
+            </form>
+            
+            <div className="mt-6 text-center">
+              <p className="text-sm text-gray-400">
+                アカウントをお持ちでない方は
+                <Link href="/register" className="text-purple-400 hover:text-purple-300 ml-1">
+                  新規登録
+                </Link>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

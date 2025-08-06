@@ -26,6 +26,7 @@ export default function RankingsPage() {
         .select('*')
         .eq('is_active', true)
         .eq('is_admin', false)  // 管理者を除外
+        .eq('is_deleted', false)  // 退会者を除外
         .order('ranking_points', { ascending: false });
 
       if (!error && data) {
@@ -247,6 +248,13 @@ export default function RankingsPage() {
           );
         })}
       </div>
+
+      {sortedPlayers.length === 0 && (
+        <div className="text-center py-16 text-gray-400">
+          <FaTrophy className="text-6xl mx-auto mb-4 opacity-50" />
+          <p>アクティブなプレイヤーがいません</p>
+        </div>
+      )}
     </div>
   );
 }
