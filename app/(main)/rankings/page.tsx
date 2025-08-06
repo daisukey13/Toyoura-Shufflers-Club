@@ -2,72 +2,43 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { Player } from '@/types/player';
+import { useState, useMemo } from 'react';
 import { FaTrophy, FaMedal, FaChartLine, FaFire, FaMapMarkerAlt } from 'react-icons/fa';
 import Link from 'next/link';
+import { usePlayersData } from '@/lib/hooks/useSupabaseData';
+import { MobileLoadingState } from '@/components/MobileLoadingState';
 
 export default function RankingsPage() {
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<'points' | 'handicap'>('points');
+  const { players, loading, error, retrying, refetch } = usePlayersData();
+  const [sortBy, setSortBy] = useState('points');
 
-  useEffect(() => {
-    const loadPlayers = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        // Supabaseクライアントを新規作成
-        const supabase = createClient();
-        
-        // シンプルなクエリに変更
-        const { data, error: fetchError } = await supabase
-          .from('players')
-          .select('*')
-          .order('ranking_points', { ascending: false });
-
-        if (fetchError) {
-          console.error('Supabase error:', fetchError);
-          setError('データの取得に失敗しました');
-          return;
-        }
-
-        // クライアント側でフィルタリング
-        const activePlayers = (data || []).filter(player => 
-          player.is_active === true && 
-          player.is_admin === false && 
-          player.is_deleted === false
-        );
-
-        setPlayers(activePlayers);
-      } catch (err) {
-        console.error('Error:', err);
-        setError('エラーが発生しました');
-      } finally {
-        setLoading(false);
+  // ソート処理をメモ化
+  const sortedPlayers = useMemo(() => {
+    return [...players].sort((a, b) => {
+      if (sortBy === 'points') {
+        return (b.ranking_points || 0) - (a.ranking_points || 0);
+      } else {
+        return (a.handicap || 0) - (b.handicap || 0);
       }
+    });
+  }, [players, sortBy]);
+
+  // 統計情報をメモ化
+  const stats = useMemo(() => {
+    const totalPoints = players.reduce((sum, p) => sum + (p.ranking_points || 0), 0);
+    return {
+      activeCount: players.length,
+      highestPoints: sortedPlayers[0]?.ranking_points || 0,
+      averagePoints: players.length > 0 ? Math.round(totalPoints / players.length) : 0
     };
+  }, [players, sortedPlayers]);
 
-    loadPlayers();
-  }, []);
-
-  const sortedPlayers = [...players].sort((a, b) => {
-    if (sortBy === 'points') {
-      return b.ranking_points - a.ranking_points;
-    } else {
-      return a.handicap - b.handicap;
-    }
-  });
-
-  const getRankBadge = (rank: number) => {
+  const getRankBadge = (rank) => {
     if (rank === 1) {
       return (
         <div className="relative">
           <div className="absolute -inset-1 bg-yellow-400 rounded-full blur-sm animate-pulse"></div>
-          <div className="relative bg-gradient-to-br from-yellow-400 to-yellow-600 text-gray-900 w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg">
+          <div className="relative bg-gradient-to-br from-yellow-400 to-yellow-600 text-gray-900 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-bold text-base sm:text-lg">
             1
           </div>
         </div>
@@ -76,7 +47,7 @@ export default function RankingsPage() {
       return (
         <div className="relative">
           <div className="absolute -inset-1 bg-gray-300 rounded-full blur-sm"></div>
-          <div className="relative bg-gradient-to-br from-gray-300 to-gray-500 text-gray-900 w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg">
+          <div className="relative bg-gradient-to-br from-gray-300 to-gray-500 text-gray-900 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-bold text-base sm:text-lg">
             2
           </div>
         </div>
@@ -85,214 +56,188 @@ export default function RankingsPage() {
       return (
         <div className="relative">
           <div className="absolute -inset-1 bg-orange-500 rounded-full blur-sm"></div>
-          <div className="relative bg-gradient-to-br from-orange-400 to-orange-600 text-gray-900 w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg">
+          <div className="relative bg-gradient-to-br from-orange-400 to-orange-600 text-gray-900 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-bold text-base sm:text-lg">
             3
           </div>
         </div>
       );
     }
     return (
-      <div className="bg-purple-900/30 text-purple-300 w-12 h-12 rounded-full flex items-center justify-center font-bold">
+      <div className="bg-purple-900/30 text-purple-300 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-bold text-sm sm:text-base">
         #{rank}
       </div>
     );
   };
 
-  const getFrameColor = (rank: number) => {
+  const getFrameColor = (rank) => {
     if (rank === 1) return 'from-yellow-400/50 to-yellow-600/50';
     if (rank === 2) return 'from-gray-300/50 to-gray-500/50';
     if (rank === 3) return 'from-orange-400/50 to-orange-600/50';
     return 'from-purple-600/20 to-pink-600/20';
   };
 
-  if (loading) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-400 mb-4"></div>
-          <p className="text-yellow-100">読み込み中...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="text-center">
-          <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-6 max-w-md mx-auto">
-            <p className="text-red-400 mb-4">{error}</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-            >
-              再読み込み
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="container mx-auto px-4 py-6 sm:py-8">
       {/* ヘッダー */}
-      <div className="text-center mb-12">
-        <div className="inline-block p-4 mb-4 rounded-full bg-gradient-to-br from-yellow-400/20 to-orange-600/20">
-          <FaTrophy className="text-5xl text-yellow-400" />
+      <div className="text-center mb-8 sm:mb-12">
+        <div className="inline-block p-3 sm:p-4 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-yellow-400/20 to-orange-600/20">
+          <FaTrophy className="text-4xl sm:text-5xl text-yellow-400" />
         </div>
-        <h1 className="text-4xl font-bold mb-4 text-yellow-100">
+        <h1 className="text-3xl sm:text-4xl font-bold mb-3 sm:mb-4 text-yellow-100">
           🏆 ランキング
         </h1>
-        <p className="text-gray-400">
+        <p className="text-gray-400 text-sm sm:text-base">
           豊浦シャッフラーズクラブのプレーヤーランキング
         </p>
       </div>
 
-      {/* 統計カード */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="glass-card rounded-xl p-6 text-center border border-pink-500/20">
-          <FaChartLine className="text-4xl text-pink-400 mx-auto mb-3" />
-          <div className="text-3xl font-bold text-yellow-100 mb-1">{players.length}</div>
-          <div className="text-gray-400">アクティブプレーヤー</div>
-        </div>
-        
-        <div className="glass-card rounded-xl p-6 text-center border border-yellow-500/20">
-          <FaFire className="text-4xl text-yellow-400 mx-auto mb-3" />
-          <div className="text-3xl font-bold text-yellow-100 mb-1">
-            {sortedPlayers[0]?.ranking_points || 0}
-          </div>
-          <div className="text-gray-400">最高ポイント</div>
-        </div>
-        
-        <div className="glass-card rounded-xl p-6 text-center border border-purple-500/20">
-          <FaMedal className="text-4xl text-purple-400 mx-auto mb-3" />
-          <div className="text-3xl font-bold text-yellow-100 mb-1">
-            {players.length > 0 
-              ? Math.round(players.reduce((sum, p) => sum + (p.ranking_points || 0), 0) / players.length)
-              : 0
-            }
-          </div>
-          <div className="text-gray-400">平均ポイント</div>
-        </div>
-      </div>
+      {/* ローディング/エラー状態 */}
+      <MobileLoadingState
+        loading={loading}
+        error={error}
+        retrying={retrying}
+        onRetry={refetch}
+        emptyMessage="アクティブなプレーヤーがいません"
+        dataLength={players.length}
+      />
 
-      {/* ソート切り替え */}
-      <div className="mb-8 flex justify-center">
-        <div className="inline-flex rounded-lg overflow-hidden">
-          <button
-            onClick={() => setSortBy('points')}
-            className={`px-6 py-3 font-medium transition-all ${
-              sortBy === 'points' 
-                ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' 
-                : 'bg-purple-900/30 text-gray-400 hover:text-white'
-            }`}
-          >
-            ポイント順
-          </button>
-          <button
-            onClick={() => setSortBy('handicap')}
-            className={`px-6 py-3 font-medium transition-all ${
-              sortBy === 'handicap' 
-                ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' 
-                : 'bg-purple-900/30 text-gray-400 hover:text-white'
-            }`}
-          >
-            ハンディキャップ順
-          </button>
-        </div>
-      </div>
-
-      {/* ランキングリスト */}
-      <div className="space-y-4">
-        {sortedPlayers.map((player, index) => {
-          const rank = index + 1;
-          const isTop3 = rank <= 3;
-          const winRate = player.matches_played > 0 
-            ? Math.round((player.wins / player.matches_played) * 100)
-            : 0;
-          
-          return (
-            <Link key={player.id} href={`/players/${player.id}`}>
-              <div className={`glass-card rounded-xl p-6 hover:scale-[1.02] transition-all cursor-pointer ${
-                isTop3 ? 'border-2' : 'border'
-              } border-gradient bg-gradient-to-r ${getFrameColor(rank)}`}>
-                <div className="flex items-center gap-4">
-                  {/* ランクバッジ */}
-                  {getRankBadge(rank)}
-                  
-                  {/* アバター */}
-                  <div className="relative">
-                    {isTop3 && (
-                      <div className={`absolute -inset-1 rounded-full blur-sm ${
-                        rank === 1 ? 'bg-yellow-400' :
-                        rank === 2 ? 'bg-gray-300' :
-                        'bg-orange-500'
-                      }`}></div>
-                    )}
-                    <img
-                      src={player.avatar_url || '/default-avatar.png'}
-                      alt={player.handle_name}
-                      className="relative w-16 h-16 rounded-full border-2 border-purple-500 object-cover"
-                      loading="lazy"
-                    />
-                  </div>
-                  
-                  {/* プレイヤー情報 */}
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-xl font-bold text-yellow-100 mb-1 truncate">
-                      {player.handle_name}
-                    </h3>
-                    <div className="flex items-center gap-4 text-sm text-gray-400">
-                      {player.address && (
-                        <span className="flex items-center gap-1 truncate">
-                          <FaMapMarkerAlt className="text-xs flex-shrink-0" />
-                          <span className="truncate">{player.address}</span>
-                        </span>
-                      )}
-                      <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300 whitespace-nowrap">
-                        ハンディ: {player.handicap || 0}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {/* ポイント */}
-                  <div className="text-right flex-shrink-0">
-                    <div className={`text-3xl font-bold ${
-                      isTop3 ? 'text-yellow-100' : 'text-purple-300'
-                    }`}>
-                      {player.ranking_points || 0}
-                    </div>
-                    <div className="text-sm text-gray-400">ポイント</div>
-                  </div>
-                </div>
-                
-                {/* 統計バー */}
-                <div className="mt-4 grid grid-cols-3 gap-4 text-center">
-                  <div className="bg-purple-900/30 rounded-lg py-2">
-                    <div className="text-green-400 font-bold">{player.wins || 0}</div>
-                    <div className="text-xs text-gray-500">勝利</div>
-                  </div>
-                  <div className="bg-purple-900/30 rounded-lg py-2">
-                    <div className="text-red-400 font-bold">{player.losses || 0}</div>
-                    <div className="text-xs text-gray-500">敗北</div>
-                  </div>
-                  <div className="bg-purple-900/30 rounded-lg py-2">
-                    <div className="text-blue-400 font-bold">{winRate}%</div>
-                    <div className="text-xs text-gray-500">勝率</div>
-                  </div>
-                </div>
+      {/* コンテンツ */}
+      {!loading && !error && players.length > 0 && (
+        <>
+          {/* 統計カード - モバイルで横スクロール可能 */}
+          <div className="mb-6 sm:mb-8 overflow-x-auto">
+            <div className="flex gap-4 min-w-max sm:min-w-0 sm:grid sm:grid-cols-3">
+              <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-pink-500/20 min-w-[140px]">
+                <FaChartLine className="text-3xl sm:text-4xl text-pink-400 mx-auto mb-2 sm:mb-3" />
+                <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.activeCount}</div>
+                <div className="text-gray-400 text-xs sm:text-base">アクティブプレーヤー</div>
               </div>
-            </Link>
-          );
-        })}
-      </div>
+              
+              <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20 min-w-[140px]">
+                <FaFire className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
+                <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.highestPoints}</div>
+                <div className="text-gray-400 text-xs sm:text-base">最高ポイント</div>
+              </div>
+              
+              <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-purple-500/20 min-w-[140px]">
+                <FaMedal className="text-3xl sm:text-4xl text-purple-400 mx-auto mb-2 sm:mb-3" />
+                <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.averagePoints}</div>
+                <div className="text-gray-400 text-xs sm:text-base">平均ポイント</div>
+              </div>
+            </div>
+          </div>
 
-      {sortedPlayers.length === 0 && (
-        <div className="text-center py-16 text-gray-400">
-          <FaTrophy className="text-6xl mx-auto mb-4 opacity-50" />
-          <p>アクティブなプレイヤーがいません</p>
-        </div>
+          {/* ソート切り替え */}
+          <div className="mb-6 sm:mb-8 flex justify-center">
+            <div className="inline-flex rounded-lg overflow-hidden shadow-lg">
+              <button
+                onClick={() => setSortBy('points')}
+                className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
+                  sortBy === 'points' 
+                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' 
+                    : 'bg-purple-900/30 text-gray-400 hover:text-white'
+                }`}
+              >
+                ポイント順
+              </button>
+              <button
+                onClick={() => setSortBy('handicap')}
+                className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
+                  sortBy === 'handicap' 
+                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' 
+                    : 'bg-purple-900/30 text-gray-400 hover:text-white'
+                }`}
+              >
+                ハンディキャップ順
+              </button>
+            </div>
+          </div>
+
+          {/* ランキングリスト */}
+          <div className="space-y-3 sm:space-y-4">
+            {sortedPlayers.map((player, index) => {
+              const rank = index + 1;
+              const isTop3 = rank <= 3;
+              const winRate = player.matches_played > 0 
+                ? Math.round(((player.wins || 0) / player.matches_played) * 100)
+                : 0;
+              
+              return (
+                <Link key={player.id} href={`/players/${player.id}`}>
+                  <div className={`glass-card rounded-xl p-4 sm:p-6 hover:scale-[1.02] transition-all cursor-pointer ${
+                    isTop3 ? 'border-2' : 'border'
+                  } border-gradient bg-gradient-to-r ${getFrameColor(rank)}`}>
+                    <div className="flex items-center gap-3 sm:gap-4">
+                      {/* ランクバッジ */}
+                      {getRankBadge(rank)}
+                      
+                      {/* アバター */}
+                      <div className="relative">
+                        {isTop3 && (
+                          <div className={`absolute -inset-1 rounded-full blur-sm ${
+                            rank === 1 ? 'bg-yellow-400' :
+                            rank === 2 ? 'bg-gray-300' :
+                            'bg-orange-500'
+                          }`}></div>
+                        )}
+                        <img
+                          src={player.avatar_url || '/default-avatar.png'}
+                          alt={player.handle_name}
+                          className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-purple-500 object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                      
+                      {/* プレイヤー情報 */}
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-lg sm:text-xl font-bold text-yellow-100 mb-1 truncate">
+                          {player.handle_name}
+                        </h3>
+                        <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm text-gray-400">
+                          {player.address && (
+                            <span className="flex items-center gap-1 truncate">
+                              <FaMapMarkerAlt className="text-xs flex-shrink-0" />
+                              <span className="truncate">{player.address}</span>
+                            </span>
+                          )}
+                          <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300 whitespace-nowrap">
+                            ハンディ: {player.handicap || 0}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* ポイント */}
+                      <div className="text-right flex-shrink-0">
+                        <div className={`text-2xl sm:text-3xl font-bold ${
+                          isTop3 ? 'text-yellow-100' : 'text-purple-300'
+                        }`}>
+                          {player.ranking_points || 0}
+                        </div>
+                        <div className="text-xs sm:text-sm text-gray-400">ポイント</div>
+                      </div>
+                    </div>
+                    
+                    {/* 統計バー - モバイルで簡略化 */}
+                    <div className="mt-3 sm:mt-4 grid grid-cols-3 gap-2 sm:gap-4 text-center">
+                      <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
+                        <div className="text-green-400 font-bold text-sm sm:text-base">{player.wins || 0}</div>
+                        <div className="text-xs text-gray-500">勝利</div>
+                      </div>
+                      <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
+                        <div className="text-red-400 font-bold text-sm sm:text-base">{player.losses || 0}</div>
+                        <div className="text-xs text-gray-500">敗北</div>
+                      </div>
+                      <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
+                        <div className="text-blue-400 font-bold text-sm sm:text-base">{winRate}%</div>
+                        <div className="text-xs text-gray-500">勝率</div>
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );
