@@ -1,12 +1,14 @@
 // components/GlobalNavigation.tsx
 
+// components/GlobalNavigation.tsx の先頭部分を以下に修正
+
 'use client';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { createClient } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase';  // ← ここを修正
 import { 
   FaHome, 
   FaUsers, 
@@ -23,7 +25,7 @@ import {
   FaIdCard
 } from 'react-icons/fa';
 
-const supabase = createClient();
+
 
 export default function GlobalNavigation() {
   const { user, player, isAdmin, signOut, refreshAuth, loading } = useAuth();
