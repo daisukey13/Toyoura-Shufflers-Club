@@ -72,13 +72,14 @@ export default function MatchesPage() {
 
   // 統計情報をメモ化
   const stats = useMemo(() => {
-    const totalMatches = matches.length;
-    const todayMatches = matches.filter(m => 
+    const typedMatches = matches as MatchDetails[];
+    const totalMatches = typedMatches.length;
+    const todayMatches = typedMatches.filter(m => 
       new Date(m.match_date).toDateString() === new Date().toDateString()
     ).length;
-    const tournamentMatches = matches.filter(m => m.is_tournament).length;
-    const avgScoreDiff = matches.length > 0
-      ? matches.reduce((sum, m) => sum + (15 - (m.loser_score || 0)), 0) / matches.length
+    const tournamentMatches = typedMatches.filter(m => m.is_tournament).length;
+    const avgScoreDiff = typedMatches.length > 0
+      ? typedMatches.reduce((sum, m) => sum + (15 - (m.loser_score || 0)), 0) / typedMatches.length
       : 0;
 
     return { totalMatches, todayMatches, tournamentMatches, avgScoreDiff };
