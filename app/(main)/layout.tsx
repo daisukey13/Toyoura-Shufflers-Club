@@ -15,11 +15,13 @@ export default function MainLayout({
   }, []);
 
   return (
-    <>
+    <div className="min-h-screen bg-[#2a2a3e]">
       <GlobalNavigation />
-      <main className="min-h-screen bg-[#2a2a3e]">
-        {children}
+      <main className="lg:ml-64">
+        <div className="min-h-screen">
+          {children}
+        </div>
       </main>
-    </>
+    </div>
   );
 }

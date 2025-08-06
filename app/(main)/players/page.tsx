@@ -5,8 +5,6 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { FaUsers, FaTrophy, FaSearch, FaFilter, FaMedal, FaChartLine, FaCrown } from 'react-icons/fa';
 
-const supabase = createClient();
-
 interface Player {
   id: string;
   handle_name: string;
@@ -19,6 +17,7 @@ interface Player {
   address: string;
   is_active: boolean;
   is_admin: boolean;
+  is_deleted: boolean;
 }
 
 export default function PlayersPage() {
@@ -34,25 +33,40 @@ export default function PlayersPage() {
   ];
 
   useEffect(() => {
-    fetchPlayers();
+    const loadPlayers = async () => {
+      try {
+        setLoading(true);
+        
+        // Supabaseクライアントを新規作成
+        const supabase = createClient();
+        
+        // シンプルなクエリに変更
+        const { data, error } = await supabase
+          .from('players')
+          .select('*')
+          .order('ranking_points', { ascending: false });
+
+        if (error) {
+          console.error('Supabase error:', error);
+          return;
+        }
+
+        // クライアント側でフィルタリング
+        const activePlayers = (data || []).filter(player => 
+          player.is_active === true && 
+          player.is_deleted !== true
+        );
+
+        setPlayers(activePlayers);
+      } catch (err) {
+        console.error('Error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadPlayers();
   }, []);
-
-  const fetchPlayers = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('players')
-        .select('*')
-        .eq('is_active', true)
-        .order('ranking_points', { ascending: false });
-
-      if (error) throw error;
-      setPlayers(data || []);
-    } catch (error) {
-      console.error('Error fetching players:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // フィルタリングとソート
   const filteredAndSortedPlayers = players
@@ -64,21 +78,21 @@ export default function PlayersPage() {
     .sort((a, b) => {
       switch (sortBy) {
         case 'ranking':
-          return b.ranking_points - a.ranking_points;
+          return (b.ranking_points || 0) - (a.ranking_points || 0);
         case 'handicap':
-          return a.handicap - b.handicap;
+          return (a.handicap || 0) - (b.handicap || 0);
         case 'wins':
-          return b.wins - a.wins;
+          return (b.wins || 0) - (a.wins || 0);
         case 'matches':
-          return b.matches_played - a.matches_played;
+          return (b.matches_played || 0) - (a.matches_played || 0);
         default:
           return 0;
       }
     });
 
   const getWinRate = (player: Player) => {
-    if (player.matches_played === 0) return 0;
-    return Math.round((player.wins / player.matches_played) * 100);
+    if (!player.matches_played || player.matches_played === 0) return 0;
+    return Math.round(((player.wins || 0) / player.matches_played) * 100);
   };
 
   const getRankIcon = (index: number) => {
@@ -91,7 +105,10 @@ export default function PlayersPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex items-center justify-center pb-20 lg:pb-0">
-        <div className="text-white">読み込み中...</div>
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400 mb-4"></div>
+          <p className="text-white">読み込み中...</p>
+        </div>
       </div>
     );
   }
@@ -194,7 +211,8 @@ export default function PlayersPage() {
                     <img
                       src={player.avatar_url || '/default-avatar.png'}
                       alt={player.handle_name}
-                      className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-full border-2 border-purple-500/30"
+                      className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-full border-2 border-purple-500/30 object-cover"
+                      loading="lazy"
                     />
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base sm:text-lg font-bold text-white truncate">{player.handle_name}</h3>
@@ -204,23 +222,23 @@ export default function PlayersPage() {
 
                   <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
                     <div className="text-center">
-                      <div className="text-xl sm:text-2xl font-bold text-yellow-400">{player.ranking_points}</div>
+                      <div className="text-xl sm:text-2xl font-bold text-yellow-400">{player.ranking_points || 0}</div>
                       <div className="text-xs text-gray-400">ポイント</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-xl sm:text-2xl font-bold text-purple-400">{player.handicap}</div>
+                      <div className="text-xl sm:text-2xl font-bold text-purple-400">{player.handicap || 0}</div>
                       <div className="text-xs text-gray-400">ハンディ</div>
                     </div>
                   </div>
 
                   <div className="flex justify-between items-center text-xs sm:text-sm">
                     <div className="text-gray-400">
-                      試合数: <span className="text-white font-medium">{player.matches_played}</span>
+                      試合数: <span className="text-white font-medium">{player.matches_played || 0}</span>
                     </div>
                     <div className="flex items-center gap-1 sm:gap-2">
-                      <span className="text-green-400">{player.wins}勝</span>
+                      <span className="text-green-400">{player.wins || 0}勝</span>
                       <span className="text-gray-400">/</span>
-                      <span className="text-red-400">{player.losses}敗</span>
+                      <span className="text-red-400">{player.losses || 0}敗</span>
                     </div>
                   </div>
 

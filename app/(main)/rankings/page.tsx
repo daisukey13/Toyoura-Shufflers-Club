@@ -15,41 +15,44 @@ export default function RankingsPage() {
   const [sortBy, setSortBy] = useState<'points' | 'handicap'>('points');
 
   useEffect(() => {
-    fetchPlayers();
-  }, []);
+    const loadPlayers = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Supabaseクライアントを新規作成
+        const supabase = createClient();
+        
+        // シンプルなクエリに変更
+        const { data, error: fetchError } = await supabase
+          .from('players')
+          .select('*')
+          .order('ranking_points', { ascending: false });
 
-  const fetchPlayers = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const supabase = createClient();
-      
-      const { data, error: fetchError } = await supabase
-        .from('players')
-        .select('*')
-        .eq('is_active', true)
-        .eq('is_admin', false)
-        .eq('is_deleted', false)
-        .order('ranking_points', { ascending: false });
+        if (fetchError) {
+          console.error('Supabase error:', fetchError);
+          setError('データの取得に失敗しました');
+          return;
+        }
 
-      if (fetchError) {
-        console.error('Supabase error:', fetchError);
-        setError(`データの取得に失敗しました: ${fetchError.message}`);
-        setPlayers([]);
-      } else if (data) {
-        setPlayers(data);
-      } else {
-        setPlayers([]);
+        // クライアント側でフィルタリング
+        const activePlayers = (data || []).filter(player => 
+          player.is_active === true && 
+          player.is_admin === false && 
+          player.is_deleted === false
+        );
+
+        setPlayers(activePlayers);
+      } catch (err) {
+        console.error('Error:', err);
+        setError('エラーが発生しました');
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error('Error fetching players:', err);
-      setError('データの取得中にエラーが発生しました');
-      setPlayers([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    loadPlayers();
+  }, []);
 
   const sortedPlayers = [...players].sort((a, b) => {
     if (sortBy === 'points') {
@@ -120,10 +123,10 @@ export default function RankingsPage() {
           <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-6 max-w-md mx-auto">
             <p className="text-red-400 mb-4">{error}</p>
             <button
-              onClick={fetchPlayers}
+              onClick={() => window.location.reload()}
               className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
             >
-              再試行
+              再読み込み
             </button>
           </div>
         </div>
@@ -166,7 +169,7 @@ export default function RankingsPage() {
           <FaMedal className="text-4xl text-purple-400 mx-auto mb-3" />
           <div className="text-3xl font-bold text-yellow-100 mb-1">
             {players.length > 0 
-              ? Math.round(players.reduce((sum, p) => sum + p.ranking_points, 0) / players.length)
+              ? Math.round(players.reduce((sum, p) => sum + (p.ranking_points || 0), 0) / players.length)
               : 0
             }
           </div>
@@ -205,6 +208,9 @@ export default function RankingsPage() {
         {sortedPlayers.map((player, index) => {
           const rank = index + 1;
           const isTop3 = rank <= 3;
+          const winRate = player.matches_played > 0 
+            ? Math.round((player.wins / player.matches_played) * 100)
+            : 0;
           
           return (
             <Link key={player.id} href={`/players/${player.id}`}>
@@ -228,10 +234,7 @@ export default function RankingsPage() {
                       src={player.avatar_url || '/default-avatar.png'}
                       alt={player.handle_name}
                       className="relative w-16 h-16 rounded-full border-2 border-purple-500 object-cover"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.src = '/default-avatar.png';
-                      }}
+                      loading="lazy"
                     />
                   </div>
                   
@@ -248,7 +251,7 @@ export default function RankingsPage() {
                         </span>
                       )}
                       <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300 whitespace-nowrap">
-                        ハンディ: {player.handicap}
+                        ハンディ: {player.handicap || 0}
                       </span>
                     </div>
                   </div>
@@ -258,7 +261,7 @@ export default function RankingsPage() {
                     <div className={`text-3xl font-bold ${
                       isTop3 ? 'text-yellow-100' : 'text-purple-300'
                     }`}>
-                      {player.ranking_points}
+                      {player.ranking_points || 0}
                     </div>
                     <div className="text-sm text-gray-400">ポイント</div>
                   </div>
@@ -275,11 +278,7 @@ export default function RankingsPage() {
                     <div className="text-xs text-gray-500">敗北</div>
                   </div>
                   <div className="bg-purple-900/30 rounded-lg py-2">
-                    <div className="text-blue-400 font-bold">
-                      {player.matches_played > 0 
-                        ? ((player.wins / player.matches_played) * 100).toFixed(0)
-                        : '0'}%
-                    </div>
+                    <div className="text-blue-400 font-bold">{winRate}%</div>
                     <div className="text-xs text-gray-500">勝率</div>
                   </div>
                 </div>
