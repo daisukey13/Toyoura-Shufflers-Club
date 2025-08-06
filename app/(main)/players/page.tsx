@@ -7,7 +7,7 @@ import { usePlayersData } from '@/lib/hooks/useSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
 // 仮想スクロール用のコンポーネント
-const VirtualGrid = lazy(() => import('@/components/VirtualGrid'));
+// const VirtualGrid = lazy(() => import('@/components/VirtualGrid'));
 
 // 画像の遅延読み込み用カスタムコンポーネント
 const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
