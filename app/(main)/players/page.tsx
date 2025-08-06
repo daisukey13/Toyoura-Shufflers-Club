@@ -1,10 +1,129 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo, useCallback, lazy, Suspense } from 'react';
 import Link from 'next/link';
 import { FaUsers, FaTrophy, FaSearch, FaFilter, FaMedal, FaChartLine, FaCrown } from 'react-icons/fa';
 import { usePlayersData } from '@/lib/hooks/useSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
+
+// 仮想スクロール用のコンポーネント
+const VirtualGrid = lazy(() => import('@/components/VirtualGrid'));
+
+// 画像の遅延読み込み用カスタムコンポーネント
+const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      decoding="async"
+      onError={(e) => {
+        (e.target as HTMLImageElement).src = '/default-avatar.png';
+      }}
+    />
+  );
+};
+
+// プレーヤーカードコンポーネント（メモ化）
+const PlayerCard = memo(function PlayerCard({ player, index, rankIcon, sortBy }: { 
+  player: any; 
+  index: number; 
+  rankIcon: string | null; 
+  sortBy: string;
+}) {
+  const winRate = useMemo(() => {
+    if (!player.matches_played || player.matches_played === 0) return 0;
+    return Math.round(((player.wins || 0) / player.matches_played) * 100);
+  }, [player.matches_played, player.wins]);
+  
+  return (
+    <Link href={`/players/${player.id}`} prefetch={false}>
+      <div className="glass-card rounded-xl p-4 sm:p-5 lg:p-6 hover:scale-105 transition-transform cursor-pointer relative border border-purple-500/30">
+        {/* ランクアイコン */}
+        {rankIcon && sortBy === 'ranking' && (
+          <div className="absolute top-2 right-2 text-xl sm:text-2xl">
+            {rankIcon}
+          </div>
+        )}
+        
+        {/* 管理者バッジ */}
+        {player.is_admin && (
+          <div className="absolute top-2 left-2">
+            <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 bg-yellow-500/20 border border-yellow-500/30 rounded-full">
+              <FaCrown className="text-yellow-400 text-xs" />
+              <span className="text-yellow-400 text-xs font-medium hidden sm:inline">管理者</span>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-4">
+          <LazyImage
+            src={player.avatar_url || '/default-avatar.png'}
+            alt={player.handle_name}
+            className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-full border-2 border-purple-500/30 object-cover"
+          />
+          <div className="min-w-0 flex-1">
+            <h3 className="text-base sm:text-lg font-bold text-white truncate">{player.handle_name}</h3>
+            <p className="text-xs sm:text-sm text-gray-400 truncate">{player.address}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
+          <div className="text-center">
+            <div className="text-xl sm:text-2xl font-bold text-yellow-400">{player.ranking_points || 0}</div>
+            <div className="text-xs text-gray-400">ポイント</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xl sm:text-2xl font-bold text-purple-400">{player.handicap || 0}</div>
+            <div className="text-xs text-gray-400">ハンディ</div>
+          </div>
+        </div>
+
+        <div className="flex justify-between items-center text-xs sm:text-sm">
+          <div className="text-gray-400">
+            試合数: <span className="text-white font-medium">{player.matches_played || 0}</span>
+          </div>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <span className="text-green-400">{player.wins || 0}勝</span>
+            <span className="text-gray-400">/</span>
+            <span className="text-red-400">{player.losses || 0}敗</span>
+          </div>
+        </div>
+
+        <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-gray-700">
+          <div className="flex items-center justify-between">
+            <span className="text-xs sm:text-sm text-gray-400">勝率</span>
+            <span className={`text-xs sm:text-sm font-bold ${
+              winRate >= 60 ? 'text-green-400' :
+              winRate >= 40 ? 'text-yellow-400' :
+              'text-red-400'
+            }`}>
+              {winRate}%
+            </span>
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+});
+
+// ヘッダーコンポーネント（メモ化）
+const PageHeader = memo(function PageHeader({ playerCount }: { playerCount: number }) {
+  return (
+    <div className="mb-6 sm:mb-8 text-center pt-16 lg:pt-0">
+      <div className="inline-block p-3 sm:p-4 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-purple-400/20 to-pink-600/20">
+        <FaUsers className="text-3xl sm:text-4xl lg:text-5xl text-purple-400" />
+      </div>
+      <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+        プレーヤー一覧
+      </h1>
+      <p className="text-gray-300 text-sm sm:text-base">
+        総勢 {playerCount} 名のシャッフラーズ
+      </p>
+    </div>
+  );
+});
 
 export default function PlayersPage() {
   const { players, loading, error, retrying, refetch } = usePlayersData();
@@ -12,10 +131,10 @@ export default function PlayersPage() {
   const [filterAddress, setFilterAddress] = useState('all');
   const [sortBy, setSortBy] = useState('ranking');
 
-  const addressOptions = [
+  const addressOptions = useMemo(() => [
     '豊浦町', '洞爺湖町', '壮瞥町', '伊達市', '室蘭市', '登別市',
     '倶知安町', 'ニセコ町', '札幌市', 'その他道内', '内地', '外国（Visitor)'
-  ];
+  ], []);
 
   // フィルタリングとソートをメモ化
   const filteredAndSortedPlayers = useMemo(() => {
@@ -41,33 +160,25 @@ export default function PlayersPage() {
       });
   }, [players, searchTerm, filterAddress, sortBy]);
 
-  const getWinRate = (player: any) => {
-    if (!player.matches_played || player.matches_played === 0) return 0;
-    return Math.round(((player.wins || 0) / player.matches_played) * 100);
-  };
-
-  const getRankIcon = (index: number) => {
+  const getRankIcon = useCallback((index: number) => {
     if (index === 0) return '🥇';
     if (index === 1) return '🥈';
     if (index === 2) return '🥉';
     return null;
-  };
+  }, []);
+
+  // 仮想グリッド用のアイテムレンダラー
+  const renderItem = useCallback((index: number) => {
+    const player = filteredAndSortedPlayers[index];
+    const rankIcon = getRankIcon(index);
+    return <PlayerCard key={player.id} player={player} index={index} rankIcon={rankIcon} sortBy={sortBy} />;
+  }, [filteredAndSortedPlayers, getRankIcon, sortBy]);
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-0">
       <div className="container mx-auto px-4 py-4 sm:py-8">
-        {/* ヘッダー - モバイル用に上部マージン追加 */}
-        <div className="mb-6 sm:mb-8 text-center pt-16 lg:pt-0">
-          <div className="inline-block p-3 sm:p-4 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-purple-400/20 to-pink-600/20">
-            <FaUsers className="text-3xl sm:text-4xl lg:text-5xl text-purple-400" />
-          </div>
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-            プレーヤー一覧
-          </h1>
-          <p className="text-gray-300 text-sm sm:text-base">
-            総勢 {players.length} 名のシャッフラーズ
-          </p>
-        </div>
+        {/* ヘッダー */}
+        <PageHeader playerCount={players.length} />
 
         {/* ローディング/エラー状態 */}
         <MobileLoadingState
@@ -134,90 +245,33 @@ export default function PlayersPage() {
               </div>
             </div>
 
-            {/* プレーヤーカード - モバイル対応グリッド */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
-              {filteredAndSortedPlayers.map((player, index) => {
-                const winRate = getWinRate(player);
-                const rankIcon = getRankIcon(index);
-                
-                return (
-                  <Link key={player.id} href={`/players/${player.id}`}>
-                    <div className="glass-card rounded-xl p-4 sm:p-5 lg:p-6 hover:scale-105 transition-transform cursor-pointer relative border border-purple-500/30">
-                      {/* ランクアイコン */}
-                      {rankIcon && sortBy === 'ranking' && (
-                        <div className="absolute top-2 right-2 text-xl sm:text-2xl">
-                          {rankIcon}
-                        </div>
-                      )}
-                      
-                      {/* 管理者バッジ */}
-                      {player.is_admin && (
-                        <div className="absolute top-2 left-2">
-                          <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 bg-yellow-500/20 border border-yellow-500/30 rounded-full">
-                            <FaCrown className="text-yellow-400 text-xs" />
-                            <span className="text-yellow-400 text-xs font-medium hidden sm:inline">管理者</span>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-4">
-                        <img
-                          src={player.avatar_url || '/default-avatar.png'}
-                          alt={player.handle_name}
-                          className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-full border-2 border-purple-500/30 object-cover"
-                          loading="lazy"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <h3 className="text-base sm:text-lg font-bold text-white truncate">{player.handle_name}</h3>
-                          <p className="text-xs sm:text-sm text-gray-400 truncate">{player.address}</p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
-                        <div className="text-center">
-                          <div className="text-xl sm:text-2xl font-bold text-yellow-400">{player.ranking_points || 0}</div>
-                          <div className="text-xs text-gray-400">ポイント</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-xl sm:text-2xl font-bold text-purple-400">{player.handicap || 0}</div>
-                          <div className="text-xs text-gray-400">ハンディ</div>
-                        </div>
-                      </div>
-
-                      <div className="flex justify-between items-center text-xs sm:text-sm">
-                        <div className="text-gray-400">
-                          試合数: <span className="text-white font-medium">{player.matches_played || 0}</span>
-                        </div>
-                        <div className="flex items-center gap-1 sm:gap-2">
-                          <span className="text-green-400">{player.wins || 0}勝</span>
-                          <span className="text-gray-400">/</span>
-                          <span className="text-red-400">{player.losses || 0}敗</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-gray-700">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs sm:text-sm text-gray-400">勝率</span>
-                          <span className={`text-xs sm:text-sm font-bold ${
-                            winRate >= 60 ? 'text-green-400' :
-                            winRate >= 40 ? 'text-yellow-400' :
-                            'text-red-400'
-                          }`}>
-                            {winRate}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-
-            {/* 結果がない場合 */}
-            {filteredAndSortedPlayers.length === 0 && (
+            {/* プレーヤーカード - 仮想グリッドまたは通常グリッド */}
+            {filteredAndSortedPlayers.length === 0 ? (
               <div className="text-center py-8 sm:py-12">
                 <p className="text-gray-400 text-sm sm:text-base">該当するプレーヤーが見つかりませんでした</p>
               </div>
+            ) : filteredAndSortedPlayers.length <= 30 ? (
+              // プレーヤーが少ない場合は通常のグリッド表示
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+                {filteredAndSortedPlayers.map((player, index) => {
+                  const rankIcon = getRankIcon(index);
+                  return (
+                    <PlayerCard key={player.id} player={player} index={index} rankIcon={rankIcon} sortBy={sortBy} />
+                  );
+                })}
+              </div>
+            ) : (
+              // プレーヤーが多い場合は仮想グリッド
+              <Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
+                <VirtualGrid
+                  items={filteredAndSortedPlayers}
+                  columnCount={window.innerWidth < 640 ? 1 : window.innerWidth < 1024 ? 2 : 3}
+                  rowHeight={280}
+                  height={600}
+                  renderItem={renderItem}
+                  className="gap-3 sm:gap-4 lg:gap-6"
+                />
+              </Suspense>
             )}
           </>
         )}
