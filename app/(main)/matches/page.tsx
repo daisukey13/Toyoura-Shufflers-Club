@@ -8,6 +8,29 @@ import Link from 'next/link';
 import { useMatchesData } from '@/lib/hooks/useSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
+// 型定義を追加
+interface MatchDetails {
+  id: string;
+  match_date: string;
+  winner_id: string;
+  winner_name: string;
+  winner_avatar?: string;
+  winner_current_points: number;
+  winner_current_handicap: number;
+  winner_points_change: number;
+  loser_id: string;
+  loser_name: string;
+  loser_avatar?: string;
+  loser_score: number;
+  loser_current_points: number;
+  loser_current_handicap: number;
+  loser_points_change: number;
+  is_tournament: boolean;
+  tournament_name?: string;
+  venue?: string;
+  notes?: string;
+}
+
 export default function MatchesPage() {
   const { matches, loading, error, retrying, refetch } = useMatchesData();
   const [filter, setFilter] = useState('all');
@@ -16,7 +39,7 @@ export default function MatchesPage() {
 
   // フィルタリング処理をメモ化
   const filteredMatches = useMemo(() => {
-    return matches.filter(match => {
+    return (matches as MatchDetails[]).filter(match => {
       const matchesSearch = 
         match.winner_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         match.loser_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
