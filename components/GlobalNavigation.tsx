@@ -27,6 +27,7 @@ import {
 
 
 
+
 export default function GlobalNavigation() {
   const { user, player, isAdmin, signOut, refreshAuth, loading } = useAuth();
   const pathname = usePathname();
