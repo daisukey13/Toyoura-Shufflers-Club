@@ -114,6 +114,8 @@ export default function RegisterPage() {
       }
     } catch (error) {
       console.error('Error fetching avatars:', error);
+      // アバター取得に失敗してもフォームは使えるようにする
+      setAvatarOptions([]);
     }
   };
 
@@ -143,6 +145,8 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
+      console.log('Registration starting...');
+      
       // 1. Supabase Authでユーザーを作成
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
@@ -151,82 +155,104 @@ export default function RegisterPage() {
           data: {
             handle_name: formData.handle_name,
             full_name: formData.full_name,
-          },
-          emailRedirectTo: `${window.location.origin}/auth/callback`
+          }
         }
       });
 
-      if (authError) throw authError;
+      if (authError) {
+        console.error('Auth error:', authError);
+        throw authError;
+      }
 
       if (!authData.user) {
         throw new Error('ユーザー作成に失敗しました');
       }
 
+      console.log('User created:', authData.user.id);
+
       // 2. プレイヤー情報を登録
+      const playerData = {
+        id: authData.user.id,
+        handle_name: formData.handle_name,
+        full_name: formData.full_name,
+        email: formData.email,
+        phone: formData.phone,
+        address: formData.address || '未設定',
+        avatar_url: formData.avatar_url || null,
+        is_admin: false,
+        is_active: true,
+        ranking_points: 1000,
+        handicap: 30,
+        matches_played: 0,
+        wins: 0,
+        losses: 0,
+      };
+
+      console.log('Inserting player data:', playerData);
+
       const { data, error } = await supabase
         .from('players')
-        .insert({
-          id: authData.user.id, // user_idと同じ値を使用
-          handle_name: formData.handle_name,
-          full_name: formData.full_name,
-          email: formData.email,
-          phone: formData.phone,
-          address: formData.address,
-          avatar_url: formData.avatar_url || null,
-          is_admin: false,
-          is_active: true,
-          ranking_points: 1000,
-          handicap: 30,
-          matches_played: 0,
-          wins: 0,
-          losses: 0,
-        })
+        .insert(playerData)
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Player insert error:', error);
+        throw error;
+      }
 
-      // 3. 登録完了メールを送信（Supabaseが自動で確認メールを送信）
-      alert('プレイヤー登録が完了しました！確認メールを送信しましたので、メールアドレスの確認をお願いします。');
+      console.log('Player created:', data);
+
+      // 3. 成功メッセージ
+      alert('プレイヤー登録が完了しました！メールアドレスに確認メールを送信しました。');
       
       // ログインページへリダイレクト
       router.push('/login');
     } catch (error: any) {
       console.error('Registration error:', error);
+      
+      let errorMessage = '登録中にエラーが発生しました。';
+      
       if (error.message?.includes('already registered')) {
-        alert('このメールアドレスは既に登録されています。');
-      } else {
-        alert('登録中にエラーが発生しました: ' + error.message);
+        errorMessage = 'このメールアドレスは既に登録されています。';
+      } else if (error.message?.includes('Invalid email')) {
+        errorMessage = '有効なメールアドレスを入力してください。';
+      } else if (error.message?.includes('Password')) {
+        errorMessage = 'パスワードは6文字以上で設定してください。';
+      } else if (error.message) {
+        errorMessage += '\n詳細: ' + error.message;
       }
+      
+      alert(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#2a2a3e]">
-      <div className="container mx-auto px-4 py-8">
+    <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-8">
+      <div className="container mx-auto px-4 py-4 sm:py-8">
         {/* ヘッダー */}
-        <div className="mb-8 text-center">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="p-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full">
-              <FaUserPlus className="text-3xl text-white" />
+        <div className="mb-6 sm:mb-8 text-center">
+          <div className="flex items-center justify-center gap-3 mb-3 sm:mb-4">
+            <div className="p-2.5 sm:p-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full">
+              <FaUserPlus className="text-2xl sm:text-3xl text-white" />
             </div>
           </div>
-          <h1 className="text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
             新規プレイヤー登録
           </h1>
-          <p className="text-gray-300">
+          <p className="text-sm sm:text-base text-gray-300">
             豊浦シャッフラーズクラブへようこそ
           </p>
         </div>
 
         {/* 登録フォーム */}
         <div className="max-w-3xl mx-auto">
-          <form onSubmit={handleSubmit} className="space-y-8">
+          <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-8">
             {/* 基本情報 */}
-            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 space-y-6">
-              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+            <div className="bg-gray-900/60 backdrop-blur-md rounded-xl sm:rounded-2xl border border-purple-500/30 p-4 sm:p-6 space-y-4 sm:space-y-6">
+              <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
                 <FaGamepad className="text-purple-400" />
                 基本情報
               </h2>
@@ -244,7 +270,7 @@ export default function RegisterPage() {
                     required
                     value={formData.handle_name}
                     onChange={(e) => setFormData({ ...formData, handle_name: e.target.value })}
-                    className={`w-full px-4 py-3 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                    className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
                       handleNameError ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                     }`}
                     placeholder="例: シャッフル太郎"
@@ -280,15 +306,15 @@ export default function RegisterPage() {
                   required
                   value={formData.full_name}
                   onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 transition-all"
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 transition-all"
                   placeholder="例: 山田太郎"
                 />
               </div>
             </div>
 
             {/* アカウント情報 */}
-            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 space-y-6">
-              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+            <div className="bg-gray-900/60 backdrop-blur-md rounded-xl sm:rounded-2xl border border-purple-500/30 p-4 sm:p-6 space-y-4 sm:space-y-6">
+              <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
                 <FaLock className="text-purple-400" />
                 アカウント情報
               </h2>
@@ -305,7 +331,7 @@ export default function RegisterPage() {
                   required
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 transition-all"
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 transition-all"
                   placeholder="例: example@email.com"
                 />
               </div>
@@ -322,7 +348,7 @@ export default function RegisterPage() {
                   required
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  className={`w-full px-4 py-3 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
                     passwordError && formData.password ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                   }`}
                   placeholder="パスワードを入力"
@@ -341,7 +367,7 @@ export default function RegisterPage() {
                   required
                   value={formData.passwordConfirm}
                   onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
-                  className={`w-full px-4 py-3 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
                     passwordError && formData.passwordConfirm ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                   }`}
                   placeholder="パスワードを再入力"
@@ -353,8 +379,8 @@ export default function RegisterPage() {
             </div>
 
             {/* 連絡先情報 */}
-            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 space-y-6">
-              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+            <div className="bg-gray-900/60 backdrop-blur-md rounded-xl sm:rounded-2xl border border-purple-500/30 p-4 sm:p-6 space-y-4 sm:space-y-6">
+              <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
                 <FaPhone className="text-purple-400" />
                 連絡先情報
               </h2>
@@ -371,7 +397,7 @@ export default function RegisterPage() {
                   required
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 transition-all"
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 transition-all"
                   placeholder="例: 090-1234-5678"
                 />
               </div>
@@ -384,9 +410,10 @@ export default function RegisterPage() {
                 </label>
                 <select
                   id="address"
+                  required
                   value={formData.address}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 transition-all"
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 transition-all"
                 >
                   <option value="" className="bg-gray-800">選択してください</option>
                   {addressOptions.map((address) => (
@@ -398,68 +425,71 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            {/* プロフィール */}
-            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 space-y-6">
-              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                <FaImage className="text-purple-400" />
-                プロフィール
-              </h2>
-              
-              {/* アバター選択 */}
-              <div>
-                <label className="block text-sm font-medium text-purple-300 mb-4">
-                  アバター画像を選択（公開）
-                </label>
-                <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-3">
-                  {avatarOptions.map((url, index) => (
-                    <button
-                      key={index}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, avatar_url: url })}
-                      className={`relative p-2 rounded-lg border-2 transition-all transform hover:scale-110 ${
-                        formData.avatar_url === url
-                          ? 'border-purple-400 bg-purple-500/20 shadow-lg shadow-purple-500/30'
-                          : 'border-purple-500/30 hover:border-purple-400/50 bg-gray-800/30'
-                      }`}
-                    >
-                      <img
-                        src={url}
-                        alt={`Avatar ${index + 1}`}
-                        className="w-full h-auto rounded"
-                      />
-                      {formData.avatar_url === url && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-purple-500/20 rounded-lg">
-                          <FaCheckCircle className="text-purple-400 text-2xl" />
-                        </div>
-                      )}
-                    </button>
-                  ))}
+            {/* プロフィール - アバター選択を簡略化 */}
+            {avatarOptions.length > 0 && (
+              <div className="bg-gray-900/60 backdrop-blur-md rounded-xl sm:rounded-2xl border border-purple-500/30 p-4 sm:p-6 space-y-4 sm:space-y-6">
+                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                  <FaImage className="text-purple-400" />
+                  プロフィール
+                </h2>
+                
+                {/* アバター選択 */}
+                <div>
+                  <label className="block text-sm font-medium text-purple-300 mb-4">
+                    アバター画像を選択（公開・任意）
+                  </label>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 sm:gap-3">
+                    {avatarOptions.slice(0, 12).map((url, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, avatar_url: url })}
+                        className={`relative p-1.5 sm:p-2 rounded-lg border-2 transition-all transform hover:scale-110 ${
+                          formData.avatar_url === url
+                            ? 'border-purple-400 bg-purple-500/20 shadow-lg shadow-purple-500/30'
+                            : 'border-purple-500/30 hover:border-purple-400/50 bg-gray-800/30'
+                        }`}
+                      >
+                        <img
+                          src={url}
+                          alt={`Avatar ${index + 1}`}
+                          className="w-full h-auto rounded"
+                          loading="lazy"
+                        />
+                        {formData.avatar_url === url && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-purple-500/20 rounded-lg">
+                            <FaCheckCircle className="text-purple-400 text-lg sm:text-2xl" />
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* 年齢確認・利用規約同意 */}
-            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 space-y-4">
-              <label className="flex items-center cursor-pointer group">
+            <div className="bg-gray-900/60 backdrop-blur-md rounded-xl sm:rounded-2xl border border-purple-500/30 p-4 sm:p-6 space-y-3 sm:space-y-4">
+              <label className="flex items-start cursor-pointer group">
                 <input
                   type="checkbox"
                   checked={formData.isHighSchoolOrAbove}
                   onChange={(e) => setFormData({ ...formData, isHighSchoolOrAbove: e.target.checked })}
-                  className="mr-3 w-5 h-5 bg-gray-800 border-purple-500 text-purple-600 rounded focus:ring-purple-500"
+                  className="mr-3 mt-0.5 w-5 h-5 bg-gray-800 border-purple-500 text-purple-600 rounded focus:ring-purple-500"
                 />
-                <span className="text-gray-300 group-hover:text-white transition-colors">
+                <span className="text-sm sm:text-base text-gray-300 group-hover:text-white transition-colors">
                   私は高校生以上です
                 </span>
               </label>
               
-              <label className="flex items-center cursor-pointer group">
+              <label className="flex items-start cursor-pointer group">
                 <input
                   type="checkbox"
                   checked={formData.agreeToTerms}
                   onChange={(e) => setFormData({ ...formData, agreeToTerms: e.target.checked })}
-                  className="mr-3 w-5 h-5 bg-gray-800 border-purple-500 text-purple-600 rounded focus:ring-purple-500"
+                  className="mr-3 mt-0.5 w-5 h-5 bg-gray-800 border-purple-500 text-purple-600 rounded focus:ring-purple-500"
                 />
-                <span className="text-gray-300 group-hover:text-white transition-colors">
+                <span className="text-sm sm:text-base text-gray-300 group-hover:text-white transition-colors">
                   <Link href="/terms" target="_blank" className="text-purple-400 hover:text-purple-300 underline">
                     利用規約
                   </Link>
@@ -469,18 +499,18 @@ export default function RegisterPage() {
             </div>
 
             {/* 送信ボタン */}
-            <div className="flex justify-center gap-4">
+            <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
               <button
                 type="button"
                 onClick={() => router.push('/')}
-                className="px-8 py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-all transform hover:scale-105 shadow-lg font-medium"
+                className="px-6 sm:px-8 py-2.5 sm:py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-all transform hover:scale-105 shadow-lg font-medium"
               >
                 キャンセル
               </button>
               <button
                 type="submit"
                 disabled={loading || !!handleNameError || !!passwordError || !formData.isHighSchoolOrAbove || !formData.agreeToTerms}
-                className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all transform hover:scale-105 shadow-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center gap-2"
+                className="px-6 sm:px-8 py-2.5 sm:py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all transform hover:scale-105 shadow-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
