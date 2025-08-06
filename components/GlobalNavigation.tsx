@@ -134,6 +134,19 @@ export default function GlobalNavigation() {
     setIsMobileMenuOpen(false);
   }, [pathname]);
 
+  // モバイルメニューが開いている時はスクロールを無効化
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isMobileMenuOpen]);
+
   // ローディング中は何も表示しない
   if (loading) {
     return null;
@@ -273,81 +286,90 @@ export default function GlobalNavigation() {
 
         {/* モバイルメニュー */}
         {isMobileMenuOpen && (
-          <div className="fixed inset-0 top-16 bg-gray-900/95 backdrop-blur-md z-40">
-            <div className="container mx-auto px-4 py-6">
-              <div className="space-y-2">
-                {navItems.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                      isActive(item.href)
-                        ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
-                        : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
-                    }`}
-                  >
-                    <item.icon className="text-xl" />
-                    <span className="font-medium text-lg">{item.label}</span>
-                  </Link>
-                ))}
-
-                {/* 管理者メニュー */}
-                {isAdmin && (
-                  <Link
-                    href="/admin/dashboard"
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                      pathname.startsWith('/admin')
-                        ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
-                        : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
-                    }`}
-                  >
-                    <FaShieldAlt className="text-xl" />
-                    <span className="font-medium text-lg">管理</span>
-                  </Link>
-                )}
-
-                <div className="border-t border-purple-500/30 my-4"></div>
-
-                {/* ユーザーメニュー */}
-                {user && player ? (
-                  <>
+          <>
+            {/* オーバーレイ */}
+            <div 
+              className="fixed inset-0 bg-black/50 z-40"
+              onClick={() => setIsMobileMenuOpen(false)}
+            />
+            
+            {/* メニュー本体 */}
+            <div className="fixed inset-x-0 top-16 bottom-0 bg-gray-900 z-50 overflow-y-auto">
+              <div className="container mx-auto px-4 py-6">
+                <div className="space-y-2">
+                  {navItems.map((item) => (
                     <Link
-                      href="/matches/register"
-                      className="flex items-center gap-3 px-4 py-3 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white"
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                        isActive(item.href)
+                          ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
+                          : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
+                      }`}
                     >
-                      <FaPlus className="text-xl" />
-                      <span className="font-medium text-lg">試合登録</span>
+                      <item.icon className="text-xl" />
+                      <span className="font-medium text-lg">{item.label}</span>
                     </Link>
+                  ))}
+
+                  {/* 管理者メニュー */}
+                  {isAdmin && (
                     <Link
-                      href={`/players/${player.id}`}
-                      className="flex items-center gap-3 px-4 py-3 rounded-lg bg-gray-800/50 hover:bg-gray-800 transition-all"
+                      href="/admin/dashboard"
+                      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                        pathname.startsWith('/admin')
+                          ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
+                          : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
+                      }`}
                     >
-                      <FaIdCard className="text-xl" />
-                      <span className="font-medium text-lg">マイページ</span>
+                      <FaShieldAlt className="text-xl" />
+                      <span className="font-medium text-lg">管理</span>
                     </Link>
+                  )}
+
+                  <div className="border-t border-purple-500/30 my-4"></div>
+
+                  {/* ユーザーメニュー */}
+                  {user && player ? (
+                    <>
+                      <Link
+                        href="/matches/register"
+                        className="flex items-center gap-3 px-4 py-3 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white"
+                      >
+                        <FaPlus className="text-xl" />
+                        <span className="font-medium text-lg">試合登録</span>
+                      </Link>
+                      <Link
+                        href={`/players/${player.id}`}
+                        className="flex items-center gap-3 px-4 py-3 rounded-lg bg-gray-800/50 hover:bg-gray-800 transition-all"
+                      >
+                        <FaIdCard className="text-xl" />
+                        <span className="font-medium text-lg">マイページ</span>
+                      </Link>
+                      <button
+                        onClick={handleLogout}
+                        className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-600/10 transition-all"
+                      >
+                        <FaSignOutAlt className="text-xl" />
+                        <span className="font-medium text-lg">ログアウト</span>
+                      </button>
+                    </>
+                  ) : (
                     <button
-                      onClick={handleLogout}
-                      className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-600/10 transition-all"
+                      onClick={() => {
+                        setShowLoginModal(true);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
                     >
-                      <FaSignOutAlt className="text-xl" />
-                      <span className="font-medium text-lg">ログアウト</span>
+                      <FaSignInAlt className="text-xl" />
+                      <span className="font-medium text-lg">ログイン</span>
                     </button>
-                  </>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setShowLoginModal(true);
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className="w-full flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
-                  >
-                    <FaSignInAlt className="text-xl" />
-                    <span className="font-medium text-lg">ログイン</span>
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          </>
         )}
       </nav>
 
