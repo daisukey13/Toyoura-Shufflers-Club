@@ -1,12 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { createSupabaseClient } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { FaUserPlus, FaUser, FaEnvelope, FaPhone, FaMapMarkerAlt, FaGamepad, FaImage, FaCheckCircle, FaExclamationCircle, FaSpinner, FaLock } from 'react-icons/fa';
-
-const supabase = createClient();
 
 interface FormData {
   handle_name: string;
@@ -24,6 +22,18 @@ interface FormData {
 const addressOptions = [
   '豊浦町', '洞爺湖町', '壮瞥町', '伊達市', '室蘭市', '登別市',
   '倶知安町', 'ニセコ町', '札幌市', 'その他道内', '内地', '外国（Visitor)'
+];
+
+// デフォルトアバターオプション（Supabase Storageに依存しない）
+const defaultAvatarOptions = [
+  '/avatars/avatar1.png',
+  '/avatars/avatar2.png',
+  '/avatars/avatar3.png',
+  '/avatars/avatar4.png',
+  '/avatars/avatar5.png',
+  '/avatars/avatar6.png',
+  '/avatars/avatar7.png',
+  '/avatars/avatar8.png',
 ];
 
 export default function RegisterPage() {
@@ -45,6 +55,7 @@ export default function RegisterPage() {
   const [handleNameError, setHandleNameError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [checkingHandleName, setCheckingHandleName] = useState(false);
+  const [avatarLoadError, setAvatarLoadError] = useState(false);
 
   useEffect(() => {
     fetchAvatarOptions();
@@ -59,6 +70,7 @@ export default function RegisterPage() {
 
       setCheckingHandleName(true);
       try {
+        const supabase = createSupabaseClient();
         const { data } = await supabase
           .from('players')
           .select('id')
@@ -94,28 +106,49 @@ export default function RegisterPage() {
 
   const fetchAvatarOptions = async () => {
     try {
+      const supabase = createSupabaseClient();
       const { data, error } = await supabase
         .storage
         .from('avatars')
         .list('preset', {
-          limit: 100,
+          limit: 12, // モバイル用に数を制限
           offset: 0,
         });
 
-      if (!error && data) {
-        const urls = data.map(file => {
-          const { data: publicData } = supabase
-            .storage
-            .from('avatars')
-            .getPublicUrl(`preset/${file.name}`);
-          return publicData.publicUrl;
-        });
-        setAvatarOptions(urls);
+      if (!error && data && data.length > 0) {
+        const urls = await Promise.all(
+          data.map(async (file) => {
+            try {
+              const { data: publicData } = supabase
+                .storage
+                .from('avatars')
+                .getPublicUrl(`preset/${file.name}`);
+              return publicData.publicUrl;
+            } catch {
+              return null;
+            }
+          })
+        );
+        
+        const validUrls = urls.filter(url => url !== null) as string[];
+        if (validUrls.length > 0) {
+          setAvatarOptions(validUrls);
+          setAvatarLoadError(false);
+        } else {
+          // URLが取得できない場合はデフォルトを使用
+          setAvatarOptions(defaultAvatarOptions);
+          setAvatarLoadError(true);
+        }
+      } else {
+        // データがない場合はデフォルトを使用
+        setAvatarOptions(defaultAvatarOptions);
+        setAvatarLoadError(true);
       }
     } catch (error) {
       console.error('Error fetching avatars:', error);
-      // アバター取得に失敗してもフォームは使えるようにする
-      setAvatarOptions([]);
+      // エラーの場合はデフォルトアバターを使用
+      setAvatarOptions(defaultAvatarOptions);
+      setAvatarLoadError(true);
     }
   };
 
@@ -146,6 +179,8 @@ export default function RegisterPage() {
 
     try {
       console.log('Registration starting...');
+      
+      const supabase = createSupabaseClient();
       
       // 1. Supabase Authでユーザーを作成
       const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -178,7 +213,7 @@ export default function RegisterPage() {
         email: formData.email,
         phone: formData.phone,
         address: formData.address || '未設定',
-        avatar_url: formData.avatar_url || null,
+        avatar_url: formData.avatar_url || '/default-avatar.png',
         is_admin: false,
         is_active: true,
         ranking_points: 1000,
@@ -206,8 +241,8 @@ export default function RegisterPage() {
       // 3. 成功メッセージ
       alert('プレイヤー登録が完了しました！メールアドレスに確認メールを送信しました。');
       
-      // ログインページへリダイレクト
-      router.push('/login');
+      // ホームページへリダイレクト（ログインページがない場合）
+      router.push('/');
     } catch (error: any) {
       console.error('Registration error:', error);
       
@@ -425,48 +460,25 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            {/* プロフィール - アバター選択を簡略化 */}
-            {avatarOptions.length > 0 && (
-              <div className="bg-gray-900/60 backdrop-blur-md rounded-xl sm:rounded-2xl border border-purple-500/30 p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
-                  <FaImage className="text-purple-400" />
-                  プロフィール
-                </h2>
-                
-                {/* アバター選択 */}
-                <div>
-                  <label className="block text-sm font-medium text-purple-300 mb-4">
-                    アバター画像を選択（公開・任意）
-                  </label>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 sm:gap-3">
-                    {avatarOptions.slice(0, 12).map((url, index) => (
-                      <button
-                        key={index}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, avatar_url: url })}
-                        className={`relative p-1.5 sm:p-2 rounded-lg border-2 transition-all transform hover:scale-110 ${
-                          formData.avatar_url === url
-                            ? 'border-purple-400 bg-purple-500/20 shadow-lg shadow-purple-500/30'
-                            : 'border-purple-500/30 hover:border-purple-400/50 bg-gray-800/30'
-                        }`}
-                      >
-                        <img
-                          src={url}
-                          alt={`Avatar ${index + 1}`}
-                          className="w-full h-auto rounded"
-                          loading="lazy"
-                        />
-                        {formData.avatar_url === url && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-purple-500/20 rounded-lg">
-                            <FaCheckCircle className="text-purple-400 text-lg sm:text-2xl" />
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
+            {/* プロフィール - アバター選択（オプション） */}
+            <div className="bg-gray-900/60 backdrop-blur-md rounded-xl sm:rounded-2xl border border-purple-500/30 p-4 sm:p-6 space-y-4 sm:space-y-6">
+              <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                <FaImage className="text-purple-400" />
+                プロフィール（任意）
+              </h2>
+              
+              <p className="text-sm text-gray-400">
+                アバターは後から変更できます。スキップしても構いません。
+              </p>
+              
+              {avatarLoadError && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                  <p className="text-sm text-yellow-400">
+                    アバター画像の読み込みに失敗しました。登録後にプロフィールから設定できます。
+                  </p>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* 年齢確認・利用規約同意 */}
             <div className="bg-gray-900/60 backdrop-blur-md rounded-xl sm:rounded-2xl border border-purple-500/30 p-4 sm:p-6 space-y-3 sm:space-y-4">
