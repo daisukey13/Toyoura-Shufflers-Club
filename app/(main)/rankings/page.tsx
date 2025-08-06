@@ -33,7 +33,7 @@ export default function RankingsPage() {
     };
   }, [players, sortedPlayers]);
 
-  const getRankBadge = (rank) => {
+  const getRankBadge = (rank: number) => {
     if (rank === 1) {
       return (
         <div className="relative">
@@ -69,7 +69,7 @@ export default function RankingsPage() {
     );
   };
 
-  const getFrameColor = (rank) => {
+  const getFrameColor = (rank: number) => {
     if (rank === 1) return 'from-yellow-400/50 to-yellow-600/50';
     if (rank === 2) return 'from-gray-300/50 to-gray-500/50';
     if (rank === 3) return 'from-orange-400/50 to-orange-600/50';
