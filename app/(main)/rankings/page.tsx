@@ -8,11 +8,10 @@ import { Player } from '@/types/player';
 import { FaTrophy, FaMedal, FaChartLine, FaFire, FaMapMarkerAlt } from 'react-icons/fa';
 import Link from 'next/link';
 
-const supabase = createClient();
-
 export default function RankingsPage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'points' | 'handicap'>('points');
 
   useEffect(() => {
@@ -21,19 +20,32 @@ export default function RankingsPage() {
 
   const fetchPlayers = async () => {
     try {
-      const { data, error } = await supabase
+      setLoading(true);
+      setError(null);
+      
+      const supabase = createClient();
+      
+      const { data, error: fetchError } = await supabase
         .from('players')
         .select('*')
         .eq('is_active', true)
-        .eq('is_admin', false)  // 管理者を除外
-        .eq('is_deleted', false)  // 退会者を除外
+        .eq('is_admin', false)
+        .eq('is_deleted', false)
         .order('ranking_points', { ascending: false });
 
-      if (!error && data) {
+      if (fetchError) {
+        console.error('Supabase error:', fetchError);
+        setError(`データの取得に失敗しました: ${fetchError.message}`);
+        setPlayers([]);
+      } else if (data) {
         setPlayers(data);
+      } else {
+        setPlayers([]);
       }
     } catch (err) {
       console.error('Error fetching players:', err);
+      setError('データの取得中にエラーが発生しました');
+      setPlayers([]);
     } finally {
       setLoading(false);
     }
@@ -93,7 +105,28 @@ export default function RankingsPage() {
   if (loading) {
     return (
       <div className="container mx-auto px-4 py-8">
-        <div className="text-center text-yellow-100">読み込み中...</div>
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-400 mb-4"></div>
+          <p className="text-yellow-100">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <div className="text-center">
+          <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-6 max-w-md mx-auto">
+            <p className="text-red-400 mb-4">{error}</p>
+            <button
+              onClick={fetchPlayers}
+              className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+            >
+              再試行
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -132,7 +165,10 @@ export default function RankingsPage() {
         <div className="glass-card rounded-xl p-6 text-center border border-purple-500/20">
           <FaMedal className="text-4xl text-purple-400 mx-auto mb-3" />
           <div className="text-3xl font-bold text-yellow-100 mb-1">
-            {Math.round(players.reduce((sum, p) => sum + p.ranking_points, 0) / players.length) || 0}
+            {players.length > 0 
+              ? Math.round(players.reduce((sum, p) => sum + p.ranking_points, 0) / players.length)
+              : 0
+            }
           </div>
           <div className="text-gray-400">平均ポイント</div>
         </div>
@@ -191,30 +227,34 @@ export default function RankingsPage() {
                     <img
                       src={player.avatar_url || '/default-avatar.png'}
                       alt={player.handle_name}
-                      className="relative w-16 h-16 rounded-full border-2 border-purple-500"
+                      className="relative w-16 h-16 rounded-full border-2 border-purple-500 object-cover"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = '/default-avatar.png';
+                      }}
                     />
                   </div>
                   
                   {/* プレイヤー情報 */}
-                  <div className="flex-1">
-                    <h3 className="text-xl font-bold text-yellow-100 mb-1">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-xl font-bold text-yellow-100 mb-1 truncate">
                       {player.handle_name}
                     </h3>
                     <div className="flex items-center gap-4 text-sm text-gray-400">
                       {player.address && (
-                        <span className="flex items-center gap-1">
-                          <FaMapMarkerAlt className="text-xs" />
-                          {player.address}
+                        <span className="flex items-center gap-1 truncate">
+                          <FaMapMarkerAlt className="text-xs flex-shrink-0" />
+                          <span className="truncate">{player.address}</span>
                         </span>
                       )}
-                      <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">
+                      <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300 whitespace-nowrap">
                         ハンディ: {player.handicap}
                       </span>
                     </div>
                   </div>
                   
                   {/* ポイント */}
-                  <div className="text-right">
+                  <div className="text-right flex-shrink-0">
                     <div className={`text-3xl font-bold ${
                       isTop3 ? 'text-yellow-100' : 'text-purple-300'
                     }`}>
@@ -227,11 +267,11 @@ export default function RankingsPage() {
                 {/* 統計バー */}
                 <div className="mt-4 grid grid-cols-3 gap-4 text-center">
                   <div className="bg-purple-900/30 rounded-lg py-2">
-                    <div className="text-green-400 font-bold">{player.wins}</div>
+                    <div className="text-green-400 font-bold">{player.wins || 0}</div>
                     <div className="text-xs text-gray-500">勝利</div>
                   </div>
                   <div className="bg-purple-900/30 rounded-lg py-2">
-                    <div className="text-red-400 font-bold">{player.losses}</div>
+                    <div className="text-red-400 font-bold">{player.losses || 0}</div>
                     <div className="text-xs text-gray-500">敗北</div>
                   </div>
                   <div className="bg-purple-900/30 rounded-lg py-2">
