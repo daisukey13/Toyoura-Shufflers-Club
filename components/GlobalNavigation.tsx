@@ -286,15 +286,9 @@ export default function GlobalNavigation() {
 
         {/* モバイルメニュー */}
         {isMobileMenuOpen && (
-          <>
-            {/* オーバーレイ */}
-            <div 
-              className="fixed inset-0 bg-black/50 z-40"
-              onClick={() => setIsMobileMenuOpen(false)}
-            />
-            
+          <div className="fixed inset-0 top-16 bg-black/50 z-40">
             {/* メニュー本体 */}
-            <div className="fixed inset-x-0 top-16 bottom-0 bg-gray-900 z-50 overflow-y-auto">
+            <div className="bg-gray-900 h-full overflow-y-auto">
               <div className="container mx-auto px-4 py-6">
                 <div className="space-y-2">
                   {navItems.map((item) => (
@@ -306,6 +300,7 @@ export default function GlobalNavigation() {
                           ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
                           : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
                       }`}
+                      onClick={() => setIsMobileMenuOpen(false)}
                     >
                       <item.icon className="text-xl" />
                       <span className="font-medium text-lg">{item.label}</span>
@@ -321,6 +316,7 @@ export default function GlobalNavigation() {
                           ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
                           : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
                       }`}
+                      onClick={() => setIsMobileMenuOpen(false)}
                     >
                       <FaShieldAlt className="text-xl" />
                       <span className="font-medium text-lg">管理</span>
@@ -335,6 +331,7 @@ export default function GlobalNavigation() {
                       <Link
                         href="/matches/register"
                         className="flex items-center gap-3 px-4 py-3 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white"
+                        onClick={() => setIsMobileMenuOpen(false)}
                       >
                         <FaPlus className="text-xl" />
                         <span className="font-medium text-lg">試合登録</span>
@@ -342,6 +339,7 @@ export default function GlobalNavigation() {
                       <Link
                         href={`/players/${player.id}`}
                         className="flex items-center gap-3 px-4 py-3 rounded-lg bg-gray-800/50 hover:bg-gray-800 transition-all"
+                        onClick={() => setIsMobileMenuOpen(false)}
                       >
                         <FaIdCard className="text-xl" />
                         <span className="font-medium text-lg">マイページ</span>
@@ -369,7 +367,7 @@ export default function GlobalNavigation() {
                 </div>
               </div>
             </div>
-          </>
+          </div>
         )}
       </nav>
 
