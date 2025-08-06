@@ -41,12 +41,12 @@ export default function PlayersPage() {
       });
   }, [players, searchTerm, filterAddress, sortBy]);
 
-  const getWinRate = (player) => {
+  const getWinRate = (player: any) => {
     if (!player.matches_played || player.matches_played === 0) return 0;
     return Math.round(((player.wins || 0) / player.matches_played) * 100);
   };
 
-  const getRankIcon = (index) => {
+  const getRankIcon = (index: number) => {
     if (index === 0) return '🥇';
     if (index === 1) return '🥈';
     if (index === 2) return '🥉';
