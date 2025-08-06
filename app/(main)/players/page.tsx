@@ -260,19 +260,17 @@ export default function PlayersPage() {
                   );
                 })}
               </div>
-            ) : (
-              // プレーヤーが多い場合は仮想グリッド
-              <Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
-                <VirtualGrid
-                  items={filteredAndSortedPlayers}
-                  columnCount={window.innerWidth < 640 ? 1 : window.innerWidth < 1024 ? 2 : 3}
-                  rowHeight={280}
-                  height={600}
-                  renderItem={renderItem}
-                  className="gap-3 sm:gap-4 lg:gap-6"
-                />
-              </Suspense>
-            )}
+           ) : (
+  // プレーヤーが多い場合も一旦通常のグリッド表示
+  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+    {filteredAndSortedPlayers.map((player, index) => {
+      const rankIcon = getRankIcon(index);
+      return (
+        <PlayerCard key={player.id} player={player} index={index} rankIcon={rankIcon} sortBy={sortBy} />
+      );
+    })}
+  </div>
+)}
           </>
         )}
       </div>
