@@ -17,7 +17,7 @@ export default function MatchRegisterPage() {
   const router = useRouter();
 
   const { players, loading: playersLoading, error: playersError } = useFetchPlayersData();
-  
+  const { user } = useAuth();  
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [tournamentsLoading, setTournamentsLoading] = useState(true);
   const [loading, setLoading] = useState(false);
