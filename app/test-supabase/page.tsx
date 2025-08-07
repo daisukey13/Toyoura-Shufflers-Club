@@ -8,7 +8,11 @@ import { supabase } from '@/lib/supabase';
 export default function TestSupabasePage() {
   const [status, setStatus] = useState('初期化中...');
   const [details, setDetails] = useState({});
-  const [testResults, setTestResults] = useState([]);
+  const [testResults, setTestResults] = useState<Array<{
+    test: string;
+    status: string;
+    details: any;
+  }>>([]);
 
   useEffect(() => {
     runTests();
