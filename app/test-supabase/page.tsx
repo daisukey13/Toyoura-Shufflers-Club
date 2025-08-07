@@ -5,21 +5,22 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
+interface TestResult {
+  test: string;
+  status: string;
+  details: any;
+}
+
 export default function TestSupabasePage() {
   const [status, setStatus] = useState('初期化中...');
-  const [details, setDetails] = useState({});
-  const [testResults, setTestResults] = useState<Array<{
-    test: string;
-    status: string;
-    details: any;
-  }>>([]);
+  const [testResults, setTestResults] = useState<TestResult[]>([]);
 
   useEffect(() => {
     runTests();
   }, []);
 
   const runTests = async () => {
-    const results = [];
+    const results: TestResult[] = [];
     
     // Test 1: Supabaseクライアントの確認
     try {
@@ -51,35 +52,38 @@ export default function TestSupabasePage() {
       results.push({ test: '環境変数', status: '❌ エラー', details: error instanceof Error ? error.message : String(error) });
     }
 
-    // Test 3: 簡単なクエリテスト（タイムアウト付き）
+    // Test 3: 簡単なクエリテスト（シンプル版）
     try {
       setStatus('Test 3: データベース接続を確認中...');
       
-      // タイムアウト付きでクエリを実行
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('タイムアウト: 10秒以内に応答がありませんでした')), 10000)
-      );
-      
-      const queryPromise = supabase
+      const startTime = Date.now();
+      const { data, error } = await supabase
         .from('players')
         .select('id')
         .limit(1);
+      const endTime = Date.now();
       
-      const result = await Promise.race([queryPromise, timeoutPromise]);
-      
-      if ('error' in result && result.error) {
+      if (error) {
         results.push({ 
           test: 'データベース接続', 
           status: '❌ NG', 
           details: {
-            message: result.error.message,
-            code: result.error.code,
-            hint: result.error.hint,
-            details: result.error.details
+            message: error.message,
+            code: error.code,
+            hint: error.hint || 'なし',
+            responseTime: `${endTime - startTime}ms`
           }
         });
       } else {
-        results.push({ test: 'データベース接続', status: '✅ OK', details: 'クエリ成功' });
+        results.push({ 
+          test: 'データベース接続', 
+          status: '✅ OK', 
+          details: {
+            message: 'クエリ成功',
+            responseTime: `${endTime - startTime}ms`,
+            dataReceived: data ? 'あり' : 'なし'
+          }
+        });
       }
     } catch (error) {
       results.push({ 
@@ -125,34 +129,45 @@ export default function TestSupabasePage() {
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
       
       if (supabaseUrl) {
-        // fetch APIでヘルスチェック
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const startTime = Date.now();
         
         try {
+          // HEADリクエストではなくGETリクエストを使用
           const response = await fetch(`${supabaseUrl}/rest/v1/`, {
-            method: 'HEAD',
-            signal: controller.signal
+            method: 'GET',
+            headers: {
+              'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+              'Content-Type': 'application/json'
+            }
           });
-          clearTimeout(timeoutId);
+          const endTime = Date.now();
           
           results.push({ 
             test: 'Supabase URL接続', 
-            status: response.ok ? '✅ OK' : '❌ NG',
+            status: response.ok || response.status === 404 ? '✅ 到達可能' : '❌ NG',
             details: {
               status: response.status,
               statusText: response.statusText,
-              url: supabaseUrl
+              responseTime: `${endTime - startTime}ms`,
+              url: supabaseUrl.substring(0, 30) + '...'
             }
           });
         } catch (fetchError) {
-          clearTimeout(timeoutId);
           results.push({ 
             test: 'Supabase URL接続', 
             status: '❌ エラー',
-            details: fetchError instanceof Error ? fetchError.message : String(fetchError)
+            details: {
+              message: fetchError instanceof Error ? fetchError.message : String(fetchError),
+              type: fetchError instanceof Error ? fetchError.name : 'Unknown'
+            }
           });
         }
+      } else {
+        results.push({ 
+          test: 'Supabase URL接続', 
+          status: '❌ 未設定',
+          details: 'NEXT_PUBLIC_SUPABASE_URLが設定されていません'
+        });
       }
     } catch (error) {
       results.push({ 
@@ -181,7 +196,7 @@ export default function TestSupabasePage() {
               <h3 className="text-lg font-bold text-yellow-100">{result.test}</h3>
               <span className="text-sm">{result.status}</span>
             </div>
-            <pre className="text-xs text-gray-400 overflow-x-auto">
+            <pre className="text-xs text-gray-400 overflow-x-auto whitespace-pre-wrap">
               {typeof result.details === 'object' 
                 ? JSON.stringify(result.details, null, 2)
                 : result.details
@@ -191,7 +206,7 @@ export default function TestSupabasePage() {
         ))}
       </div>
 
-      <div className="mt-8 flex gap-4">
+      <div className="mt-8 flex gap-4 flex-wrap">
         <button
           onClick={runTests}
           className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-medium hover:scale-105 transition-transform"
@@ -205,6 +220,24 @@ export default function TestSupabasePage() {
         >
           デバッグモードでランキングを開く
         </button>
+
+        <button
+          onClick={() => window.location.href = '/'}
+          className="px-6 py-3 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-lg font-medium hover:scale-105 transition-transform"
+        >
+          トップページへ
+        </button>
+      </div>
+
+      {/* デバッグ情報 */}
+      <div className="mt-8 glass-card rounded-xl p-6 border border-yellow-500/20">
+        <h3 className="text-lg font-bold text-yellow-100 mb-2">トラブルシューティング</h3>
+        <ul className="text-sm text-gray-400 space-y-2">
+          <li>• データベース接続で「タイムアウト」が表示される場合、ネットワークの問題の可能性があります</li>
+          <li>• 「❌ NG」が表示される場合、エラーの詳細を確認してください</li>
+          <li>• すべてのテストが「✅ OK」でも問題が続く場合、キャッシュをクリアしてみてください</li>
+          <li>• プライベートブラウジングモードをOFFにしてみてください</li>
+        </ul>
       </div>
     </div>
   );
