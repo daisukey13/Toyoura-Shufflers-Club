@@ -3,11 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { FaUser, FaTrophy, FaGamepad, FaEdit, FaSave, FaTimes, FaChartLine, FaHistory, FaCrown, FaExclamationTriangle } from 'react-icons/fa';
 
-const supabase = createClient();
 
 interface Player {
   id: string;
