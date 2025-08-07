@@ -7,7 +7,7 @@ import { useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
 // 画像の遅延読み込み用カスタムコンポーネント
-const LazyImage = memo(({ src, alt, className }: { src: string; alt: string; className: string }) => {
+const LazyImage = memo(function LazyImage({ src, alt, className }: { src: string; alt: string; className: string }) => {
   return (
     <img
       src={src}
