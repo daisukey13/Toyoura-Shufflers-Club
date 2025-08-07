@@ -57,8 +57,8 @@ export default function EditNoticePage() {
         `${SUPABASE_URL}/rest/v1/notices?id=eq.${noticeId}&select=*`,
         {
           headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'apikey': SUPABASE_ANON_KEY as string,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY as string}`,
             'Content-Type': 'application/json',
           }
         }
@@ -113,8 +113,8 @@ export default function EditNoticePage() {
         {
           method: 'PATCH',
           headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'apikey': SUPABASE_ANON_KEY as string,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY as string}`,
             'Content-Type': 'application/json',
             'Prefer': 'return=representation'
           },
@@ -147,8 +147,8 @@ export default function EditNoticePage() {
         {
           method: 'DELETE',
           headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'apikey': SUPABASE_ANON_KEY as string,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY as string}`,
           }
         }
       );
