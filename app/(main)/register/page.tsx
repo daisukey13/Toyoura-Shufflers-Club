@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase, createSupabaseClient } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { FaUserPlus, FaUser, FaEnvelope, FaPhone, FaMapMarkerAlt, FaGamepad, FaImage, FaCheckCircle, FaExclamationCircle, FaSpinner, FaLock } from 'react-icons/fa';
@@ -70,7 +70,7 @@ export default function RegisterPage() {
 
       setCheckingHandleName(true);
       try {
-        const supabase = createSupabaseClient();
+       
         const { data } = await supabase
           .from('players')
           .select('id')
@@ -106,7 +106,6 @@ export default function RegisterPage() {
 
   const fetchAvatarOptions = async () => {
     try {
-      const supabase = createSupabaseClient();
       const { data, error } = await supabase
         .storage
         .from('avatars')
@@ -180,7 +179,6 @@ export default function RegisterPage() {
     try {
       console.log('Registration starting...');
       
-      const supabase = createSupabaseClient();
       
       // 1. Supabase Authでユーザーを作成
       const { data: authData, error: authError } = await supabase.auth.signUp({
