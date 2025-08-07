@@ -5,11 +5,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { createClient } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase/client';
 import { FaUser, FaEnvelope, FaTrophy, FaShieldAlt, FaToggleOn, FaToggleOff, FaSave, FaArrowLeft, FaTrash, FaExclamationTriangle, FaUndo } from 'react-icons/fa';
 import Link from 'next/link';
 
-const supabase = createClient();
 
 interface Player {
   id: string;
