@@ -8,9 +8,14 @@ import { useRouter } from 'next/navigation';
 import { useFetchPlayersData, createMatch } from '@/lib/hooks/useFetchSupabaseData';
 import { useAuth } from '@/contexts/AuthContext';
 
+
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error("環境変数が設定されていません");
+}if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
   throw new Error("環境変数が設定されていません");
 }
 export default function MatchRegisterPage() {
