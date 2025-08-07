@@ -8,14 +8,14 @@ import { useRouter } from 'next/navigation';
 import { useFetchPlayersData, createMatch } from '@/lib/hooks/useFetchSupabaseData';
 import { useAuth } from '@/contexts/AuthContext';
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error("環境変数が設定されていません");
-}const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export default function MatchRegisterPage() {
   const router = useRouter();
-  const { user } = useAuth();
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error("環境変数が設定されていません");
+}  const { user } = useAuth();
   const { players, loading: playersLoading, error: playersError } = useFetchPlayersData();
   
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
