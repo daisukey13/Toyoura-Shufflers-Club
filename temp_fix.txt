@@ -1,0 +1,14 @@
+const LazyImage = memo(function LazyImage({ src, alt, className }: { src: string; alt: string; className: string }) {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      decoding="async"
+      onError={(e) => {
+        (e.target as HTMLImageElement).src = '/default-avatar.png';
+      }}
+    />
+  );
+});
