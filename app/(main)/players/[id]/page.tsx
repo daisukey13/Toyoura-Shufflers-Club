@@ -3,40 +3,15 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import { useFetchPlayerDetail, updatePlayer } from '@/lib/hooks/useFetchSupabaseData';
 import { useAuth } from '@/contexts/AuthContext';
 import { FaUser, FaTrophy, FaGamepad, FaEdit, FaSave, FaTimes, FaChartLine, FaHistory, FaCrown, FaExclamationTriangle } from 'react-icons/fa';
 
-
-interface Player {
-  id: string;
-  handle_name: string;
+interface EditForm {
   full_name: string;
-  email: string;
   phone: string;
   address: string;
   avatar_url: string;
-  ranking_points: number;
-  handicap: number;
-  matches_played: number;
-  wins: number;
-  losses: number;
-  created_at: string;
-  is_active: boolean;
-  is_admin: boolean;
-}
-
-interface MatchDetail {
-  id: string;
-  winner_name: string;
-  loser_name: string;
-  winner_id: string;
-  loser_id: string;
-  winner_score: number;
-  loser_score: number;
-  winner_ranking_change: number;
-  loser_ranking_change: number;
-  created_at: string;
 }
 
 export default function PlayerProfilePage() {
@@ -45,11 +20,11 @@ export default function PlayerProfilePage() {
   const { user, player: currentPlayer } = useAuth();
   const playerId = params.id as string;
 
-  const [player, setPlayer] = useState<Player | null>(null);
-  const [matches, setMatches] = useState<MatchDetail[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Fetch API フックを使用
+  const { player, matches, loading, error, refetch } = useFetchPlayerDetail(playerId);
+
   const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState({
+  const [editForm, setEditForm] = useState<EditForm>({
     full_name: '',
     phone: '',
     address: '',
@@ -61,72 +36,46 @@ export default function PlayerProfilePage() {
   // 自分のプロフィールかどうか
   const isOwnProfile = user?.id === playerId || currentPlayer?.id === playerId;
 
+  // プレーヤー情報が取得できたら編集フォームを初期化
   useEffect(() => {
-    fetchPlayer();
-    fetchMatches();
-    if (isOwnProfile) {
+    if (player) {
+      setEditForm({
+        full_name: player.full_name || '',
+        phone: player.phone || '',
+        address: player.address || '',
+        avatar_url: player.avatar_url || ''
+      });
+    }
+  }, [player]);
+
+  // アバターオプションの取得
+  useEffect(() => {
+    if (isOwnProfile && isEditing) {
       fetchAvatarOptions();
     }
-  }, [playerId]);
-
-  const fetchPlayer = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('players')
-        .select('*')
-        .eq('id', playerId)
-        .single();
-
-      if (error) throw error;
-
-      setPlayer(data);
-      setEditForm({
-        full_name: data.full_name,
-        phone: data.phone,
-        address: data.address,
-        avatar_url: data.avatar_url
-      });
-    } catch (error) {
-      console.error('Error fetching player:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchMatches = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('match_details')
-        .select('*')
-        .or(`winner_id.eq.${playerId},loser_id.eq.${playerId}`)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-      setMatches(data || []);
-    } catch (error) {
-      console.error('Error fetching matches:', error);
-    }
-  };
+  }, [isOwnProfile, isEditing]);
 
   const fetchAvatarOptions = async () => {
     try {
-      const { data, error } = await supabase
-        .storage
-        .from('avatars')
-        .list('preset', {
-          limit: 100,
-          offset: 0,
-        });
+      // Fetch APIでアバターオプションを取得
+      const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      
+      const response = await fetch(
+        `${SUPABASE_URL}/storage/v1/object/list/avatars/preset`,
+        {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          }
+        }
+      );
 
-      if (!error && data) {
-        const urls = data.map(file => {
-          const { data: publicData } = supabase
-            .storage
-            .from('avatars')
-            .getPublicUrl(`preset/${file.name}`);
-          return publicData.publicUrl;
-        });
+      if (response.ok) {
+        const data = await response.json();
+        const urls = data.map((file: any) => 
+          `${SUPABASE_URL}/storage/v1/object/public/avatars/preset/${file.name}`
+        );
         setAvatarOptions(urls);
       }
     } catch (error) {
@@ -135,23 +84,21 @@ export default function PlayerProfilePage() {
   };
 
   const handleSave = async () => {
-    if (!isOwnProfile) return;
+    if (!isOwnProfile || !player) return;
 
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from('players')
-        .update({
-          full_name: editForm.full_name,
-          phone: editForm.phone,
-          address: editForm.address,
-          avatar_url: editForm.avatar_url
-        })
-        .eq('id', playerId);
+      const { data, error } = await updatePlayer(playerId, {
+        full_name: editForm.full_name,
+        phone: editForm.phone,
+        address: editForm.address,
+        avatar_url: editForm.avatar_url
+      });
 
-      if (error) throw error;
+      if (error) throw new Error(error);
 
-      await fetchPlayer();
+      // 成功したらデータを再取得
+      await refetch();
       setIsEditing(false);
       alert('プロフィールを更新しました');
     } catch (error) {
@@ -167,14 +114,40 @@ export default function PlayerProfilePage() {
     return Math.round((player.wins / player.matches_played) * 100);
   };
 
+  // ローディング中
   if (loading) {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex items-center justify-center">
-        <div className="text-white">読み込み中...</div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400 mx-auto mb-4"></div>
+          <div className="text-white">プレーヤー情報を読み込んでいます...</div>
+        </div>
       </div>
     );
   }
 
+  // エラー表示
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#2a2a3e] flex items-center justify-center">
+        <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-6 max-w-md">
+          <div className="flex items-center gap-3 text-red-400 mb-2">
+            <FaExclamationTriangle className="text-xl" />
+            <h3 className="font-semibold">エラーが発生しました</h3>
+          </div>
+          <p className="text-gray-300">{error}</p>
+          <button
+            onClick={() => refetch()}
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            再試行
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // プレーヤーが見つからない
   if (!player) {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex items-center justify-center">
@@ -231,10 +204,10 @@ export default function PlayerProfilePage() {
                     onClick={() => {
                       setIsEditing(false);
                       setEditForm({
-                        full_name: player.full_name,
-                        phone: player.phone,
-                        address: player.address,
-                        avatar_url: player.avatar_url
+                        full_name: player.full_name || '',
+                        phone: player.phone || '',
+                        address: player.address || '',
+                        avatar_url: player.avatar_url || ''
                       });
                     }}
                     className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
@@ -261,7 +234,7 @@ export default function PlayerProfilePage() {
                   </div>
                 </div>
 
-                {isEditing && (
+                {isEditing && avatarOptions.length > 0 && (
                   <div>
                     <label className="block text-sm font-medium text-purple-300 mb-2">
                       アバター画像を変更
@@ -304,7 +277,7 @@ export default function PlayerProfilePage() {
                           className="w-full px-3 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white"
                         />
                       ) : (
-                        <p className="text-white">{player.full_name}</p>
+                        <p className="text-white">{player.full_name || '-'}</p>
                       )}
                     </div>
 
@@ -318,13 +291,13 @@ export default function PlayerProfilePage() {
                           className="w-full px-3 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white"
                         />
                       ) : (
-                        <p className="text-white">{player.phone}</p>
+                        <p className="text-white">{player.phone || '-'}</p>
                       )}
                     </div>
 
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">メールアドレス</label>
-                      <p className="text-white">{player.email}</p>
+                      <p className="text-white">{player.email || '-'}</p>
                     </div>
                   </>
                 )}
@@ -337,6 +310,7 @@ export default function PlayerProfilePage() {
                       onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
                       className="w-full px-3 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white"
                     >
+                      <option value="">選択してください</option>
                       <option value="豊浦町">豊浦町</option>
                       <option value="洞爺湖町">洞爺湖町</option>
                       <option value="壮瞥町">壮瞥町</option>
@@ -351,7 +325,7 @@ export default function PlayerProfilePage() {
                       <option value="外国（Visitor)">外国（Visitor)</option>
                     </select>
                   ) : (
-                    <p className="text-white">{player.address}</p>
+                    <p className="text-white">{player.address || '-'}</p>
                   )}
                 </div>
               </div>
@@ -393,15 +367,15 @@ export default function PlayerProfilePage() {
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="text-center">
-                <div className="text-3xl font-bold text-yellow-400">{player.ranking_points}</div>
+                <div className="text-3xl font-bold text-yellow-400">{player.ranking_points || 0}</div>
                 <div className="text-sm text-gray-400">ランキングポイント</div>
               </div>
               <div className="text-center">
-                <div className="text-3xl font-bold text-purple-400">{player.handicap}</div>
+                <div className="text-3xl font-bold text-purple-400">{player.handicap || 0}</div>
                 <div className="text-sm text-gray-400">ハンディキャップ</div>
               </div>
               <div className="text-center">
-                <div className="text-3xl font-bold text-blue-400">{player.matches_played}</div>
+                <div className="text-3xl font-bold text-blue-400">{player.matches_played || 0}</div>
                 <div className="text-sm text-gray-400">試合数</div>
               </div>
               <div className="text-center">
@@ -413,11 +387,11 @@ export default function PlayerProfilePage() {
             <div className="mt-6 pt-6 border-t border-gray-700">
               <div className="grid grid-cols-2 gap-4">
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-green-400">{player.wins}</div>
+                  <div className="text-2xl font-bold text-green-400">{player.wins || 0}</div>
                   <div className="text-sm text-gray-400">勝利</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-red-400">{player.losses}</div>
+                  <div className="text-2xl font-bold text-red-400">{player.losses || 0}</div>
                   <div className="text-sm text-gray-400">敗北</div>
                 </div>
               </div>
@@ -431,11 +405,11 @@ export default function PlayerProfilePage() {
               最近の試合結果
             </h2>
 
-            {matches.length === 0 ? (
+            {!matches || matches.length === 0 ? (
               <p className="text-gray-400 text-center py-8">まだ試合結果がありません</p>
             ) : (
               <div className="space-y-3">
-                {matches.map((match) => {
+                {matches.slice(0, 10).map((match: any) => {
                   const isWinner = match.winner_id === playerId;
                   const opponentName = isWinner ? match.loser_name : match.winner_name;
                   const score = isWinner 
@@ -475,7 +449,7 @@ export default function PlayerProfilePage() {
                             {pointChange > 0 ? '+' : ''}{pointChange}pt
                           </div>
                           <div className="text-sm text-gray-400">
-                            {new Date(match.created_at).toLocaleDateString('ja-JP')}
+                            {new Date(match.created_at || match.match_date).toLocaleDateString('ja-JP')}
                           </div>
                         </div>
                       </div>

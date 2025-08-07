@@ -1,16 +1,13 @@
 'use client';
 
-import { useState, useMemo, memo, useCallback, lazy, Suspense } from 'react';
+import { useState, useMemo, memo, useCallback } from 'react';
 import Link from 'next/link';
 import { FaUsers, FaTrophy, FaSearch, FaFilter, FaMedal, FaChartLine, FaCrown } from 'react-icons/fa';
-import { useFetchPlayersData as usePlayersData } from '@/lib/hooks/useFetchSupabaseData';
+import { useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
-// 仮想スクロール用のコンポーネント
-// const VirtualGrid = lazy(() => import('@/components/VirtualGrid'));
-
 // 画像の遅延読み込み用カスタムコンポーネント
-const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
+const LazyImage = memo(({ src, alt, className }: { src: string; alt: string; className: string }) => {
   return (
     <img
       src={src}
@@ -23,11 +20,30 @@ const LazyImage = ({ src, alt, className }: { src: string; alt: string; classNam
       }}
     />
   );
-};
+});
+
+// プレーヤー型定義
+interface Player {
+  id: string;
+  handle_name: string;
+  avatar_url: string | null;
+  address: string;
+  ranking_points: number;
+  handicap: number;
+  matches_played: number;
+  wins: number;
+  losses: number;
+  is_admin: boolean;
+}
 
 // プレーヤーカードコンポーネント（メモ化）
-const PlayerCard = memo(function PlayerCard({ player, index, rankIcon, sortBy }: { 
-  player: any; 
+const PlayerCard = memo(function PlayerCard({ 
+  player, 
+  index, 
+  rankIcon, 
+  sortBy 
+}: { 
+  player: Player; 
   index: number; 
   rankIcon: string | null; 
   sortBy: string;
@@ -126,7 +142,7 @@ const PageHeader = memo(function PageHeader({ playerCount }: { playerCount: numb
 });
 
 export default function PlayersPage() {
-  const { players, loading, error, retrying, refetch } = usePlayersData();
+  const { players, loading, error, retrying, refetch } = useFetchPlayersData();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAddress, setFilterAddress] = useState('all');
   const [sortBy, setSortBy] = useState('ranking');
@@ -167,12 +183,18 @@ export default function PlayersPage() {
     return null;
   }, []);
 
-  // 仮想グリッド用のアイテムレンダラー
-  const renderItem = useCallback((index: number) => {
-    const player = filteredAndSortedPlayers[index];
-    const rankIcon = getRankIcon(index);
-    return <PlayerCard key={player.id} player={player} index={index} rankIcon={rankIcon} sortBy={sortBy} />;
-  }, [filteredAndSortedPlayers, getRankIcon, sortBy]);
+  // 検索ハンドラーのメモ化
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value);
+  }, []);
+
+  const handleAddressFilterChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    setFilterAddress(e.target.value);
+  }, []);
+
+  const handleSortChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSortBy(e.target.value);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-0">
@@ -197,12 +219,12 @@ export default function PlayersPage() {
             <div className="mb-6 sm:mb-8 space-y-3 sm:space-y-4">
               {/* 検索バー */}
               <div className="relative">
-                <FaSearch className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
+                <FaSearch className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm sm:text-base pointer-events-none" />
                 <input
                   type="text"
                   placeholder="プレーヤー名で検索..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={handleSearchChange}
                   className="w-full pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3 bg-gray-900/60 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-purple-400 text-sm sm:text-base"
                 />
               </div>
@@ -216,7 +238,7 @@ export default function PlayersPage() {
                   </label>
                   <select
                     value={filterAddress}
-                    onChange={(e) => setFilterAddress(e.target.value)}
+                    onChange={handleAddressFilterChange}
                     className="w-full px-3 sm:px-4 py-2 sm:py-2.5 bg-gray-900/60 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:border-purple-400 text-sm sm:text-base"
                   >
                     <option value="all">すべての地域</option>
@@ -233,7 +255,7 @@ export default function PlayersPage() {
                   </label>
                   <select
                     value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
+                    onChange={handleSortChange}
                     className="w-full px-3 sm:px-4 py-2 sm:py-2.5 bg-gray-900/60 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:border-purple-400 text-sm sm:text-base"
                   >
                     <option value="ranking">ランキングポイント順</option>
@@ -245,32 +267,27 @@ export default function PlayersPage() {
               </div>
             </div>
 
-            {/* プレーヤーカード - 仮想グリッドまたは通常グリッド */}
+            {/* プレーヤーカード */}
             {filteredAndSortedPlayers.length === 0 ? (
               <div className="text-center py-8 sm:py-12">
                 <p className="text-gray-400 text-sm sm:text-base">該当するプレーヤーが見つかりませんでした</p>
               </div>
-            ) : filteredAndSortedPlayers.length <= 30 ? (
-              // プレーヤーが少ない場合は通常のグリッド表示
+            ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                 {filteredAndSortedPlayers.map((player, index) => {
                   const rankIcon = getRankIcon(index);
                   return (
-                    <PlayerCard key={player.id} player={player} index={index} rankIcon={rankIcon} sortBy={sortBy} />
+                    <PlayerCard 
+                      key={player.id} 
+                      player={player} 
+                      index={index} 
+                      rankIcon={rankIcon} 
+                      sortBy={sortBy} 
+                    />
                   );
                 })}
               </div>
-           ) : (
-  // プレーヤーが多い場合も一旦通常のグリッド表示
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
-    {filteredAndSortedPlayers.map((player, index) => {
-      const rankIcon = getRankIcon(index);
-      return (
-        <PlayerCard key={player.id} player={player} index={index} rankIcon={rankIcon} sortBy={sortBy} />
-      );
-    })}
-  </div>
-)}
+            )}
           </>
         )}
       </div>

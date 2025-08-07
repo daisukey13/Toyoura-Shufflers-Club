@@ -1,28 +1,27 @@
-// app/(main)/matches/register/page.tsx
-
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { Player } from '@/types/player';
 import { Tournament, MatchFormData } from '@/types/matches';
 import { FaTrophy, FaCalendar, FaMapMarkerAlt, FaStickyNote, FaMedal, FaGamepad, FaUsers, FaDice, FaLock } from 'react-icons/fa';
 import { useRouter } from 'next/navigation';
+import { useFetchPlayersData, createMatch } from '@/lib/hooks/useFetchSupabaseData';
+import { useAuth } from '@/contexts/AuthContext';
 
-// Supabaseクライアントをコンポーネント外で作成
-const supabase = createClient();
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export default function MatchRegisterPage() {
   const router = useRouter();
-  const [players, setPlayers] = useState<Player[]>([]);
+  const { user } = useAuth();
+  const { players, loading: playersLoading, error: playersError } = useFetchPlayersData();
+  
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [tournamentsLoading, setTournamentsLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [matchType, setMatchType] = useState<'normal' | 'tournament'>('normal');
-  const [previewMode, setPreviewMode] = useState(false);
-  const [checkingAuth, setCheckingAuth] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const [formData, setFormData] = useState<MatchFormData>({
     match_date: new Date().toISOString().slice(0, 16),
     winner_id: '',
@@ -34,72 +33,39 @@ export default function MatchRegisterPage() {
   });
 
   useEffect(() => {
-    checkAuthAndInitialize();
-  }, []);
-
-  const checkAuthAndInitialize = async () => {
-    try {
-      // ログインチェック
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        // 未ログインの場合はログインページへリダイレクト
-        router.push('/login?redirect=/matches/register');
-        return;
-      }
-
-      setCurrentUser(user);
-      
-      // ログイン済みの場合はデータを取得
-      await Promise.all([
-        fetchPlayers(),
-        fetchTournaments(),
-        testSupabaseConnection()
-      ]);
-    } catch (error) {
-      console.error('Error in initialization:', error);
-    } finally {
-      setCheckingAuth(false);
+    // 認証チェック
+    if (!user) {
+      router.push('/login?redirect=/matches/register');
+      return;
     }
-  };
-
-  const testSupabaseConnection = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('players')
-        .select('count')
-        .single();
-      
-      if (error) {
-        console.error('Supabase connection error:', error);
-      } else {
-        console.log('Supabase connection successful');
-      }
-    } catch (err) {
-      console.error('Supabase connection failed:', err);
-    }
-  };
-
-  const fetchPlayers = async () => {
-    const { data, error } = await supabase
-      .from('players')
-      .select('*')
-      .eq('is_active', true)
-      .order('handle_name');
     
-    if (!error && data) {
-      setPlayers(data);
-    }
-  };
+    // 大会データの取得
+    fetchTournaments();
+  }, [user, router]);
 
   const fetchTournaments = async () => {
-    const { data, error } = await supabase
-      .from('tournaments')
-      .select('*')
-      .eq('is_active', true)
-      .order('tournament_date', { ascending: false });
-    
-    if (!error && data) {
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/tournaments?is_active=eq.true&order=tournament_date.desc`,
+        {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch tournaments');
+      }
+
+      const data = await response.json();
       setTournaments(data);
+    } catch (err) {
+      console.error('Error fetching tournaments:', err);
+    } finally {
+      setTournamentsLoading(false);
     }
   };
 
@@ -147,12 +113,6 @@ export default function MatchRegisterPage() {
     return players.find(p => p.id === playerId);
   };
 
-  const handlePreview = () => {
-    if (formData.winner_id && formData.loser_id) {
-      setPreviewMode(true);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -160,14 +120,6 @@ export default function MatchRegisterPage() {
     setSuccess(false);
 
     try {
-      // デバッグ用：フォームデータを確認
-      console.log('Form data before submission:', formData);
-      console.log('Match type:', matchType);
-      console.log('Selected players:', {
-        winner: players.find(p => p.id === formData.winner_id),
-        loser: players.find(p => p.id === formData.loser_id)
-      });
-      
       // バリデーション
       if (!formData.winner_id || !formData.loser_id) {
         throw new Error('勝者と敗者を選択してください');
@@ -186,29 +138,19 @@ export default function MatchRegisterPage() {
       }
 
       // プレイヤー情報取得
-      const { data: playersData } = await supabase
-        .from('players')
-        .select('id, ranking_points, handicap, matches_played, wins, losses')
-        .in('id', [formData.winner_id, formData.loser_id]);
+      const winner = players.find(p => p.id === formData.winner_id);
+      const loser = players.find(p => p.id === formData.loser_id);
 
-      if (!playersData || playersData.length !== 2) {
+      if (!winner || !loser) {
         throw new Error('プレイヤー情報の取得に失敗しました');
       }
-
-      const winner = playersData.find(p => p.id === formData.winner_id)!;
-      const loser = playersData.find(p => p.id === formData.loser_id)!;
 
       // 大会情報取得（大会の場合）
       let tournamentBonus = 1.0;
       if (matchType === 'tournament' && formData.tournament_id) {
-        const { data: tournamentData } = await supabase
-          .from('tournaments')
-          .select('bonus_coefficient')
-          .eq('id', formData.tournament_id)
-          .single();
-        
-        if (tournamentData) {
-          tournamentBonus = tournamentData.bonus_coefficient;
+        const tournament = tournaments.find(t => t.id === formData.tournament_id);
+        if (tournament) {
+          tournamentBonus = tournament.bonus_coefficient;
         }
       }
 
@@ -223,96 +165,95 @@ export default function MatchRegisterPage() {
         tournamentBonus
       );
 
-      // 試合結果登録（最小限のデータでテスト）
+      // 試合データの準備
       const matchData = {
         winner_id: formData.winner_id,
         loser_id: formData.loser_id,
         winner_score: 15,
-        loser_score: parseInt(formData.loser_score.toString()), // 確実に数値として送信
+        loser_score: formData.loser_score,
         winner_points_change: changes.winnerPointsChange,
         loser_points_change: changes.loserPointsChange,
         winner_handicap_change: changes.winnerHandicapChange,
         loser_handicap_change: changes.loserHandicapChange,
-        registered_by: currentUser.id // 登録者を記録
+        registered_by: user?.id,
+        match_date: formData.match_date,
+        is_tournament: matchType === 'tournament',
+        tournament_id: matchType === 'tournament' ? formData.tournament_id : null,
+        venue: formData.venue || null,
+        notes: formData.notes || null
       };
 
-      // オプショナルフィールドを追加
-      const optionalFields: any = {};
-      
-      if (formData.match_date) {
-        optionalFields.match_date = formData.match_date;
-      }
-      
-      if (matchType === 'tournament' && formData.tournament_id) {
-        optionalFields.tournament_id = formData.tournament_id;
-        optionalFields.is_tournament = true;
-      } else {
-        optionalFields.is_tournament = false;
-      }
-      
-      // venueフィールドを再度有効化（キャッシュが更新されたら）
-      if (formData.venue && formData.venue.trim() !== '') {
-        optionalFields.venue = formData.venue.trim();
-      }
-      
-      if (formData.notes && formData.notes.trim() !== '') {
-        optionalFields.notes = formData.notes.trim();
+      // Fetch APIで試合登録
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/matches`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+          },
+          body: JSON.stringify(matchData)
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || '試合の登録に失敗しました');
       }
 
-      const fullMatchData = { ...matchData, ...optionalFields };
+      const insertedMatch = await response.json();
+      console.log('Successfully registered match:', insertedMatch);
 
-      console.log('Inserting match data:', fullMatchData); // デバッグ用
-      console.log('Match data JSON:', JSON.stringify(fullMatchData, null, 2)); // JSON形式で確認
-
-      const { data: insertedMatch, error: matchError } = await supabase
-        .from('matches')
-        .insert([fullMatchData]) // 配列として渡す
-        .select()
-        .single();
-
-      if (matchError) {
-        console.error('Match insert error details:', {
-          error: matchError,
-          code: matchError.code,
-          message: matchError.message,
-          details: matchError.details,
-          hint: matchError.hint,
-        });
-        
-        // Supabaseのエラーレスポンス全体も確認
-        console.error('Full error object:', JSON.stringify(matchError, null, 2));
-        
-        // リクエストの詳細も確認
-        console.error('Failed request data:', fullMatchData);
-        
-        throw new Error(`試合登録エラー: ${matchError.message} ${matchError.hint ? `(${matchError.hint})` : ''}`);
-      }
-
-      console.log('Successfully inserted match:', insertedMatch);
-
-      // プレイヤー情報更新
+      // プレイヤー情報の更新
       const updatePromises = [
-        supabase
-          .from('players')
-          .update({
-            ranking_points: winner.ranking_points + changes.winnerPointsChange,
-            handicap: Math.max(0, winner.handicap + changes.winnerHandicapChange),
-            matches_played: winner.matches_played + 1,
-            wins: winner.wins + 1,
-          })
-          .eq('id', formData.winner_id),
-        supabase
-          .from('players')
-          .update({
-            ranking_points: Math.max(0, loser.ranking_points + changes.loserPointsChange),
-            handicap: Math.min(50, loser.handicap + changes.loserHandicapChange),
-            matches_played: loser.matches_played + 1,
-            losses: loser.losses + 1,
-          })
-          .eq('id', formData.loser_id),
+        // 勝者の更新
+        fetch(
+          `${SUPABASE_URL}/rest/v1/players?id=eq.${formData.winner_id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              ranking_points: winner.ranking_points + changes.winnerPointsChange,
+              handicap: Math.max(0, winner.handicap + changes.winnerHandicapChange),
+              matches_played: winner.matches_played + 1,
+              wins: winner.wins + 1,
+            })
+          }
+        ),
+        // 敗者の更新
+        fetch(
+          `${SUPABASE_URL}/rest/v1/players?id=eq.${formData.loser_id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              ranking_points: Math.max(0, loser.ranking_points + changes.loserPointsChange),
+              handicap: Math.min(50, loser.handicap + changes.loserHandicapChange),
+              matches_played: loser.matches_played + 1,
+              losses: loser.losses + 1,
+            })
+          }
+        )
       ];
 
-      await Promise.all(updatePromises);
+      const updateResults = await Promise.all(updatePromises);
+      
+      // 更新結果の確認
+      for (const result of updateResults) {
+        if (!result.ok) {
+          console.error('Failed to update player stats');
+        }
+      }
 
       setSuccess(true);
       // 成功アニメーション後にリダイレクト
@@ -329,13 +270,13 @@ export default function MatchRegisterPage() {
   const winner = getSelectedPlayer(formData.winner_id);
   const loser = getSelectedPlayer(formData.loser_id);
 
-  // 認証確認中の表示
-  if (checkingAuth) {
+  // 全体のローディング状態
+  if (playersLoading || tournamentsLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400 mx-auto mb-4"></div>
-          <div className="text-xl text-gray-400">認証確認中...</div>
+          <div className="text-xl text-gray-400">データを読み込んでいます...</div>
         </div>
       </div>
     );
@@ -355,10 +296,12 @@ export default function MatchRegisterPage() {
           熱戦の記録を残そう
         </p>
         {/* ログイン状態の表示 */}
-        <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-green-500/20 rounded-full">
-          <FaLock className="text-green-400 text-sm" />
-          <span className="text-green-400 text-sm">ログイン済み</span>
-        </div>
+        {user && (
+          <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-green-500/20 rounded-full">
+            <FaLock className="text-green-400 text-sm" />
+            <span className="text-green-400 text-sm">ログイン済み</span>
+          </div>
+        )}
       </div>
 
       {error && (

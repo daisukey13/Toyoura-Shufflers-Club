@@ -1,14 +1,13 @@
-// app/(main)/players/[id]/edit/page.tsx
-
 'use client';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase/client';
 import { FaUser, FaEnvelope, FaTrophy, FaShieldAlt, FaToggleOn, FaToggleOff, FaSave, FaArrowLeft, FaTrash, FaExclamationTriangle, FaUndo } from 'react-icons/fa';
 import Link from 'next/link';
 
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 interface Player {
   id: string;
@@ -58,33 +57,57 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
   const fetchPlayer = async () => {
     try {
-      const { data, error } = await supabase
-        .from('players')
-        .select('*')
-        .eq('id', params.id)
-        .single();
+      // プレーヤー情報を取得
+      const playerResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/players?id=eq.${params.id}&select=*`,
+        {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          }
+        }
+      );
 
-      if (error) throw error;
+      if (!playerResponse.ok) {
+        throw new Error('Failed to fetch player');
+      }
 
-      setPlayer(data);
+      const playerData = await playerResponse.json();
+      if (!playerData || playerData.length === 0) {
+        throw new Error('Player not found');
+      }
+
+      const playerInfo = playerData[0];
+      setPlayer(playerInfo);
       setFormData({
-        handle_name: data.handle_name,
-        email: data.email,
-        handicap: data.handicap,
-        rating: data.rating,
-        is_admin: data.is_admin,
-        is_active: data.is_active,
+        handle_name: playerInfo.handle_name,
+        email: playerInfo.email,
+        handicap: playerInfo.handicap,
+        rating: playerInfo.rating || 1500,
+        is_admin: playerInfo.is_admin,
+        is_active: playerInfo.is_active,
       });
 
       // 退会済みの場合、復元情報を取得
-      if (data.is_deleted) {
-        const { data: deletedInfo } = await supabase
-          .from('deleted_player_data')
-          .select('restoration_token, scheduled_purge_at')
-          .eq('player_id', params.id)
-          .single();
-        
-        setDeletedData(deletedInfo);
+      if (playerInfo.is_deleted) {
+        const deletedResponse = await fetch(
+          `${SUPABASE_URL}/rest/v1/deleted_player_data?player_id=eq.${params.id}&select=restoration_token,scheduled_purge_at`,
+          {
+            headers: {
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+            }
+          }
+        );
+
+        if (deletedResponse.ok) {
+          const deletedDataArray = await deletedResponse.json();
+          if (deletedDataArray.length > 0) {
+            setDeletedData(deletedDataArray[0]);
+          }
+        }
       }
     } catch (error) {
       console.error('Error fetching player:', error);
@@ -98,12 +121,23 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     setSaving(true);
 
     try {
-      const { error } = await supabase
-        .from('players')
-        .update(formData)
-        .eq('id', params.id);
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/players?id=eq.${params.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+          },
+          body: JSON.stringify(formData)
+        }
+      );
 
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error('Failed to update player');
+      }
 
       alert('プレイヤー情報を更新しました');
       router.push('/players');
@@ -118,14 +152,29 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const handleDelete = async () => {
     setSaving(true);
     try {
-      const { error } = await supabase.rpc('soft_delete_player', {
-        p_player_id: params.id,
-        p_deletion_note: deletionNote || null
-      });
+      // RPC関数を呼び出す
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/rpc/soft_delete_player`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            p_player_id: params.id,
+            p_deletion_note: deletionNote || null
+          })
+        }
+      );
 
-      if (error) throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to delete player');
+      }
 
-      alert('プレイヤーを退会処理しました');
+      alert('プレーヤーを退会処理しました');
       router.push('/players');
     } catch (error) {
       console.error('Error deleting player:', error);
@@ -141,13 +190,28 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     
     setSaving(true);
     try {
-      const { error } = await supabase.rpc('restore_deleted_player', {
-        p_restoration_token: deletedData.restoration_token
-      });
+      // RPC関数を呼び出す
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/rpc/restore_deleted_player`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            p_restoration_token: deletedData.restoration_token
+          })
+        }
+      );
 
-      if (error) throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to restore player');
+      }
 
-      alert('プレイヤーを復活しました');
+      alert('プレーヤーを復活しました');
       router.push('/players');
     } catch (error) {
       console.error('Error restoring player:', error);
@@ -161,7 +225,10 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center">
-        <div className="text-white text-xl">読み込み中...</div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400 mx-auto mb-4"></div>
+          <div className="text-white text-xl">読み込み中...</div>
+        </div>
       </div>
     );
   }
@@ -169,7 +236,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
   if (!player) {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center">
-        <div className="text-white text-xl">プレイヤーが見つかりません</div>
+        <div className="text-white text-xl">プレーヤーが見つかりません</div>
       </div>
     );
   }
@@ -179,7 +246,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     : null;
 
   return (
-    <div className="min-h-screen bg-[#2a2a3e] text-white p-8">
+    <div className="min-h-screen bg-[#2a2a3e] text-white p-4 sm:p-8">
       <div className="max-w-2xl mx-auto">
         <div className="flex items-center gap-4 mb-8">
           <Link
@@ -188,15 +255,15 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
           >
             <FaArrowLeft className="text-xl" />
           </Link>
-          <h1 className="text-3xl font-bold">プレイヤー編集</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">プレーヤー編集</h1>
         </div>
 
         {player.is_deleted && (
           <div className="bg-red-900/30 border border-red-600/50 rounded-lg p-4 mb-6">
             <div className="flex items-center gap-3">
-              <FaExclamationTriangle className="text-red-400 text-xl" />
-              <div>
-                <p className="text-red-200 font-bold">このプレイヤーは退会済みです</p>
+              <FaExclamationTriangle className="text-red-400 text-xl flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-red-200 font-bold">このプレーヤーは退会済みです</p>
                 <p className="text-red-300 text-sm">
                   {purgeDate && `${purgeDate} に完全削除予定`}
                 </p>
@@ -248,7 +315,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">
                 ハンディキャップ
@@ -309,7 +376,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             </label>
           </div>
 
-          <div className="flex gap-4">
+          <div className="flex flex-col sm:flex-row gap-4">
             <button
               type="submit"
               disabled={saving || player.is_deleted}
@@ -323,7 +390,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
               <button
                 type="button"
                 onClick={() => setShowDeleteModal(true)}
-                className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all flex items-center gap-2"
+                className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all flex items-center justify-center gap-2"
               >
                 <FaTrash />
                 退会処理
@@ -383,7 +450,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       {showRestoreModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-900 rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4 text-green-400">プレイヤーの復活</h2>
+            <h2 className="text-xl font-bold mb-4 text-green-400">プレーヤーの復活</h2>
             <p className="text-gray-300 mb-6">
               {player.handle_name} を復活させますか？<br />
               <span className="text-sm text-gray-400">
