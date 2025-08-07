@@ -3,7 +3,7 @@
 import { useState, useMemo, memo, useCallback, lazy, Suspense } from 'react';
 import { FaTrophy, FaCalendar, FaMapMarkerAlt, FaMedal, FaHistory, FaGamepad, FaFilter, FaFire, FaStar } from 'react-icons/fa';
 import Link from 'next/link';
-import { useMatchesData } from '@/lib/hooks/useSupabaseData';
+import { useFetchMatchesData as useMatchesData } from '@/lib/hooks/useFetchSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
 // 仮想スクロール用のコンポーネント
