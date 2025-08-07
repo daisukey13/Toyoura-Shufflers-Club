@@ -196,8 +196,8 @@ export default function MatchRegisterPage() {
         {
           method: 'POST',
           headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'apikey': SUPABASE_ANON_KEY as string,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY as string}`,
             'Content-Type': 'application/json',
             'Prefer': 'return=representation'
           },
@@ -221,8 +221,8 @@ export default function MatchRegisterPage() {
           {
             method: 'PATCH',
             headers: {
-              'apikey': SUPABASE_ANON_KEY,
-              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+              'apikey': SUPABASE_ANON_KEY as string,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY as string}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
@@ -239,8 +239,8 @@ export default function MatchRegisterPage() {
           {
             method: 'PATCH',
             headers: {
-              'apikey': SUPABASE_ANON_KEY,
-              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+              'apikey': SUPABASE_ANON_KEY as string,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY as string}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
