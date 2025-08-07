@@ -26,7 +26,7 @@ export default function TestSupabasePage() {
         results.push({ test: 'Supabaseクライアント', status: '❌ NG', details: 'クライアントが未初期化' });
       }
     } catch (error) {
-      results.push({ test: 'Supabaseクライアント', status: '❌ エラー', details: error.message });
+      results.push({ test: 'Supabaseクライアント', status: '❌ エラー', details: error instanceof Error ? error.message : String(error) });
     }
 
     // Test 2: 環境変数の確認
@@ -44,7 +44,7 @@ export default function TestSupabasePage() {
         }
       });
     } catch (error) {
-      results.push({ test: '環境変数', status: '❌ エラー', details: error.message });
+      results.push({ test: '環境変数', status: '❌ エラー', details: error instanceof Error ? error.message : String(error) });
     }
 
     // Test 3: 簡単なクエリテスト
@@ -61,7 +61,7 @@ export default function TestSupabasePage() {
         results.push({ test: 'データベース接続', status: '✅ OK', details: 'クエリ成功' });
       }
     } catch (error) {
-      results.push({ test: 'データベース接続', status: '❌ エラー', details: error.message });
+      results.push({ test: 'データベース接続', status: '❌ エラー', details: error instanceof Error ? error.message : String(error) });
     }
 
     // Test 4: ネットワーク状態
@@ -79,7 +79,7 @@ export default function TestSupabasePage() {
         }
       });
     } catch (error) {
-      results.push({ test: 'ネットワーク', status: '❌ エラー', details: error.message });
+      results.push({ test: 'ネットワーク', status: '❌ エラー', details: error instanceof Error ? error.message : String(error) });
     }
 
     // Test 5: ユーザーエージェント
