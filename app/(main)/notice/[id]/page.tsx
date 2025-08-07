@@ -17,7 +17,7 @@ interface Notice {
 }
 
 export default function NoticeDetailPage() {
-  const params = useParams();
+  const { notice, loading, error } = useFetchNoticeDetail(noticeId) as any;
   const router = useRouter();
   const noticeId = params.id as string;
   
