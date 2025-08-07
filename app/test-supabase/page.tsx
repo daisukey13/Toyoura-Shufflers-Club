@@ -51,21 +51,42 @@ export default function TestSupabasePage() {
       results.push({ test: '環境変数', status: '❌ エラー', details: error instanceof Error ? error.message : String(error) });
     }
 
-    // Test 3: 簡単なクエリテスト
+    // Test 3: 簡単なクエリテスト（タイムアウト付き）
     try {
       setStatus('Test 3: データベース接続を確認中...');
-      const { data, error } = await supabase
+      
+      // タイムアウト付きでクエリを実行
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('タイムアウト: 10秒以内に応答がありませんでした')), 10000)
+      );
+      
+      const queryPromise = supabase
         .from('players')
         .select('id')
         .limit(1);
       
-      if (error) {
-        results.push({ test: 'データベース接続', status: '❌ NG', details: error.message });
+      const result = await Promise.race([queryPromise, timeoutPromise]);
+      
+      if ('error' in result && result.error) {
+        results.push({ 
+          test: 'データベース接続', 
+          status: '❌ NG', 
+          details: {
+            message: result.error.message,
+            code: result.error.code,
+            hint: result.error.hint,
+            details: result.error.details
+          }
+        });
       } else {
         results.push({ test: 'データベース接続', status: '✅ OK', details: 'クエリ成功' });
       }
     } catch (error) {
-      results.push({ test: 'データベース接続', status: '❌ エラー', details: error instanceof Error ? error.message : String(error) });
+      results.push({ 
+        test: 'データベース接続', 
+        status: '❌ エラー', 
+        details: error instanceof Error ? error.message : String(error) 
+      });
     }
 
     // Test 4: ネットワーク状態
@@ -97,6 +118,49 @@ export default function TestSupabasePage() {
         language: navigator.language
       }
     });
+
+    // Test 6: Supabase URLへの直接アクセステスト
+    try {
+      setStatus('Test 6: Supabase URLへの接続を確認中...');
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      
+      if (supabaseUrl) {
+        // fetch APIでヘルスチェック
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        try {
+          const response = await fetch(`${supabaseUrl}/rest/v1/`, {
+            method: 'HEAD',
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          
+          results.push({ 
+            test: 'Supabase URL接続', 
+            status: response.ok ? '✅ OK' : '❌ NG',
+            details: {
+              status: response.status,
+              statusText: response.statusText,
+              url: supabaseUrl
+            }
+          });
+        } catch (fetchError) {
+          clearTimeout(timeoutId);
+          results.push({ 
+            test: 'Supabase URL接続', 
+            status: '❌ エラー',
+            details: fetchError instanceof Error ? fetchError.message : String(fetchError)
+          });
+        }
+      }
+    } catch (error) {
+      results.push({ 
+        test: 'Supabase URL接続', 
+        status: '❌ エラー',
+        details: error instanceof Error ? error.message : String(error)
+      });
+    }
 
     setTestResults(results);
     setStatus('テスト完了');
