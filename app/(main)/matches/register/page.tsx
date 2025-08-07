@@ -8,7 +8,9 @@ import { useRouter } from 'next/navigation';
 import { useFetchPlayersData, createMatch } from '@/lib/hooks/useFetchSupabaseData';
 import { useAuth } from '@/contexts/AuthContext';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error("環境変数が設定されていません");
+}const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export default function MatchRegisterPage() {
@@ -49,8 +51,8 @@ export default function MatchRegisterPage() {
         `${SUPABASE_URL}/rest/v1/tournaments?is_active=eq.true&order=tournament_date.desc`,
         {
           headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'apikey': SUPABASE_ANON_KEY!,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY!}`,
             'Content-Type': 'application/json',
           }
         }
