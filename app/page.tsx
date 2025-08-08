@@ -207,65 +207,91 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen">
-      {/* ヒーローセクション */}
-      <div className="relative py-20 text-center">
+      {/* ヒーローセクション - モバイル最適化版 */}
+      <div className="relative py-10 sm:py-20 text-center">
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-b from-purple-900/20 to-transparent"></div>
         </div>
         
-        <div className="relative z-10">
-          <div className="inline-block p-6 mb-6 rounded-full bg-blue-600/20 backdrop-blur-sm float-animation">
-            <FaTrophy className="text-6xl text-yellow-400" />
+        <div className="relative z-10 px-4">
+          {/* コンパクトなヘッダー */}
+          <div className="mb-6 sm:mb-8">
+            {/* エンブレム風のロゴ */}
+            <div className="inline-flex items-center justify-center w-14 h-14 sm:w-20 sm:h-20 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-yellow-400/20 to-orange-600/20 backdrop-blur-sm border border-yellow-400/30 shadow-lg float-animation">
+              <span className="text-2xl sm:text-4xl">🏆</span>
+            </div>
+            
+            {/* タイトル */}
+            <h1 className="font-bold tracking-tight mb-2">
+              {/* モバイル - 2行表示 */}
+              <span className="sm:hidden">
+                <span className="block text-2xl bg-gradient-to-r from-yellow-300 to-orange-400 bg-clip-text text-transparent">
+                  豊浦シャッフラーズ
+                </span>
+                <span className="block text-lg text-yellow-200">
+                  CLUB
+                </span>
+              </span>
+              
+              {/* デスクトップ */}
+              <span className="hidden sm:inline-block text-5xl lg:text-6xl bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
+                豊浦シャッフラーズクラブ
+              </span>
+            </h1>
+            
+            {/* 装飾ライン */}
+            <div className="flex items-center justify-center gap-1 mb-3">
+              <div className="w-8 h-px bg-gradient-to-r from-transparent to-yellow-400/50"></div>
+              <div className="w-1.5 h-1.5 rounded-full bg-yellow-400"></div>
+              <div className="w-8 h-px bg-gradient-to-l from-transparent to-yellow-400/50"></div>
+            </div>
+            
+            {/* サブタイトル */}
+            <p className="text-sm sm:text-lg text-gray-300 max-w-xs sm:max-w-md mx-auto">
+              みんなで楽しくシャッフルボード！
+            </p>
           </div>
           
-          <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
-            豊浦シャッフラーズクラブ
-          </h1>
-          
-          <p className="text-xl text-gray-300 mb-8">
-            みんなで楽しくシャッフルボード！<br />
-            友達と競い合い、スキルを磨こう
-          </p>
-          
-          <div className="flex gap-4 justify-center">
-            <Link href="/register" className="gradient-button px-8 py-3 rounded-full text-white font-medium flex items-center gap-2">
-              <FaUserPlus /> 新規登録
+          {/* CTAボタン */}
+          <div className="flex flex-col sm:flex-row gap-3 justify-center max-w-xs mx-auto sm:max-w-none">
+            <Link href="/register" className="gradient-button px-6 py-2.5 sm:px-8 sm:py-3 rounded-full text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2">
+              <FaUserPlus className="text-sm" /> 新規登録
             </Link>
             <button 
               onClick={() => setShowLoginModal(true)}
-              className="px-8 py-3 rounded-full border border-purple-500 text-purple-400 hover:bg-purple-500/10 transition-colors font-medium flex items-center gap-2"
+              className="px-6 py-2.5 sm:px-8 sm:py-3 rounded-full border border-purple-500 text-purple-400 hover:bg-purple-500/10 transition-colors font-medium text-sm sm:text-base flex items-center justify-center gap-2"
             >
-              <FaSignInAlt /> ログイン
+              <FaSignInAlt className="text-sm" /> ログイン
             </button>
           </div>
 
-          {/* お知らせセクション */}
+          {/* お知らせセクション - モバイル対応 */}
           {notices.length > 0 && (
-            <div className="mt-12 max-w-2xl mx-auto">
-              <h3 className="text-lg font-semibold text-yellow-300 mb-4 flex items-center justify-center gap-2">
-                <span>📢</span> クラブからのお知らせ
+            <div className="mt-8 sm:mt-12 max-w-2xl mx-auto">
+              <h3 className="text-base sm:text-lg font-semibold text-yellow-300 mb-3 sm:mb-4 flex items-center justify-center gap-2">
+                <span className="text-lg sm:text-base">📢</span> 
+                <span>お知らせ</span>
               </h3>
               <div className="space-y-2">
                 {notices.map((notice) => (
                   <Link 
                     key={notice.id} 
                     href={`/notices/${notice.id}`}
-                    className="block glass-card rounded-lg px-4 py-3 hover:bg-purple-900/20 transition-all group"
+                    className="block glass-card rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 hover:bg-purple-900/20 transition-all group"
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm text-gray-400">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0">
+                        <span className="text-xs sm:text-sm text-gray-400 flex-shrink-0">
                           {new Date(notice.date).toLocaleDateString('ja-JP', {
-                            year: 'numeric',
                             month: 'numeric',
                             day: 'numeric'
                           })}
                         </span>
-                        <span className="text-yellow-100 group-hover:text-yellow-300 transition-colors">
+                        <span className="text-sm sm:text-base text-yellow-100 group-hover:text-yellow-300 transition-colors truncate">
                           {notice.title}
                         </span>
                       </div>
-                      <span className="text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <span className="text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-sm">
                         →
                       </span>
                     </div>
@@ -277,9 +303,9 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* メニューグリッド */}
-      <div className="container mx-auto px-4 py-12">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+      {/* メニューグリッド - モバイル対応 */}
+      <div className="container mx-auto px-4 py-8 sm:py-12">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-8 sm:mb-12">
           {menuItems.map((item, index) => {
             let cardClass = '';
             if (index === 0) cardClass = 'ranking-card';
@@ -289,13 +315,13 @@ export default function HomePage() {
             
             return (
               <Link key={index} href={item.href}>
-                <div className={`${cardClass} glass-card rounded-xl p-6 hover:scale-105 transition-transform cursor-pointer group`}>
+                <div className={`${cardClass} glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer group h-full`}>
                   <div className="flex flex-col items-center text-center">
-                    <div className="p-4 rounded-full bg-gradient-to-br from-purple-600/20 to-pink-600/20 mb-4 group-hover:scale-110 transition-transform">
-                      <item.icon className="text-3xl text-purple-400" />
+                    <div className="p-3 sm:p-4 rounded-full bg-gradient-to-br from-purple-600/20 to-pink-600/20 mb-2 sm:mb-4 group-hover:scale-110 transition-transform">
+                      <item.icon className="text-xl sm:text-3xl text-purple-400" />
                     </div>
-                    <h3 className="text-lg font-semibold mb-2 text-yellow-100">{item.title}</h3>
-                    <p className="text-sm text-gray-400">{item.description}</p>
+                    <h3 className="text-base sm:text-lg font-semibold mb-1 sm:mb-2 text-yellow-100">{item.title}</h3>
+                    <p className="text-xs sm:text-sm text-gray-400 hidden sm:block">{item.description}</p>
                   </div>
                 </div>
               </Link>
@@ -303,60 +329,56 @@ export default function HomePage() {
           })}
         </div>
 
-        {/* 統計セクション */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          <div className="glass-card rounded-xl p-6 text-center">
-            <FaUsers className="text-4xl text-pink-400 mx-auto mb-3" />
-            <div className="text-3xl font-bold mb-1 text-yellow-100">{stats.activeMembers}</div>
-            <div className="text-gray-400">アクティブメンバー</div>
+        {/* 統計セクション - モバイル対応 */}
+        <div className="grid grid-cols-3 gap-3 sm:gap-6 mb-8 sm:mb-12">
+          <div className="glass-card rounded-xl p-3 sm:p-6 text-center">
+            <FaUsers className="text-2xl sm:text-4xl text-pink-400 mx-auto mb-2 sm:mb-3" />
+            <div className="text-xl sm:text-3xl font-bold mb-1 text-yellow-100">{stats.activeMembers}</div>
+            <div className="text-xs sm:text-base text-gray-400">メンバー</div>
           </div>
           
-          <div className="glass-card rounded-xl p-6 text-center">
-            <FaCalendar className="text-4xl text-yellow-400 mx-auto mb-3" />
-            <div className="text-3xl font-bold mb-1 text-yellow-100">{stats.totalMatches}</div>
-            <div className="text-gray-400">総試合数</div>
+          <div className="glass-card rounded-xl p-3 sm:p-6 text-center">
+            <FaCalendar className="text-2xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
+            <div className="text-xl sm:text-3xl font-bold mb-1 text-yellow-100">{stats.totalMatches}</div>
+            <div className="text-xs sm:text-base text-gray-400">試合数</div>
           </div>
           
-          <div className="glass-card rounded-xl p-6 text-center">
-            <FaChartLine className="text-4xl text-blue-400 mx-auto mb-3" />
-            <div className="text-3xl font-bold mb-1 text-yellow-100">{stats.avgRankingPoint}</div>
-            <div className="text-gray-400">平均ランキングポイント</div>
+          <div className="glass-card rounded-xl p-3 sm:p-6 text-center">
+            <FaChartLine className="text-2xl sm:text-4xl text-blue-400 mx-auto mb-2 sm:mb-3" />
+            <div className="text-xl sm:text-3xl font-bold mb-1 text-yellow-100">{stats.avgRankingPoint}</div>
+            <div className="text-xs sm:text-base text-gray-400">平均pts</div>
           </div>
         </div>
 
-        {/* トッププレイヤー */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-yellow-100">
-            <FaTrophy className="text-yellow-400" />
+        {/* トッププレイヤー - モバイル対応 */}
+        <div className="mb-8 sm:mb-12">
+          <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-2 text-yellow-100">
+            <FaTrophy className="text-yellow-400 text-lg sm:text-2xl" />
             トッププレーヤー
           </h2>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6">
             {topPlayers.map((player, index) => (
               <Link key={player.id} href={`/players/${player.id}`}>
-                <div className="glass-card rounded-xl p-6 hover:scale-105 transition-transform cursor-pointer">
-                  <div className="flex items-center justify-between mb-4">
+                <div className="glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer">
+                  <div className="flex items-center justify-between mb-3 sm:mb-4">
                     <div className="flex items-center gap-3">
                       <img
                         src={player.avatar_url || '/default-avatar.png'}
                         alt={player.handle_name}
-                        className="w-12 h-12 rounded-full"
+                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-full"
                       />
                       <div>
-                        <h3 className="font-semibold text-yellow-100">{player.handle_name}</h3>
-                        <p className="text-sm text-gray-400">ハンディ: {player.handicap}</p>
+                        <h3 className="font-semibold text-yellow-100 text-sm sm:text-base">{player.handle_name}</h3>
+                        <p className="text-xs sm:text-sm text-gray-400">ハンディ: {player.handicap}</p>
                       </div>
                     </div>
-                    <div className={`text-2xl font-bold ${
-                      index === 0 ? 'text-yellow-400' :
-                      index === 1 ? 'text-gray-300' :
-                      'text-orange-600'
-                    }`}>
+                    <div className={`text-xl sm:text-2xl font-bold`}>
                       {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
                     </div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-yellow-100">{player.ranking_points}pt</div>
+                    <div className="text-xl sm:text-2xl font-bold text-yellow-100">{player.ranking_points}pt</div>
                   </div>
                 </div>
               </Link>
@@ -364,63 +386,63 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* 最近の試合 */}
+        {/* 最近の試合 - モバイル対応 */}
         <div>
-          <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-yellow-100">
-            <FaHistory className="text-blue-400" />
+          <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-2 text-yellow-100">
+            <FaHistory className="text-blue-400 text-lg sm:text-2xl" />
             最近の試合
           </h2>
           
           <div className="space-y-3">
-            {recentMatches.map((match) => {
+            {recentMatches.slice(0, 3).map((match) => {
               const isUpset = (
                 (match.winner_current_points < match.loser_current_points - 100) ||
                 (match.winner_current_handicap > match.loser_current_handicap + 5)
               );
               
               return (
-                <div key={match.id} className={`glass-card rounded-lg p-4 relative ${
+                <div key={match.id} className={`glass-card rounded-lg p-3 sm:p-4 relative ${
                   isUpset ? 'border border-yellow-500/50 shadow-lg shadow-yellow-500/10' : ''
                 }`}>
                   {/* 番狂わせバッジ */}
                   {isUpset && (
                     <div className="absolute top-2 left-1/2 transform -translate-x-1/2">
-                      <span className="px-2 py-1 rounded-full bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 text-yellow-400 text-xs font-medium">
+                      <span className="px-2 py-0.5 rounded-full bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 text-yellow-400 text-xs font-medium">
                         番狂わせ
                       </span>
                     </div>
                   )}
                   
-                  {/* スコア（中央） */}
-                  <div className="text-center mb-3">
-                    <div className={`text-2xl font-bold text-yellow-100 ${isUpset ? 'mt-6' : 'mt-2'}`}>
+                  {/* スコア（中央） - モバイルで小さく */}
+                  <div className="text-center mb-2 sm:mb-3">
+                    <div className={`text-xl sm:text-2xl font-bold text-yellow-100 ${isUpset ? 'mt-5 sm:mt-6' : 'mt-1 sm:mt-2'}`}>
                       15 - {match.loser_score}
                     </div>
                   </div>
                   
-                  {/* プレイヤー情報（左右） */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                  {/* プレイヤー情報（左右） - モバイル対応 */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                       <img
                         src={match.winner_avatar || '/default-avatar.png'}
                         alt={match.winner_name}
-                        className="w-10 h-10 rounded-full"
+                        className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0"
                       />
-                      <div>
-                        <div className="font-medium text-yellow-100">{match.winner_name}</div>
-                        <div className="text-sm text-green-400">勝利</div>
+                      <div className="min-w-0">
+                        <div className="font-medium text-yellow-100 text-sm sm:text-base truncate">{match.winner_name}</div>
+                        <div className="text-xs sm:text-sm text-green-400">勝利</div>
                       </div>
                     </div>
                     
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <div className="font-medium text-yellow-100">{match.loser_name}</div>
-                        <div className="text-sm text-red-400">敗北</div>
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                      <div className="text-right min-w-0">
+                        <div className="font-medium text-yellow-100 text-sm sm:text-base truncate">{match.loser_name}</div>
+                        <div className="text-xs sm:text-sm text-red-400">敗北</div>
                       </div>
                       <img
                         src={match.loser_avatar || '/default-avatar.png'}
                         alt={match.loser_name}
-                        className="w-10 h-10 rounded-full"
+                        className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0"
                       />
                     </div>
                   </div>
@@ -429,19 +451,19 @@ export default function HomePage() {
             })}
           </div>
           
-          <div className="text-center mt-6">
-            <Link href="/matches" className="text-purple-400 hover:text-purple-300 transition-colors">
+          <div className="text-center mt-4 sm:mt-6">
+            <Link href="/matches" className="text-purple-400 hover:text-purple-300 transition-colors text-sm sm:text-base">
               すべての試合を見る →
             </Link>
           </div>
         </div>
       </div>
 
-      {/* ログインモーダル */}
+      {/* ログインモーダル - モバイル対応 */}
       {showLoginModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowLoginModal(false)} />
-          <div className="relative glass-card rounded-2xl p-8 max-w-md w-full">
+          <div className="relative glass-card rounded-2xl p-6 sm:p-8 max-w-md w-full">
             <button
               onClick={() => setShowLoginModal(false)}
               className="absolute top-4 right-4 text-gray-400 hover:text-gray-200"
@@ -449,7 +471,7 @@ export default function HomePage() {
               <FaTimes />
             </button>
             
-            <h2 className="text-2xl font-bold text-yellow-100 mb-6 text-center">ログイン</h2>
+            <h2 className="text-xl sm:text-2xl font-bold text-yellow-100 mb-4 sm:mb-6 text-center">ログイン</h2>
             
             <form onSubmit={handleLogin} className="space-y-4">
               {loginError && (
@@ -468,7 +490,7 @@ export default function HomePage() {
                   type="text"
                   autoComplete="username"
                   required
-                  className="w-full px-4 py-2 rounded-lg bg-gray-800/50 border border-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 rounded-lg bg-gray-800/50 border border-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm sm:text-base"
                   placeholder="ハンドルネーム"
                   value={handleName}
                   onChange={(e) => setHandleName(e.target.value)}
@@ -485,7 +507,7 @@ export default function HomePage() {
                   type="password"
                   autoComplete="current-password"
                   required
-                  className="w-full px-4 py-2 rounded-lg bg-gray-800/50 border border-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 rounded-lg bg-gray-800/50 border border-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm sm:text-base"
                   placeholder="パスワード"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -495,14 +517,14 @@ export default function HomePage() {
               <button
                 type="submit"
                 disabled={isLoggingIn}
-                className="w-full gradient-button py-3 rounded-lg text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full gradient-button py-2.5 sm:py-3 rounded-lg text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
               >
                 {isLoggingIn ? 'ログイン中...' : 'ログイン'}
               </button>
             </form>
             
-            <div className="mt-6 text-center">
-              <p className="text-sm text-gray-400">
+            <div className="mt-4 sm:mt-6 text-center">
+              <p className="text-xs sm:text-sm text-gray-400">
                 アカウントをお持ちでない方は
                 <Link href="/register" className="text-purple-400 hover:text-purple-300 ml-1">
                   新規登録

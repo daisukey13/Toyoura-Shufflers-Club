@@ -1,464 +1,318 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useFetchPlayerDetail, updatePlayer } from '@/lib/hooks/useFetchSupabaseData';
-import { useAuth } from '@/contexts/AuthContext';
-import { FaUser, FaTrophy, FaGamepad, FaEdit, FaSave, FaTimes, FaChartLine, FaHistory, FaCrown, FaExclamationTriangle } from 'react-icons/fa';
+import { useFetchPlayerDetail } from '@/lib/hooks/useFetchSupabaseData';
+import { MobileLoadingState } from '@/components/MobileLoadingState';
+import { FaTrophy, FaMedal, FaChartLine, FaArrowLeft, FaUser } from 'react-icons/fa';
+import type { Player } from '@/types/player';
 
-interface EditForm {
-  full_name: string;
-  phone: string;
-  address: string;
-  avatar_url: string;
-}
+// 画像の遅延読み込み用カスタムコンポーネント
+const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      decoding="async"
+      onError={(e) => {
+        (e.target as HTMLImageElement).src = '/default-avatar.png';
+      }}
+    />
+  );
+};
 
-export default function PlayerProfilePage() {
+// 統計カードコンポーネント
+const StatsCard = memo(function StatsCard({ 
+  value, 
+  label, 
+  icon: Icon, 
+  color 
+}: { 
+  value: number | string; 
+  label: string; 
+  icon?: any; 
+  color: string 
+}) {
+  return (
+    <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-purple-500/20">
+      {Icon && <Icon className={`text-2xl sm:text-3xl ${color} mx-auto mb-2`} />}
+      <div className={`text-2xl sm:text-3xl font-bold ${color} mb-1`}>{value}</div>
+      <div className="text-xs sm:text-sm text-gray-400">{label}</div>
+    </div>
+  );
+});
+
+// 試合結果カードコンポーネント
+const MatchCard = memo(function MatchCard({ match }: { match: any }) {
+  return (
+    <div className="glass-card rounded-lg p-3 sm:p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all">
+      <div className="flex items-center justify-between gap-3">
+        {/* 対戦相手情報 */}
+        <Link 
+          href={`/players/${match.opponent_id}`} 
+          className="flex items-center gap-2 sm:gap-3 min-w-0 hover:opacity-80 transition-opacity"
+        >
+          <LazyImage
+            src={match.opponent_avatar || '/default-avatar.png'}
+            alt={match.opponent_name}
+            className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover flex-shrink-0"
+          />
+          <div className="min-w-0">
+            <div className="font-semibold text-yellow-100 text-sm sm:text-base truncate">
+              {match.opponent_name}
+            </div>
+            <div className="text-xs text-gray-400">
+              {new Date(match.match_date).toLocaleDateString('ja-JP')}
+            </div>
+          </div>
+        </Link>
+        
+        {/* スコアと結果 */}
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          <div className="text-right">
+            <div className="text-lg sm:text-xl font-bold">
+              <span className={match.result === 'win' ? 'text-green-400' : 'text-gray-400'}>
+                {match.player_score}
+              </span>
+              <span className="text-gray-500 mx-1">-</span>
+              <span className={match.result === 'loss' ? 'text-red-400' : 'text-gray-400'}>
+                {match.opponent_score}
+              </span>
+            </div>
+          </div>
+          <div className={`px-2 py-1 rounded-full text-xs font-bold ${
+            match.result === 'win' 
+              ? 'bg-green-500/20 text-green-400' 
+              : 'bg-red-500/20 text-red-400'
+          }`}>
+            {match.result === 'win' ? 'W' : 'L'}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+export default function PlayerDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { user, player: currentPlayer } = useAuth();
   const playerId = params.id as string;
+  
+  // カスタムフックを使用してプレーヤーデータを取得
+  const { player, matches, loading, error, refetch } = useFetchPlayerDetail(playerId) as { 
+    player: Player | null; 
+    matches: any[]; 
+    loading: boolean; 
+    error: any; 
+    refetch: () => void;
+  };
 
-  // Fetch API フックを使用
-  const { player, matches, loading, error, refetch } = useFetchPlayerDetail(playerId);
-
-  const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState<EditForm>({
-    full_name: '',
-    phone: '',
-    address: '',
-    avatar_url: ''
-  });
-  const [avatarOptions, setAvatarOptions] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
-
-  // 自分のプロフィールかどうか
-  const isOwnProfile = user?.id === playerId || currentPlayer?.id === playerId;
-
-  // プレーヤー情報が取得できたら編集フォームを初期化
-  useEffect(() => {
-    if (player) {
-      setEditForm({
-        full_name: player.full_name || '',
-        phone: player.phone || '',
-        address: player.address || '',
-        avatar_url: player.avatar_url || ''
-      });
-    }
+  // 勝率の計算
+  const winRate = useMemo(() => {
+    return player && player.matches_played > 0 
+      ? Math.round((player.wins / player.matches_played) * 100) 
+      : 0;
   }, [player]);
 
-  // アバターオプションの取得
-  useEffect(() => {
-    if (isOwnProfile && isEditing) {
-      fetchAvatarOptions();
-    }
-  }, [isOwnProfile, isEditing]);
+  // 最近の成績を整形
+  const recentPerformance = useMemo(() => {
+    return matches?.slice(0, 10).map(match => {
+      const isWinner = match.winner_id === playerId;
+      return {
+        ...match,
+        result: isWinner ? 'win' : 'loss',
+        player_score: isWinner ? match.winner_score : match.loser_score,
+        opponent_score: isWinner ? match.loser_score : match.winner_score,
+        opponent_id: isWinner ? match.loser_id : match.winner_id,
+        opponent_name: isWinner ? match.loser_name : match.winner_name,
+        opponent_avatar: isWinner ? match.loser_avatar : match.winner_avatar,
+      };
+    }) || [];
+  }, [matches, playerId]);
 
-  const fetchAvatarOptions = async () => {
-    try {
-      // Fetch APIでアバターオプションを取得
-      const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-      
-      const response = await fetch(
-        `${SUPABASE_URL}/storage/v1/object/list/avatars/preset`,
-        {
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          }
-        }
-      );
+  // 直近5試合の勝敗
+  const recentResults = useMemo(() => {
+    return recentPerformance.slice(0, 5);
+  }, [recentPerformance]);
 
-      if (response.ok) {
-        const data = await response.json();
-        const urls = data.map((file: any) => 
-          `${SUPABASE_URL}/storage/v1/object/public/avatars/preset/${file.name}`
-        );
-        setAvatarOptions(urls);
-      }
-    } catch (error) {
-      console.error('Error fetching avatars:', error);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!isOwnProfile || !player) return;
-
-    setSaving(true);
-    try {
-      const { data, error } = await updatePlayer(playerId, {
-        full_name: editForm.full_name,
-        phone: editForm.phone,
-        address: editForm.address,
-        avatar_url: editForm.avatar_url
-      });
-
-      if (error) throw new Error(error);
-
-      // 成功したらデータを再取得
-      await refetch();
-      setIsEditing(false);
-      alert('プロフィールを更新しました');
-    } catch (error) {
-      console.error('Error updating profile:', error);
-      alert('更新に失敗しました');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const getWinRate = () => {
-    if (!player || player.matches_played === 0) return 0;
-    return Math.round((player.wins / player.matches_played) * 100);
-  };
-
-  // ローディング中
-  if (loading) {
+  // ローディング/エラー状態
+  if (loading || error || !player) {
     return (
-      <div className="min-h-screen bg-[#2a2a3e] flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400 mx-auto mb-4"></div>
-          <div className="text-white">プレーヤー情報を読み込んでいます...</div>
-        </div>
-      </div>
-    );
-  }
-
-  // エラー表示
-  if (error) {
-    return (
-      <div className="min-h-screen bg-[#2a2a3e] flex items-center justify-center">
-        <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-6 max-w-md">
-          <div className="flex items-center gap-3 text-red-400 mb-2">
-            <FaExclamationTriangle className="text-xl" />
-            <h3 className="font-semibold">エラーが発生しました</h3>
+      <div className="min-h-screen bg-gradient-to-b from-purple-900 via-purple-800 to-pink-900">
+        <div className="container mx-auto px-4 py-6">
+          {/* ヘッダー */}
+          <div className="mb-6">
+            <Link 
+              href="/players" 
+              className="inline-flex items-center gap-2 text-gray-400 hover:text-yellow-100 transition-colors"
+            >
+              <FaArrowLeft className="text-sm" />
+              <span>戻る</span>
+            </Link>
           </div>
-          <p className="text-gray-300">{error}</p>
-          <button
-            onClick={() => refetch()}
-            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-          >
-            再試行
-          </button>
-        </div>
-      </div>
-    );
-  }
 
-  // プレーヤーが見つからない
-  if (!player) {
-    return (
-      <div className="min-h-screen bg-[#2a2a3e] flex items-center justify-center">
-        <div className="text-white">プレーヤーが見つかりません</div>
+          <MobileLoadingState
+            loading={loading}
+            error={error}
+            retrying={false}
+            onRetry={refetch}
+            emptyMessage="プレーヤーが見つかりません"
+            dataLength={player ? 1 : 0}
+          />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#2a2a3e]">
-      <div className="container mx-auto px-4 py-8">
+    <div className="min-h-screen bg-gradient-to-b from-purple-900 via-purple-800 to-pink-900">
+      <div className="container mx-auto px-4 py-6">
         {/* ヘッダー */}
-        <div className="mb-8 text-center">
-          <h1 className="text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-            プレーヤープロフィール
-          </h1>
-          {player.is_admin && (
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-500/20 border border-yellow-500/30 rounded-full">
-              <FaCrown className="text-yellow-400" />
-              <span className="text-yellow-400 text-sm font-medium">管理者</span>
-            </div>
-          )}
+        <div className="mb-6">
+          <Link 
+            href="/players" 
+            className="inline-flex items-center gap-2 text-gray-400 hover:text-yellow-100 transition-colors"
+          >
+            <FaArrowLeft className="text-sm" />
+            <span>戻る</span>
+          </Link>
         </div>
 
-        {/* プロフィール情報 */}
-        <div className="max-w-4xl mx-auto space-y-8">
-          {/* 基本情報カード */}
-          <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                <FaUser className="text-purple-400" />
-                基本情報
-              </h2>
-              {isOwnProfile && !isEditing && (
-                <button
-                  onClick={() => setIsEditing(true)}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"
-                >
-                  <FaEdit />
-                  編集
-                </button>
-              )}
-              {isEditing && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50"
-                  >
-                    <FaSave />
-                    保存
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsEditing(false);
-                      setEditForm({
-                        full_name: player.full_name || '',
-                        phone: player.phone || '',
-                        address: player.address || '',
-                        avatar_url: player.avatar_url || ''
-                      });
-                    }}
-                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
-                  >
-                    <FaTimes />
-                    キャンセル
-                  </button>
-                </div>
-              )}
+        {/* プロフィールカード */}
+        <div className="glass-card rounded-xl p-6 sm:p-8 mb-6 border border-purple-500/20">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
+            {/* アバター */}
+            <div className="relative">
+              <div className="absolute -inset-1 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full blur-sm"></div>
+              <LazyImage
+                src={player.avatar_url || '/default-avatar.png'}
+                alt={player.full_name}
+                className="relative w-24 h-24 sm:w-32 sm:h-32 rounded-full object-cover border-2 border-purple-500"
+              />
             </div>
 
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* 左側：アバターと基本情報 */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-6">
-                  <img
-                    src={player.avatar_url || '/default-avatar.png'}
-                    alt={player.handle_name}
-                    className="w-24 h-24 rounded-full border-4 border-purple-500/30"
-                  />
-                  <div>
-                    <h3 className="text-2xl font-bold text-white">{player.handle_name}</h3>
-                    <p className="text-gray-400">登録日: {new Date(player.created_at).toLocaleDateString('ja-JP')}</p>
-                  </div>
+            {/* 基本情報 */}
+            <div className="flex-1 text-center sm:text-left">
+              <h1 className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-2">
+                {player.full_name}
+              </h1>
+              <p className="text-base sm:text-lg text-gray-400 mb-3">@{player.handle_name}</p>
+              
+              {/* バッジ */}
+              <div className="flex flex-wrap gap-2 justify-center sm:justify-start mb-4">
+                <div className="px-3 py-1.5 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-full">
+                  <span className="text-yellow-300 font-semibold text-sm">
+                    #{player.current_rank || '-'} ランキング
+                  </span>
                 </div>
-
-                {isEditing && avatarOptions.length > 0 && (
-                  <div>
-                    <label className="block text-sm font-medium text-purple-300 mb-2">
-                      アバター画像を変更
-                    </label>
-                    <div className="grid grid-cols-6 gap-2 max-h-48 overflow-y-auto">
-                      {avatarOptions.map((url, index) => (
-                        <button
-                          key={index}
-                          type="button"
-                          onClick={() => setEditForm({ ...editForm, avatar_url: url })}
-                          className={`relative p-1 rounded-lg border-2 transition-all ${
-                            editForm.avatar_url === url
-                              ? 'border-purple-400 bg-purple-500/20'
-                              : 'border-purple-500/30 hover:border-purple-400/50'
-                          }`}
-                        >
-                          <img
-                            src={url}
-                            alt={`Avatar ${index + 1}`}
-                            className="w-full h-auto rounded"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div className="px-3 py-1.5 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-full">
+                  <span className="text-blue-300 font-semibold text-sm">
+                    {player.ranking_points} pts
+                  </span>
+                </div>
+                <div className={`px-3 py-1.5 rounded-full ${
+                  player.is_active 
+                    ? 'bg-green-500/20 text-green-400' 
+                    : 'bg-gray-500/20 text-gray-400'
+                }`}>
+                  <span className="font-semibold text-sm">
+                    {player.is_active ? 'アクティブ' : '非アクティブ'}
+                  </span>
+                </div>
               </div>
 
-              {/* 右側：詳細情報 */}
-              <div className="space-y-4">
-                {isOwnProfile && (
-                  <>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-1">氏名</label>
-                      {isEditing ? (
-                        <input
-                          type="text"
-                          value={editForm.full_name}
-                          onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
-                          className="w-full px-3 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white"
-                        />
-                      ) : (
-                        <p className="text-white">{player.full_name || '-'}</p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-1">電話番号</label>
-                      {isEditing ? (
-                        <input
-                          type="tel"
-                          value={editForm.phone}
-                          onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                          className="w-full px-3 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white"
-                        />
-                      ) : (
-                        <p className="text-white">{player.phone || '-'}</p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-1">メールアドレス</label>
-                      <p className="text-white">{player.email || '-'}</p>
-                    </div>
-                  </>
-                )}
-
+              {/* メタ情報 */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">お住まいの地域</label>
-                  {isEditing && isOwnProfile ? (
-                    <select
-                      value={editForm.address}
-                      onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white"
-                    >
-                      <option value="">選択してください</option>
-                      <option value="豊浦町">豊浦町</option>
-                      <option value="洞爺湖町">洞爺湖町</option>
-                      <option value="壮瞥町">壮瞥町</option>
-                      <option value="伊達市">伊達市</option>
-                      <option value="室蘭市">室蘭市</option>
-                      <option value="登別市">登別市</option>
-                      <option value="倶知安町">倶知安町</option>
-                      <option value="ニセコ町">ニセコ町</option>
-                      <option value="札幌市">札幌市</option>
-                      <option value="その他道内">その他道内</option>
-                      <option value="内地">内地</option>
-                      <option value="外国（Visitor)">外国（Visitor)</option>
-                    </select>
-                  ) : (
-                    <p className="text-white">{player.address || '-'}</p>
-                  )}
+                  <span className="text-gray-500">ハンディ:</span>
+                  <span className="ml-1 text-gray-300 font-medium">{player.handicap}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">チーム:</span>
+                  <span className="ml-1 text-gray-300 font-medium">{player.team_id || 'なし'}</span>
+                </div>
+                <div className="col-span-2 sm:col-span-1">
+                  <span className="text-gray-500">登録:</span>
+                  <span className="ml-1 text-gray-300 font-medium">
+                    {new Date(player.created_at).toLocaleDateString('ja-JP')}
+                  </span>
                 </div>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* アクションボタン */}
-          {isOwnProfile && (
-            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6">
-              <h2 className="text-xl font-semibold text-white flex items-center gap-2 mb-4">
-                <FaGamepad className="text-purple-400" />
-                アクション
-              </h2>
-              <div className="flex flex-wrap gap-4">
-                <Link
-                  href="/matches/register"
-                  className="px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-105 shadow-lg font-medium flex items-center gap-2"
-                >
-                  <FaTrophy />
-                  試合を報告する
-                </Link>
-                <Link
-                  href="/rankings"
-                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-lg hover:from-blue-700 hover:to-cyan-700 transition-all transform hover:scale-105 shadow-lg font-medium flex items-center gap-2"
-                >
-                  <FaChartLine />
-                  ランキングを見る
-                </Link>
+        {/* 統計情報 */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+          <StatsCard
+            value={player.matches_played}
+            label="試合数"
+            icon={FaChartLine}
+            color="text-purple-400"
+          />
+          <StatsCard
+            value={player.wins}
+            label="勝利"
+            icon={FaTrophy}
+            color="text-green-400"
+          />
+          <StatsCard
+            value={player.losses}
+            label="敗北"
+            color="text-red-400"
+          />
+          <StatsCard
+            value={`${winRate}%`}
+            label="勝率"
+            icon={FaMedal}
+            color="text-yellow-400"
+          />
+        </div>
+
+        {/* 最近の試合結果 */}
+        <div className="glass-card rounded-xl p-4 sm:p-6 border border-purple-500/20">
+          <h2 className="text-xl sm:text-2xl font-bold text-yellow-100 mb-4 sm:mb-6 flex items-center gap-2">
+            <FaChartLine className="text-purple-400" />
+            最近の試合結果
+          </h2>
+          
+          {/* 直近5試合の勝敗表示 */}
+          {recentResults.length > 0 && (
+            <div className="mb-4 sm:mb-6">
+              <p className="text-sm text-gray-400 mb-2">直近5試合</p>
+              <div className="flex gap-2">
+                {recentResults.map((match: any, index: number) => (
+                  <div
+                    key={index}
+                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center text-white font-bold shadow-lg ${
+                      match.result === 'win' 
+                        ? 'bg-gradient-to-br from-green-400 to-emerald-500' 
+                        : 'bg-gradient-to-br from-red-400 to-rose-500'
+                    }`}
+                    title={`${match.result === 'win' ? '勝利' : '敗北'} vs ${match.opponent_name}`}
+                  >
+                    {match.result === 'win' ? 'W' : 'L'}
+                  </div>
+                ))}
               </div>
             </div>
           )}
-
-          {/* 統計情報 */}
-          <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6">
-            <h2 className="text-xl font-semibold text-white flex items-center gap-2 mb-6">
-              <FaChartLine className="text-purple-400" />
-              統計情報
-            </h2>
-            
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="text-3xl font-bold text-yellow-400">{player.ranking_points || 0}</div>
-                <div className="text-sm text-gray-400">ランキングポイント</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-purple-400">{player.handicap || 0}</div>
-                <div className="text-sm text-gray-400">ハンディキャップ</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-blue-400">{player.matches_played || 0}</div>
-                <div className="text-sm text-gray-400">試合数</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-green-400">{getWinRate()}%</div>
-                <div className="text-sm text-gray-400">勝率</div>
-              </div>
+          
+          {/* 詳細な試合結果 */}
+          {recentPerformance.length > 0 ? (
+            <div className="space-y-3">
+              {recentPerformance.map((match: any, index: number) => (
+                <MatchCard key={index} match={match} />
+              ))}
             </div>
-
-            <div className="mt-6 pt-6 border-t border-gray-700">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-green-400">{player.wins || 0}</div>
-                  <div className="text-sm text-gray-400">勝利</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-red-400">{player.losses || 0}</div>
-                  <div className="text-sm text-gray-400">敗北</div>
-                </div>
-              </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-400">まだ試合記録がありません</p>
             </div>
-          </div>
-
-          {/* 最近の試合結果 */}
-          <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6">
-            <h2 className="text-xl font-semibold text-white flex items-center gap-2 mb-6">
-              <FaHistory className="text-purple-400" />
-              最近の試合結果
-            </h2>
-
-            {!matches || matches.length === 0 ? (
-              <p className="text-gray-400 text-center py-8">まだ試合結果がありません</p>
-            ) : (
-              <div className="space-y-3">
-                {matches.slice(0, 10).map((match: any) => {
-                  const isWinner = match.winner_id === playerId;
-                  const opponentName = isWinner ? match.loser_name : match.winner_name;
-                  const score = isWinner 
-                    ? `${match.winner_score} - ${match.loser_score}`
-                    : `${match.loser_score} - ${match.winner_score}`;
-                  const pointChange = isWinner 
-                    ? match.winner_ranking_change 
-                    : match.loser_ranking_change;
-
-                  return (
-                    <div
-                      key={match.id}
-                      className={`p-4 rounded-lg border ${
-                        isWinner 
-                          ? 'bg-green-900/20 border-green-500/30' 
-                          : 'bg-red-900/20 border-red-500/30'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`text-lg font-bold ${
-                            isWinner ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            {isWinner ? '勝利' : '敗北'}
-                          </div>
-                          <div className="text-white">
-                            vs {opponentName}
-                          </div>
-                          <div className="text-gray-400">
-                            {score}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className={`text-sm font-medium ${
-                            pointChange > 0 ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            {pointChange > 0 ? '+' : ''}{pointChange}pt
-                          </div>
-                          <div className="text-sm text-gray-400">
-                            {new Date(match.created_at || match.match_date).toLocaleDateString('ja-JP')}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </div>
     </div>
