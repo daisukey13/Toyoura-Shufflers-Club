@@ -84,49 +84,62 @@ export default function Header() {
 
           {/* モバイルメニューボタン（最前面に） */}
           <button
-            type="button"
-            aria-label={isMenuOpen ? 'メニューを閉じる' : 'メニューを開く'}
-            aria-expanded={isMenuOpen}
-            aria-controls="mobile-menu"
-            onClick={() => setIsMenuOpen((v) => !v)}
-            className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors relative z-[10000]"
-          >
+  type="button"
+  onClick={() => setIsMenuOpen(v => !v)}
+  className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors relative z-[10003]"
+  aria-label="メニューを開閉"
+>
             {isMenuOpen ? <FaTimes size={24} /> : <FaBars size={24} />}
           </button>
         </div>
 
         {/* モバイルメニュー（ポータルで body 直下に描画） */}
-        {isMenuOpen &&
-          createPortal(
-            <>
-              {/* オーバーレイ（タップで閉じる） */}
-              <div
-                className="fixed inset-0 z-[9998] bg-black/40 md:hidden"
+       {isMenuOpen &&
+  createPortal(
+    <>
+      {/* デバッグ：開いてるか可視化（一時） */}
+      <div className="fixed top-0 left-0 right-0 z-[10002] md:hidden">
+        <div className="mx-auto w-fit mt-2 px-3 py-1 rounded bg-red-600 text-white text-xs">
+          MENU OPEN (debug)
+        </div>
+      </div>
+
+      {/* 背景オーバーレイ（タップで閉じる） */}
+      <div
+        className="fixed inset-0 z-[10000] bg-black/40 md:hidden"
+        onClick={() => setIsMenuOpen(false)}
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      />
+
+      {/* メニュー本体：iOSノッチ考慮してヘッダー高+safe-areaに配置 */}
+      <div
+        id="mobile-menu"
+        className="fixed inset-x-0 md:hidden py-4 border-t border-purple-500/20 bg-gray-900/95 backdrop-blur"
+        style={{
+          zIndex: 10001,
+          top: 'calc(4rem + env(safe-area-inset-top))', // 4rem = h-16
+        }}
+      >
+        <ul className="space-y-2">
+          {navigation.map((item) => (
+            <li key={item.name}>
+              <Link
+                href={item.href}
+                className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
                 onClick={() => setIsMenuOpen(false)}
-              />
-              {/* メニュー本体（ヘッダー高さに合わせて top-16） */}
-              <div
-                id="mobile-menu"
-                className="fixed inset-x-0 top-16 z-[9999] md:hidden py-4 border-t border-purple-500/20 bg-gray-900/95 backdrop-blur"
               >
-                <ul className="space-y-2">
-                  {navigation.map((item) => (
-                    <li key={item.name}>
-                      <Link
-                        href={item.href}
-                        className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        <item.icon />
-                        {item.name}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </>,
-            typeof window !== 'undefined' ? document.body : (null as any)
-          )}
+                <item.icon />
+                {item.name}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </>,
+    typeof window !== 'undefined' ? document.body : (null as any)
+  )
+}
+
       </nav>
     </header>
   );
