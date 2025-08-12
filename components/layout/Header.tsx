@@ -1,6 +1,7 @@
 // components/layout/Header.tsx
 'use client';
-
+import { createPortal } from 'react-dom';
+import { useEffect } from 'react'; // 既にあれば不要
 import Link from 'next/link';
 import { useState } from 'react';
 import {
@@ -66,38 +67,43 @@ export default function Header() {
           </ul>
 
           {/* モバイルメニューボタン */}
-          <button
-            onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors z-[110]"
-            aria-label="メニューを開閉"
-          >
-            {isMenuOpen ? <FaTimes size={24} /> : <FaBars size={24} />}
-          </button>
+         <button
+          type="button"
+          onClick={() => setIsMenuOpen(v => !v)}
+          className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors relative z-[10000]"
+          aria-label="メニューを開閉"
+        >
+  {isMenuOpen ? <FaTimes size={24} /> : <FaBars size={24} />}
+</button>
         </div>
 
         {/* モバイルメニュー */}
-        {isMenuOpen && (
-          <>
-            {/* オーバーレイ背景 */}
-            <div
-              className="fixed inset-0 bg-black bg-opacity-50 z-[90]"
-              onClick={() => setIsMenuOpen(false)}
-            />
-            {/* メニュー本体 */}
-            <div className="fixed top-16 left-0 w-full bg-gray-900 py-4 border-t border-purple-500/20 z-[100] md:hidden">
-              <ul className="space-y-2">
-                {navigation.map((item) => (
-                  <li key={item.name}>
-                    <Link
-                      href={item.href}
-                      className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
-                      onClick={() => setIsMenuOpen(false)}
-                    >
-                      <item.icon />
-                      {item.name}
-                    </Link>
-                  </li>
-                ))}
+        {isMenuOpen &&
+  createPortal(
+    <>
+      {/* 背景オーバーレイ（タップで閉じる） */}
+      <div
+        className="fixed inset-0 z-[9998] bg-black/40"
+        onClick={() => setIsMenuOpen(false)}
+      />
+      {/* メニュー本体（ヘッダー直下の高さに揃えるなら top-16） */}
+      <div
+        id="mobile-menu"
+        className="fixed inset-x-0 top-16 z-[9999] md:hidden py-4 border-t border-purple-500/20 bg-white/95 backdrop-blur"
+      >
+        <ul className="space-y-2">
+          {navigation.map((item) => (
+            <li key={item.name}>
+              <Link
+                href={item.href}
+                className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
+                onClick={() => setIsMenuOpen(false)}
+              >
+                <item.icon />
+                {item.name}
+              </Link>
+            </li>
+          ))}
               </ul>
             </div>
           </>
