@@ -20,34 +20,27 @@ export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { isAdmin } = useAuth();
 
-  // 元のナビ（デザインそのまま）
+  // ナビ
   const navigation = [
     { name: 'ホーム', href: '/', icon: FaTrophy },
     { name: 'プレイヤー', href: '/players', icon: FaUsers },
     { name: 'ランキング', href: '/rankings', icon: FaChartLine },
     { name: '試合結果', href: '/matches', icon: FaHistory },
     { name: '新規登録', href: '/register', icon: FaUserPlus },
+    ...(isAdmin ? [{ name: '管理', href: '/admin/dashboard', icon: FaCog }] : []),
   ];
 
-  // 管理者メニュー（元実装のまま追加）
-  if (isAdmin) {
-    navigation.push({ name: '管理', href: '/admin/dashboard', icon: FaCog });
-  }
-
-  // メニュー開時は背景スクロールを抑制（最小）
+  // 開いている間は背景スクロールを抑制
   useEffect(() => {
     if (!isMenuOpen) return;
     const { body, documentElement } = document;
     const prevOverflow = body.style.overflow;
     const prevPaddingRight = body.style.paddingRight;
-    const scrollBarW = window.innerWidth - documentElement.clientWidth;
-
+    const sbw = window.innerWidth - documentElement.clientWidth;
     body.style.overflow = 'hidden';
-    if (scrollBarW > 0) body.style.paddingRight = `${scrollBarW}px`;
-
+    if (sbw > 0) body.style.paddingRight = `${sbw}px`;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setIsMenuOpen(false);
     window.addEventListener('keydown', onKey);
-
     return () => {
       body.style.overflow = prevOverflow || '';
       body.style.paddingRight = prevPaddingRight || '';
@@ -55,6 +48,7 @@ export default function Header() {
     };
   }, [isMenuOpen]);
 
+  // ヘッダーの見た目は現状維持
   return (
     <header className="glass-card sticky top-0 z-[100] border-b border-purple-500/20">
       <nav className="container mx-auto px-4">
@@ -82,64 +76,62 @@ export default function Header() {
             ))}
           </ul>
 
-          {/* モバイルメニューボタン（最前面に） */}
+          {/* モバイルトグル（最前面） */}
           <button
-  type="button"
-  onClick={() => setIsMenuOpen(v => !v)}
-  className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors relative z-[10003]"
-  aria-label="メニューを開閉"
->
+            type="button"
+            aria-label={isMenuOpen ? 'メニューを閉じる' : 'メニューを開く'}
+            aria-expanded={isMenuOpen}
+            aria-controls="mobile-menu"
+            onClick={() => setIsMenuOpen(v => !v)}
+            className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors relative z-[10000]"
+          >
             {isMenuOpen ? <FaTimes size={24} /> : <FaBars size={24} />}
           </button>
         </div>
 
-        {/* モバイルメニュー（ポータルで body 直下に描画） */}
-       {isMenuOpen &&
-  createPortal(
-    <>
-      {/* デバッグ：開いてるか可視化（一時） */}
-      <div className="fixed top-0 left-0 right-0 z-[10002] md:hidden">
-        <div className="mx-auto w-fit mt-2 px-3 py-1 rounded bg-red-600 text-white text-xs">
-          MENU OPEN (debug)
-        </div>
-      </div>
+        {/* ▼ 強制表示のモバイルメニュー（ポータルで body 直下、幅条件に依存しない） */}
+        {isMenuOpen && createPortal(
+          <>
+            {/* オーバーレイ（どの要素よりも上） */}
+            <div
+              className="fixed inset-0 bg-black/45"
+              style={{ zIndex: 99998, paddingTop: 'env(safe-area-inset-top)' }}
+              onClick={() => setIsMenuOpen(false)}
+            />
 
-      {/* 背景オーバーレイ（タップで閉じる） */}
-      <div
-        className="fixed inset-0 z-[10000] bg-black/40 md:hidden"
-        onClick={() => setIsMenuOpen(false)}
-        style={{ paddingTop: 'env(safe-area-inset-top)' }}
-      />
-
-      {/* メニュー本体：iOSノッチ考慮してヘッダー高+safe-areaに配置 */}
-      <div
-        id="mobile-menu"
-        className="fixed inset-x-0 md:hidden py-4 border-t border-purple-500/20 bg-gray-900/95 backdrop-blur"
-        style={{
-          zIndex: 10001,
-          top: 'calc(4rem + env(safe-area-inset-top))', // 4rem = h-16
-        }}
-      >
-        <ul className="space-y-2">
-          {navigation.map((item) => (
-            <li key={item.name}>
-              <Link
-                href={item.href}
-                className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                <item.icon />
-                {item.name}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </>,
-    typeof window !== 'undefined' ? document.body : (null as any)
-  )
-}
-
+            {/* パネル本体：画面上部から。ヘッダー(64px)ぶんの余白を中で確保 */}
+            <div
+              id="mobile-menu"
+              className="fixed inset-x-0 top-0 bg-gray-900/95 backdrop-blur"
+              style={{ zIndex: 99999 }}
+              role="dialog"
+              aria-modal="true"
+            >
+              {/* ヘッダー高さ + ノッチ分のスペーサー（safe-area対応） */}
+              <div
+                aria-hidden
+                style={{ height: 'calc(4rem + env(safe-area-inset-top))' }}
+              />
+              <div className="py-4 border-t border-purple-500/20">
+                <ul className="space-y-2">
+                  {navigation.map((item) => (
+                    <li key={item.name}>
+                      <Link
+                        href={item.href}
+                        className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
+                        onClick={() => setIsMenuOpen(false)}
+                      >
+                        <item.icon />
+                        {item.name}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </>,
+          typeof window !== 'undefined' ? document.body : (null as any)
+        )}
       </nav>
     </header>
   );
