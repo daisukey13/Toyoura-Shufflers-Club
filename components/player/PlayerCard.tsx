@@ -1,4 +1,5 @@
 // components/player/PlayerCard.tsx
+import Image from 'next/image';
 import React from 'react';
 import { Player } from '@/types/player';
 import { FaTrophy, FaGamepad, FaMapMarkerAlt } from 'react-icons/fa';
@@ -27,13 +28,8 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
   // 住所から市区町村を抽出（プライバシー保護）
   const getDisplayAddress = (address?: string) => {
     if (!address) return '未登録';
-    // 簡易的な処理：実際にはより詳細な処理が必要
-    const parts = address.split(/[市区町村]/);
-    if (parts.length > 0) {
-      const match = address.match(/(.+?[市区町村])/);
-      return match ? match[1] : address.substring(0, 10) + '...';
-    }
-    return address.substring(0, 10) + '...';
+    const match = address.match(/(.+?[市区町村])/);
+    return match ? match[1] : address.substring(0, 10) + '...';
   };
 
   return (
@@ -42,19 +38,31 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
         <div className="flex items-center gap-4">
           {/* アバター */}
           <div className="relative">
-            <img
-              src={player.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(player.handle_name)}&background=random`}
+            <Image
+              src={
+                player.avatar_url ||
+                `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                  player.handle_name
+                )}&background=random`
+              }
               alt={player.handle_name}
+              width={64}
+              height={64}
               className="w-16 h-16 rounded-full object-cover border-2 border-white shadow-md"
+              unoptimized
             />
             {/* ランクバッジ */}
             {rank <= 3 && (
-              <div className={`absolute -top-2 -right-2 w-8 h-8 rounded-full bg-white shadow-md flex items-center justify-center ${getRankColor(rank)}`}>
+              <div
+                className={`absolute -top-2 -right-2 w-8 h-8 rounded-full bg-white shadow-md flex items-center justify-center ${getRankColor(
+                  rank
+                )}`}
+              >
                 <FaTrophy className="w-4 h-4" />
               </div>
             )}
           </div>
-          
+
           {/* プレイヤー情報 */}
           <div>
             <h3 className="text-xl font-bold text-gray-800">{player.handle_name}</h3>
@@ -64,29 +72,27 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
             </div>
           </div>
         </div>
-        
+
         {/* 順位表示 */}
-        <div className={`text-3xl font-bold ${getRankColor(rank)}`}>
-          #{rank}
-        </div>
+        <div className={`text-3xl font-bold ${getRankColor(rank)}`}>#{rank}</div>
       </div>
-      
+
       {/* スタッツ */}
       <div className="grid grid-cols-3 gap-4 mt-4">
         <div className="text-center">
-          <div className="text-2xl font-bold text-gray-800">{player.ranking_points || 1000}</div>
+          <div className="text-2xl font-bold text-gray-800">{player.ranking_points ?? 1000}</div>
           <div className="text-xs text-gray-600">ポイント</div>
         </div>
         <div className="text-center">
-          <div className="text-2xl font-bold text-blue-600">{player.handicap || 30}</div>
+          <div className="text-2xl font-bold text-blue-600">{player.handicap ?? 30}</div>
           <div className="text-xs text-gray-600">ハンディキャップ</div>
         </div>
         <div className="text-center">
-          <div className="text-2xl font-bold text-green-600">{player.matches_played || 0}</div>
+          <div className="text-2xl font-bold text-green-600">{player.matches_played ?? 0}</div>
           <div className="text-xs text-gray-600">試合数</div>
         </div>
       </div>
-      
+
       {/* 試合参加状況 */}
       <div className="mt-4 pt-4 border-t border-gray-200">
         <div className="flex items-center justify-between text-sm">
@@ -95,7 +101,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
             <span className="text-gray-600">勝敗</span>
           </div>
           <span className="text-gray-800 font-medium">
-            {player.wins || 0}勝 {player.losses || 0}敗
+            {player.wins ?? 0}勝 {player.losses ?? 0}敗
           </span>
         </div>
       </div>
