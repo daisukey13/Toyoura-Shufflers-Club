@@ -1,39 +1,37 @@
 // components/GlobalNavigation.tsx
-
-// components/GlobalNavigation.tsx の先頭部分を以下に修正
-
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';  // ← ここを修正
-import { 
-  FaHome, 
-  FaUsers, 
-  FaTrophy, 
-  FaGamepad, 
-  FaShieldAlt, 
-  FaUser, 
-  FaBars, 
+import { createClient } from '@/lib/supabase/client'; // ← 修正
+import {
+  FaHome,
+  FaUsers,
+  FaTrophy,
+  FaGamepad,
+  FaShieldAlt,
+  FaUser,
+  FaBars,
   FaTimes,
   FaSignInAlt,
   FaSignOutAlt,
   FaChartLine,
   FaPlus,
-  FaIdCard
+  FaIdCard,
 } from 'react-icons/fa';
 
+const supabase = createClient();
 
-
+type NavItem = { href: string; icon: React.ComponentType<{ className?: string }>; label: string };
 
 export default function GlobalNavigation() {
   const { user, player, isAdmin, signOut, refreshAuth, loading } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  
+
   // ログインモーダル関連
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [handleName, setHandleName] = useState('');
@@ -41,15 +39,31 @@ export default function GlobalNavigation() {
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // 初回マウント時に認証状態を更新
+  const navItems: NavItem[] = [
+    { href: '/', icon: FaHome, label: 'ホーム' },
+    { href: '/players', icon: FaUsers, label: 'プレイヤー' },
+    { href: '/rankings', icon: FaTrophy, label: 'ランキング' },
+    { href: '/matches', icon: FaGamepad, label: '試合' },
+  ];
+
+  // アクティブ判定（パス変更に合わせて安定化）
+  const isActive = useCallback(
+    (href: string) => {
+      if (href === '/') return pathname === '/';
+      return pathname.startsWith(href);
+    },
+    [pathname]
+  );
+
+  // 初回 & ユーザー/プレイヤー状態変化時に認証を更新
   useEffect(() => {
     if (user && !player && !loading) {
-      console.log('User exists but player is null, refreshing auth...');
+      // refreshAuth を依存に入れて警告解消
       refreshAuth();
     }
-  }, [user, player, loading]);
+  }, [user, player, loading, refreshAuth]);
 
-  // デバッグ用
+  // デバッグログ
   useEffect(() => {
     console.log('GlobalNavigation - user:', user?.id);
     console.log('GlobalNavigation - player:', player);
@@ -57,6 +71,23 @@ export default function GlobalNavigation() {
     console.log('GlobalNavigation - loading:', loading);
     console.log('GlobalNavigation - pathname:', pathname);
   }, [user, player, isAdmin, loading, pathname]);
+
+  // ルート変更時にモバイルメニューを閉じる
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [pathname]);
+
+  // モバイルメニュー開閉時のスクロール制御
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isMobileMenuOpen]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,13 +107,13 @@ export default function GlobalNavigation() {
       }
 
       // メールアドレスとパスワードでログイン
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      const { error: authError } = await supabase.auth.signInWithPassword({
         email: playerData.email,
-        password: password,
+        password,
       });
 
       if (authError) {
-        if (authError.message.includes('Invalid login credentials')) {
+        if (authError.message?.includes('Invalid login credentials')) {
           throw new Error('パスワードが正しくありません');
         }
         throw authError;
@@ -90,13 +121,13 @@ export default function GlobalNavigation() {
 
       // AuthContextを更新
       await refreshAuth();
-      
+
       // モーダルを閉じる
       setShowLoginModal(false);
       setHandleName('');
       setPassword('');
-      
-      // リダイレクト処理
+
+      // リダイレクト
       setTimeout(() => {
         if (playerData.is_admin === true) {
           router.push('/admin/dashboard');
@@ -104,10 +135,9 @@ export default function GlobalNavigation() {
           router.push(`/players/${playerData.id}`);
         }
       }, 100);
-
-    } catch (error: any) {
-      console.error('ログインエラー:', error);
-      setLoginError(error.message || 'ログインに失敗しました');
+    } catch (err: any) {
+      console.error('ログインエラー:', err);
+      setLoginError(err?.message || 'ログインに失敗しました');
     } finally {
       setIsLoggingIn(false);
     }
@@ -118,42 +148,8 @@ export default function GlobalNavigation() {
     router.push('/');
   };
 
-  const navItems = [
-    { href: '/', icon: FaHome, label: 'ホーム' },
-    { href: '/players', icon: FaUsers, label: 'プレイヤー' },
-    { href: '/rankings', icon: FaTrophy, label: 'ランキング' },
-    { href: '/matches', icon: FaGamepad, label: '試合' },
-  ];
-
-  const isActive = (href: string) => {
-    if (href === '/') {
-      return pathname === '/';
-    }
-    return pathname.startsWith(href);
-  };
-
-  useEffect(() => {
-    // ページ遷移時にモバイルメニューを閉じる
-    setIsMobileMenuOpen(false);
-  }, [pathname]);
-
-  // モバイルメニューが開いている時はスクロールを無効化
-  useEffect(() => {
-    if (isMobileMenuOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-    
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
-  }, [isMobileMenuOpen]);
-
   // ローディング中は何も表示しない
-  if (loading) {
-    return null;
-  }
+  if (loading) return null;
 
   return (
     <>
@@ -208,7 +204,7 @@ export default function GlobalNavigation() {
             <div className="flex items-center gap-4">
               {user && player ? (
                 <>
-                  {/* 試合登録ボタン（一般ユーザーも利用可能） */}
+                  {/* 試合登録ボタン */}
                   <Link
                     href="/matches/register"
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-105"
@@ -225,9 +221,7 @@ export default function GlobalNavigation() {
                     <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
                       <FaUser className="text-white text-sm" />
                     </div>
-                    <span className="text-sm font-medium text-gray-300">
-                      {player.display_name}
-                    </span>
+                    <span className="text-sm font-medium text-gray-300">{player.display_name}</span>
                   </Link>
 
                   {/* ログアウトボタン */}
@@ -278,7 +272,7 @@ export default function GlobalNavigation() {
                 </Link>
               )}
               <button
-                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                onClick={() => setIsMobileMenuOpen((v) => !v)}
                 className="p-2 text-white hover:bg-purple-600/20 rounded-lg transition-colors"
               >
                 {isMobileMenuOpen ? <FaTimes className="text-2xl" /> : <FaBars className="text-2xl" />}
@@ -290,7 +284,6 @@ export default function GlobalNavigation() {
         {/* モバイルメニュー */}
         {isMobileMenuOpen && (
           <div className="fixed inset-0 top-16 bg-black/50 z-40">
-            {/* メニュー本体 */}
             <div className="bg-gray-900 h-full overflow-y-auto">
               <div className="container mx-auto px-4 py-6">
                 <div className="space-y-2">
@@ -326,7 +319,7 @@ export default function GlobalNavigation() {
                     </Link>
                   )}
 
-                  <div className="border-t border-purple-500/30 my-4"></div>
+                  <div className="border-t border-purple-500/30 my-4" />
 
                   {/* ユーザーメニュー */}
                   {user && player ? (
@@ -385,16 +378,16 @@ export default function GlobalNavigation() {
             >
               <FaTimes />
             </button>
-            
+
             <h2 className="text-2xl font-bold text-yellow-100 mb-6 text-center">ログイン</h2>
-            
+
             <form onSubmit={handleLogin} className="space-y-4">
               {loginError && (
                 <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
                   <p className="text-sm text-red-400">{loginError}</p>
                 </div>
               )}
-              
+
               <div>
                 <label htmlFor="handle-name" className="block text-sm font-medium text-gray-300 mb-2">
                   ハンドルネーム
@@ -411,7 +404,7 @@ export default function GlobalNavigation() {
                   onChange={(e) => setHandleName(e.target.value)}
                 />
               </div>
-              
+
               <div>
                 <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
                   パスワード
@@ -428,7 +421,7 @@ export default function GlobalNavigation() {
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
-              
+
               <button
                 type="submit"
                 disabled={isLoggingIn}
@@ -437,7 +430,7 @@ export default function GlobalNavigation() {
                 {isLoggingIn ? 'ログイン中...' : 'ログイン'}
               </button>
             </form>
-            
+
             <div className="mt-6 text-center">
               <p className="text-sm text-gray-400">
                 アカウントをお持ちでない方は

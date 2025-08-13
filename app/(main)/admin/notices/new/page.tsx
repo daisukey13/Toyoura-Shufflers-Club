@@ -1,8 +1,7 @@
 // app/admin/notices/new/page.tsx
-
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -18,23 +17,29 @@ export default function NewNoticePage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
 
-  useEffect(() => {
-    checkAdmin();
-  }, []);
-
-  const checkAdmin = async () => {
+  // 管理者チェックを安定化して useEffect から参照
+  const checkAdmin = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       if (!user) {
         router.push('/admin/login');
         return;
       }
 
-      const { data: player } = await supabase
+      const { data: player, error } = await supabase
         .from('players')
         .select('is_admin')
         .eq('id', user.id)
         .single();
+
+      if (error) {
+        console.error('Error fetching player:', error);
+        router.push('/');
+        return;
+      }
 
       if (!player?.is_admin) {
         router.push('/');
@@ -44,8 +49,13 @@ export default function NewNoticePage() {
       setIsAdmin(true);
     } catch (error) {
       console.error('Error:', error);
+      router.push('/');
     }
-  };
+  }, [router]);
+
+  useEffect(() => {
+    checkAdmin();
+  }, [checkAdmin]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,18 +66,18 @@ export default function NewNoticePage() {
 
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      const { error } = await supabase
-        .from('notices')
-        .insert({
-          title,
-          content,
-          date,
-          is_published: isPublished,
-          created_by: user.id
-        });
+      const { error } = await supabase.from('notices').insert({
+        title,
+        content,
+        date,
+        is_published: isPublished,
+        created_by: user.id,
+      });
 
       if (error) throw error;
 
@@ -97,9 +107,7 @@ export default function NewNoticePage() {
         <div className="glass-card rounded-xl p-8">
           <div className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                タイトル
-              </label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">タイトル</label>
               <input
                 type="text"
                 value={title}
@@ -111,9 +119,7 @@ export default function NewNoticePage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                日付
-              </label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">日付</label>
               <input
                 type="date"
                 value={date}
@@ -124,9 +130,7 @@ export default function NewNoticePage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                内容
-              </label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">内容</label>
               <textarea
                 value={content}
                 onChange={(e) => setContent(e.target.value)}

@@ -1,8 +1,7 @@
 // app/admin/notices/page.tsx
-
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { FaPlus, FaEdit, FaTrash, FaEye, FaEyeSlash } from 'react-icons/fa';
 import Link from 'next/link';
@@ -27,24 +26,45 @@ export default function AdminNoticesPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
 
-  useEffect(() => {
-    checkAdminAndFetchNotices();
+  // 一覧取得（依存に入れられるよう useCallback で安定化）
+  const fetchNotices = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('notices')
+        .select('*')
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+      if (data) setNotices(data as Notice[]);
+    } catch (error) {
+      console.error('Error fetching notices:', error);
+    }
   }, []);
 
-  const checkAdminAndFetchNotices = async () => {
+  // 管理者チェック + 一覧取得（依存に fetchNotices）
+  const checkAdminAndFetchNotices = useCallback(async () => {
     try {
       // 管理者権限チェック
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       if (!user) {
         router.push('/admin/login');
         return;
       }
 
-      const { data: player } = await supabase
+      const { data: player, error } = await supabase
         .from('players')
         .select('is_admin')
         .eq('id', user.id)
         .single();
+
+      if (error) {
+        console.error('Error fetching player:', error);
+        router.push('/');
+        return;
+      }
 
       if (!player?.is_admin) {
         router.push('/');
@@ -58,21 +78,11 @@ export default function AdminNoticesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchNotices, router]);
 
-  const fetchNotices = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('notices')
-        .select('*')
-        .order('date', { ascending: false });
-
-      if (error) throw error;
-      if (data) setNotices(data);
-    } catch (error) {
-      console.error('Error fetching notices:', error);
-    }
-  };
+  useEffect(() => {
+    checkAdminAndFetchNotices();
+  }, [checkAdminAndFetchNotices]);
 
   const togglePublish = async (notice: Notice) => {
     try {
@@ -92,11 +102,7 @@ export default function AdminNoticesPage() {
     if (!confirm('このお知らせを削除してもよろしいですか？')) return;
 
     try {
-      const { error } = await supabase
-        .from('notices')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabase.from('notices').delete().eq('id', id);
       if (error) throw error;
       await fetchNotices();
     } catch (error) {
@@ -140,14 +146,14 @@ export default function AdminNoticesPage() {
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-4 mb-2">
-                      <h3 className="text-xl font-semibold text-yellow-100">
-                        {notice.title}
-                      </h3>
-                      <span className={`px-3 py-1 rounded-full text-sm ${
-                        notice.is_published
-                          ? 'bg-green-500/20 text-green-400'
-                          : 'bg-gray-500/20 text-gray-400'
-                      }`}>
+                      <h3 className="text-xl font-semibold text-yellow-100">{notice.title}</h3>
+                      <span
+                        className={`px-3 py-1 rounded-full text-sm ${
+                          notice.is_published
+                            ? 'bg-green-500/20 text-green-400'
+                            : 'bg-gray-500/20 text-gray-400'
+                        }`}
+                      >
                         {notice.is_published ? '公開中' : '非公開'}
                       </span>
                     </div>
@@ -155,7 +161,7 @@ export default function AdminNoticesPage() {
                       {new Date(notice.date).toLocaleDateString('ja-JP', {
                         year: 'numeric',
                         month: 'long',
-                        day: 'numeric'
+                        day: 'numeric',
                       })}
                     </p>
                     <p className="text-gray-300 line-clamp-2">{notice.content}</p>
