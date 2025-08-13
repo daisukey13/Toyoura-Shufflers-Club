@@ -1,6 +1,7 @@
 // components/layout/Header.tsx
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -67,7 +68,7 @@ export default function Header() {
         <div className="flex justify-between items-center h-16">
           <Link href="/" className="text-xl font-bold flex items-center gap-2 group">
             {/* 画像はそのまま <img>（警告は出ますがビルドは通ります） */}
-            <img src="/shuffleboard-puck-red.png" alt="Red Puck" className="w-8 h-8" />
+            <Image src="/shuffleboard-puck-red.png" alt="Red Puck" width={32} height={32} priority />
             <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
               Toyoura Shufflers Club
             </span>
