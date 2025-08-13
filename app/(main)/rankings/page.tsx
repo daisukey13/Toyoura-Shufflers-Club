@@ -1,4 +1,5 @@
-'use client';
+'use client';;
+import Image from "next/image";
 
 import { useState, useMemo, useCallback, lazy, Suspense } from 'react';
 import { FaTrophy, FaMedal, FaChartLine, FaFire, FaMapMarkerAlt } from 'react-icons/fa';
@@ -12,7 +13,7 @@ const VirtualList = lazy(() => import('@/components/VirtualList'));
 // 画像の遅延読み込み用カスタムコンポーネント
 const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
   return (
-    <img
+    <Image
       src={src}
       alt={alt}
       className={className}
@@ -230,7 +231,6 @@ export default function RankingsPage() {
           豊浦シャッフラーズクラブのプレーヤーランキング
         </p>
       </div>
-
       {/* ローディング/エラー状態 */}
       <MobileLoadingState
         loading={loading}
@@ -240,7 +240,6 @@ export default function RankingsPage() {
         emptyMessage="アクティブなプレーヤーがいません"
         dataLength={players.length}
       />
-
       {/* コンテンツ */}
       {!loading && !error && players.length > 0 && (
         <>
@@ -276,14 +275,14 @@ export default function RankingsPage() {
           {/* ランキングリスト */}
           {sortedPlayers.length <= 20 ? (
             // プレイヤーが少ない場合は通常のリスト表示
-            <div className="space-y-3 sm:space-y-4">
+            (<div className="space-y-3 sm:space-y-4">
               {sortedPlayers.map((player, index) => (
                 <PlayerCard key={player.id} player={player} rank={index + 1} />
               ))}
-            </div>
+            </div>)
           ) : (
             // プレイヤーが多い場合は仮想スクロール
-            <Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
+            (<Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
               <VirtualList
                 items={sortedPlayers}
                 height={600}
@@ -291,7 +290,7 @@ export default function RankingsPage() {
                 renderItem={renderItem}
                 className="space-y-3 sm:space-y-4"
               />
-            </Suspense>
+            </Suspense>)
           )}
         </>
       )}

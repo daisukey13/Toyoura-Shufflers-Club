@@ -1,4 +1,5 @@
-'use client';
+'use client';;
+import Image from "next/image";
 
 import { useState, useEffect } from 'react';
 import { Player } from '@/types/player';
@@ -310,13 +311,11 @@ export default function MatchRegisterPage() {
           </div>
         )}
       </div>
-
       {error && (
         <div className="glass-card rounded-lg p-4 mb-6 border border-red-500/50 bg-red-500/10">
           <p className="text-red-400">{error}</p>
         </div>
       )}
-
       {success && (
         <div className="glass-card rounded-lg p-4 mb-6 border border-green-500/50 bg-green-500/10">
           <p className="text-green-400 text-center text-xl font-bold animate-pulse">
@@ -324,7 +323,6 @@ export default function MatchRegisterPage() {
           </p>
         </div>
       )}
-
       <form onSubmit={handleSubmit} className="max-w-4xl mx-auto space-y-6">
         {/* 試合タイプ選択 */}
         <div className="glass-card rounded-xl p-6 border border-purple-500/30">
@@ -419,7 +417,7 @@ export default function MatchRegisterPage() {
             
             {winner && (
               <div className="mt-4 p-3 bg-green-500/10 rounded-lg flex items-center gap-3">
-                <img
+                <Image
                   src={winner.avatar_url || '/default-avatar.png'}
                   alt={winner.handle_name}
                   className="w-12 h-12 rounded-full border-2 border-green-500"
@@ -454,7 +452,7 @@ export default function MatchRegisterPage() {
             
             {loser && (
               <div className="mt-4 p-3 bg-red-500/10 rounded-lg flex items-center gap-3">
-                <img
+                <Image
                   src={loser.avatar_url || '/default-avatar.png'}
                   alt={loser.handle_name}
                   className="w-12 h-12 rounded-full border-2 border-red-500"
@@ -593,7 +591,6 @@ export default function MatchRegisterPage() {
           </button>
         </div>
       </form>
-
       {/* 注意事項 */}
       <div className="max-w-4xl mx-auto mt-8">
         <div className="glass-card rounded-lg p-4 border border-blue-500/30 bg-blue-900/20">

@@ -1,4 +1,5 @@
-'use client';
+'use client';;
+import Image from "next/image";
 
 import { useState, useEffect, useMemo, memo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -10,7 +11,7 @@ import type { Player } from '@/types/player';
 // 画像の遅延読み込み用カスタムコンポーネント
 const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
   return (
-    <img
+    <Image
       src={src}
       alt={alt}
       className={className}

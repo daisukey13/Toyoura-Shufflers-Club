@@ -1,4 +1,5 @@
-'use client';
+'use client';;
+import Image from "next/image";
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -199,7 +200,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
             {formData.avatar_url && (
               <div className="mt-2">
-                <img
+                <Image
                   src={formData.avatar_url}
                   alt="Avatar preview"
                   className="w-20 h-20 rounded-full object-cover"

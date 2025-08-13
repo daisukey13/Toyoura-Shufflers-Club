@@ -1,4 +1,5 @@
-'use client';
+'use client';;
+import Image from "next/image";
 
 import { useState, useMemo, memo, useCallback } from 'react';
 import Link from 'next/link';
@@ -9,7 +10,7 @@ import { MobileLoadingState } from '@/components/MobileLoadingState';
 // 画像の遅延読み込み用カスタムコンポーネント
 const LazyImage = memo(function LazyImage({ src, alt, className }: { src: string; alt: string; className: string }) {
   return (
-    <img
+    <Image
       src={src}
       alt={alt}
       className={className}

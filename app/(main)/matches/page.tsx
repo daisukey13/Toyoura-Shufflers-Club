@@ -1,4 +1,5 @@
-'use client';
+'use client';;
+import Image from "next/image";
 
 import { useState, useMemo, memo, useCallback, lazy, Suspense } from 'react';
 import { FaTrophy, FaCalendar, FaMapMarkerAlt, FaMedal, FaHistory, FaGamepad, FaFilter, FaFire, FaStar } from 'react-icons/fa';
@@ -35,7 +36,7 @@ interface MatchDetails {
 // 画像の遅延読み込み用カスタムコンポーネント
 const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
   return (
-    <img
+    <Image
       src={src}
       alt={alt}
       className={className}
@@ -86,9 +87,8 @@ const MatchCard = memo(function MatchCard({ match }: { match: MatchDetails }) {
   // 番狂わせの判定
   const isUpset = useMemo(() => (
     // 勝者のランキングポイントが敗者より100pt以上低い
-    ((match.winner_current_points || 0) < (match.loser_current_points || 0) - 100) ||
-    // 勝者のハンディキャップが敗者より5以上高い
-    ((match.winner_current_handicap || 0) > (match.loser_current_handicap || 0) + 5)
+    (// 勝者のハンディキャップが敗者より5以上高い
+    ((match.winner_current_points || 0) < (match.loser_current_points || 0) - 100) || ((match.winner_current_handicap || 0) > (match.loser_current_handicap || 0) + 5))
   ), [match]);
 
   const formatDate = useCallback((dateString: string) => {
@@ -420,14 +420,14 @@ export default function MatchesPage() {
               </div>
             ) : filteredMatches.length <= 20 ? (
               // 試合が少ない場合は通常のリスト表示
-              <div className="space-y-3 sm:space-y-4">
+              (<div className="space-y-3 sm:space-y-4">
                 {filteredMatches.map((match) => (
                   <MatchCard key={match.id} match={match} />
                 ))}
-              </div>
+              </div>)
             ) : (
               // 試合が多い場合は仮想スクロール
-              <Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
+              (<Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
                 <VirtualList
                   items={filteredMatches}
                   height={600}
@@ -435,7 +435,7 @@ export default function MatchesPage() {
                   renderItem={renderItem}
                   className="space-y-3 sm:space-y-4"
                 />
-              </Suspense>
+              </Suspense>)
             )}
           </>
         )}
