@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
@@ -363,7 +364,7 @@ export default function HomePage() {
                 <div className="glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer">
                   <div className="flex items-center justify-between mb-3 sm:mb-4">
                     <div className="flex items-center gap-3">
-                      <img
+                      <image
                         src={player.avatar_url || '/default-avatar.png'}
                         alt={player.handle_name}
                         className="w-10 h-10 sm:w-12 sm:h-12 rounded-full"
@@ -423,7 +424,7 @@ export default function HomePage() {
                   {/* プレイヤー情報（左右） - モバイル対応 */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                      <img
+                      <image
                         src={match.winner_avatar || '/default-avatar.png'}
                         alt={match.winner_name}
                         className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0"
