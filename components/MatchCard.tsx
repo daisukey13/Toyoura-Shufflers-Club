@@ -3,6 +3,7 @@
 import { FaTrophy, FaUser } from 'react-icons/fa';
 import { formatDistanceToNow } from 'date-fns';
 import { ja } from 'date-fns/locale';
+import Image from 'next/image';
 
 interface Player {
   id: string;
@@ -23,7 +24,8 @@ interface MatchCardProps {
 }
 
 // 退会者用のデフォルトアバター
-const DELETED_USER_AVATAR = '/images/deleted-user-avatar.png'; // または適切なアイコン
+const DELETED_USER_AVATAR = '/images/deleted-user-avatar.png';
+const DEFAULT_AVATAR = '/images/default-avatar.png';
 
 export default function MatchCard({ match }: MatchCardProps) {
   const formatPlayerName = (player: Player) => {
@@ -34,27 +36,36 @@ export default function MatchCard({ match }: MatchCardProps) {
     if (player.is_deleted) {
       return DELETED_USER_AVATAR;
     }
-    return player.avatar_url || '/images/default-avatar.png';
+    return player.avatar_url || DEFAULT_AVATAR;
   };
 
-  const PlayerDisplay = ({ player, score, isWinner }: { 
-    player: Player; 
-    score: number; 
+  const PlayerDisplay = ({
+    player,
+    score,
+    isWinner,
+  }: {
+    player: Player;
+    score: number;
     isWinner: boolean;
   }) => (
-    <div className={`flex items-center gap-3 p-4 rounded-lg ${
-      isWinner ? 'bg-green-900/30' : 'bg-gray-800/50'
-    }`}>
+    <div
+      className={`flex items-center gap-3 p-4 rounded-lg ${
+        isWinner ? 'bg-green-900/30' : 'bg-gray-800/50'
+      }`}
+    >
       <div className="relative">
         {player.is_deleted ? (
           <div className="w-12 h-12 bg-gray-700 rounded-full flex items-center justify-center">
             <FaUser className="text-gray-500" />
           </div>
         ) : (
-          <img
+          <Image
             src={getPlayerAvatar(player)}
-            alt={player.handle_name}
-            className="w-12 h-12 rounded-full object-cover"
+            alt={formatPlayerName(player)}
+            width={40}
+            height={40}
+            className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0 object-cover"
+            unoptimized
           />
         )}
         {isWinner && (
@@ -62,7 +73,11 @@ export default function MatchCard({ match }: MatchCardProps) {
         )}
       </div>
       <div className="flex-1">
-        <p className={`font-medium ${player.is_deleted ? 'text-gray-500' : 'text-white'}`}>
+        <p
+          className={`font-medium ${
+            player.is_deleted ? 'text-gray-500' : 'text-white'
+          }`}
+        >
           {formatPlayerName(player)}
         </p>
         <p className="text-2xl font-bold">{score}</p>
@@ -74,23 +89,23 @@ export default function MatchCard({ match }: MatchCardProps) {
     <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-6">
       <div className="flex justify-between items-center mb-4">
         <p className="text-sm text-gray-400">
-          {formatDistanceToNow(new Date(match.created_at), { 
-            addSuffix: true, 
-            locale: ja 
+          {formatDistanceToNow(new Date(match.created_at), {
+            addSuffix: true,
+            locale: ja,
           })}
         </p>
       </div>
-      
+
       <div className="space-y-3">
-        <PlayerDisplay 
-          player={match.winner} 
-          score={match.winner_score} 
-          isWinner={true} 
+        <PlayerDisplay
+          player={match.winner}
+          score={match.winner_score}
+          isWinner={true}
         />
-        <PlayerDisplay 
-          player={match.loser} 
-          score={match.loser_score} 
-          isWinner={false} 
+        <PlayerDisplay
+          player={match.loser}
+          score={match.loser_score}
+          isWinner={false}
         />
       </div>
     </div>
