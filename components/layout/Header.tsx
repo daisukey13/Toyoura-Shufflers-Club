@@ -8,13 +8,7 @@ import {
   FaBars, FaTimes, FaTrophy, FaUsers, FaChartLine, FaUserPlus, FaHistory, FaCog
 } from 'react-icons/fa';
 
-// useAuth が未接続でも安全に
-let useAuthSafe = () => ({ isAdmin: false } as { isAdmin: boolean });
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { useAuth } = require('@/contexts/AuthContext');
-  if (useAuth) useAuthSafe = useAuth;
-} catch {}
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false); // 通常運用：初期は閉じる
