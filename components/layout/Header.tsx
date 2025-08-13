@@ -7,14 +7,13 @@ import { createPortal } from 'react-dom';
 import {
   FaBars, FaTimes, FaTrophy, FaUsers, FaChartLine, FaUserPlus, FaHistory, FaCog
 } from 'react-icons/fa';
-
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function Header() {
-  const [isMenuOpen, setIsMenuOpen] = useState(false); // 通常運用：初期は閉じる
-  const { isAdmin } = useAuthSafe();
+  const [isMenuOpen, setIsMenuOpen] = useState(false); // 初期は閉じる
+  const { isAdmin } = useAuth(); // ← useAuthSafe は廃止
 
-  // body 直下のポータルノード
+  // body 直下ポータル
   const portalRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const existing = document.getElementById('mobile-menu-portal') as HTMLDivElement | null;
@@ -23,20 +22,20 @@ export default function Header() {
     if (!existing) document.body.appendChild(el);
     portalRef.current = el;
     return () => {
-      // HMR安定のため削除しない（必要なら以下を有効化）
-      // try { document.body.removeChild(el); } catch {}
+      // 診断が落ち着いたら削除したい場合は下を有効化
+      // try { document.body.removeChild(el) } catch {}
       // portalRef.current = null;
     };
   }, []);
 
-  // 背景スクロール抑制（開いている間のみ）
+  // 背景スクロール抑制（開いている間）
   useEffect(() => {
     if (!isMenuOpen) return;
     const body = document.body;
     const html = document.documentElement;
     const prevOverflow = body.style.overflow;
     const prevPad = body.style.paddingRight;
-    const sbw = window.innerWidth - html.clientWidth; // スクロールバー幅
+    const sbw = window.innerWidth - html.clientWidth;
     body.style.overflow = 'hidden';
     if (sbw > 0) body.style.paddingRight = `${sbw}px`;
     return () => {
@@ -45,12 +44,10 @@ export default function Header() {
     };
   }, [isMenuOpen]);
 
-  // Escapeキーで閉じる
+  // Escで閉じる
   useEffect(() => {
     if (!isMenuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsMenuOpen(false);
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsMenuOpen(false); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isMenuOpen]);
@@ -69,6 +66,7 @@ export default function Header() {
       <nav className="container mx-auto px-4">
         <div className="flex justify-between items-center h-16">
           <Link href="/" className="text-xl font-bold flex items-center gap-2 group">
+            {/* 画像はそのまま <img>（警告は出ますがビルドは通ります） */}
             <img src="/shuffleboard-puck-red.png" alt="Red Puck" className="w-8 h-8" />
             <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
               Toyoura Shufflers Club
@@ -106,7 +104,6 @@ export default function Header() {
         {/* モバイルメニュー（body直下ポータル） */}
         {portalRef.current && createPortal(
           <>
-            {/* 背景オーバーレイ */}
             <div
               id="mobile-menu-overlay"
               onClick={() => setIsMenuOpen(false)}
@@ -120,7 +117,6 @@ export default function Header() {
                 paddingTop: 'env(safe-area-inset-top)'
               }}
             />
-            {/* パネル本体 */}
             <div
               id="mobile-menu"
               role="dialog"
@@ -134,7 +130,6 @@ export default function Header() {
                 transform: isMenuOpen ? 'translateY(0)' : 'translateY(-120%)'
               }}
             >
-              {/* ヘッダー高さぶんの余白（h-16 = 64px） */}
               <div aria-hidden style={{ height: 'calc(64px + env(safe-area-inset-top))' }} />
               <div className="py-4 border-t border-purple-500/20">
                 <ul className="space-y-2">
