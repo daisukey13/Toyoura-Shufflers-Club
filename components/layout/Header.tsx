@@ -1,4 +1,3 @@
-// components/layout/Header.tsx
 'use client';
 
 import Link from 'next/link';
@@ -20,7 +19,6 @@ export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { isAdmin } = useAuth();
 
-  // ナビ
   const navigation = [
     { name: 'ホーム', href: '/', icon: FaTrophy },
     { name: 'プレイヤー', href: '/players', icon: FaUsers },
@@ -30,7 +28,7 @@ export default function Header() {
     ...(isAdmin ? [{ name: '管理', href: '/admin/dashboard', icon: FaCog }] : []),
   ];
 
-  // 開いている間は背景スクロールを抑制
+  // メニュー開時は背景スクロールを抑制
   useEffect(() => {
     if (!isMenuOpen) return;
     const { body, documentElement } = document;
@@ -48,7 +46,6 @@ export default function Header() {
     };
   }, [isMenuOpen]);
 
-  // ヘッダーの見た目は現状維持
   return (
     <header className="glass-card sticky top-0 z-[100] border-b border-purple-500/20">
       <nav className="container mx-auto px-4">
@@ -76,62 +73,59 @@ export default function Header() {
             ))}
           </ul>
 
-          {/* モバイルトグル（最前面） */}
+          {/* モバイルトグル（最前面に） */}
           <button
             type="button"
             aria-label={isMenuOpen ? 'メニューを閉じる' : 'メニューを開く'}
             aria-expanded={isMenuOpen}
             aria-controls="mobile-menu"
-            onClick={() => setIsMenuOpen(v => !v)}
+            onClick={() => setIsMenuOpen((v) => !v)}
             className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors relative z-[10000]"
           >
             {isMenuOpen ? <FaTimes size={24} /> : <FaBars size={24} />}
           </button>
         </div>
 
-        {/* ▼ 強制表示のモバイルメニュー（ポータルで body 直下、幅条件に依存しない） */}
-        {isMenuOpen && createPortal(
-          <>
-            {/* オーバーレイ（どの要素よりも上） */}
-            <div
-              className="fixed inset-0 bg-black/45"
-              style={{ zIndex: 99998, paddingTop: 'env(safe-area-inset-top)' }}
-              onClick={() => setIsMenuOpen(false)}
-            />
-
-            {/* パネル本体：画面上部から。ヘッダー(64px)ぶんの余白を中で確保 */}
-            <div
-              id="mobile-menu"
-              className="fixed inset-x-0 top-0 bg-gray-900/95 backdrop-blur"
-              style={{ zIndex: 99999 }}
-              role="dialog"
-              aria-modal="true"
-            >
-              {/* ヘッダー高さ + ノッチ分のスペーサー（safe-area対応） */}
+        {/* モバイルメニュー：body直下へ描画（親のz/overflowの影響を回避） */}
+        {isMenuOpen &&
+          createPortal(
+            <>
+              {/* オーバーレイ（最上位） */}
               <div
-                aria-hidden
-                style={{ height: 'calc(4rem + env(safe-area-inset-top))' }}
+                className="fixed inset-0 bg-black/45 md:hidden"
+                style={{ zIndex: 99998, paddingTop: 'env(safe-area-inset-top)' }}
+                onClick={() => setIsMenuOpen(false)}
               />
-              <div className="py-4 border-t border-purple-500/20">
-                <ul className="space-y-2">
-                  {navigation.map((item) => (
-                    <li key={item.name}>
-                      <Link
-                        href={item.href}
-                        className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        <item.icon />
-                        {item.name}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
+              {/* パネル本体：ヘッダー分のスペーサーを内部で確保 */}
+              <div
+                id="mobile-menu"
+                className="fixed inset-x-0 top-0 md:hidden bg-gray-900/95 backdrop-blur"
+                style={{ zIndex: 99999 }}
+                role="dialog"
+                aria-modal="true"
+              >
+                {/* h-16(=4rem) + ノッチ */}
+                <div aria-hidden style={{ height: 'calc(4rem + env(safe-area-inset-top))' }} />
+                <div className="py-4 border-t border-purple-500/20">
+                  <ul className="space-y-2">
+                    {navigation.map((item) => (
+                      <li key={item.name}>
+                        <Link
+                          href={item.href}
+                          className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          <item.icon />
+                          {item.name}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
-            </div>
-          </>,
-          typeof window !== 'undefined' ? document.body : (null as any)
-        )}
+            </>,
+            typeof window !== 'undefined' ? document.body : (null as any)
+          )}
       </nav>
     </header>
   );
