@@ -216,3 +216,5 @@ body::before {
   z-index: 0;
   pointer-events: none;
 }
+#mobile-menu-overlay { position: fixed !important; inset: 0 !important; z-index: 2147483645 !important; }
+#mobile-menu         { position: fixed !important; left: 0 !important; right: 0 !important; top: 0 !important; z-index: 2147483646 !important; }
