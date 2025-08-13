@@ -424,7 +424,7 @@ export default function HomePage() {
                   {/* プレイヤー情報（左右） - モバイル対応 */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                      <image
+                      <Image
                         src={match.winner_avatar || '/default-avatar.png'}
                         alt={match.winner_name}
                         className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0"
@@ -440,7 +440,7 @@ export default function HomePage() {
                         <div className="font-medium text-yellow-100 text-sm sm:text-base truncate">{match.loser_name}</div>
                         <div className="text-xs sm:text-sm text-red-400">敗北</div>
                       </div>
-                      <img
+                      <Image
                         src={match.loser_avatar || '/default-avatar.png'}
                         alt={match.loser_name}
                         className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0"
