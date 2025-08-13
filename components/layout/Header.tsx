@@ -1,17 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  FaBars,
-  FaTimes,
-  FaTrophy,
-  FaUsers,
-  FaChartLine,
-  FaUserPlus,
-  FaHistory,
-  FaCog,
+  FaBars, FaTimes, FaTrophy, FaUsers, FaChartLine, FaUserPlus, FaHistory, FaCog,
 } from 'react-icons/fa';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -19,16 +12,20 @@ export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { isAdmin } = useAuth();
 
-  const navigation = [
-    { name: 'ホーム', href: '/', icon: FaTrophy },
-    { name: 'プレイヤー', href: '/players', icon: FaUsers },
-    { name: 'ランキング', href: '/rankings', icon: FaChartLine },
-    { name: '試合結果', href: '/matches', icon: FaHistory },
-    { name: '新規登録', href: '/register', icon: FaUserPlus },
-    ...(isAdmin ? [{ name: '管理', href: '/admin/dashboard', icon: FaCog }] : []),
-  ];
+  // メニューを body 直下に描画するためのポータルノード
+  const portalRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = document.createElement('div');
+    el.id = 'mobile-menu-portal';
+    document.body.appendChild(el);
+    portalRef.current = el;
+    return () => {
+      try { document.body.removeChild(el); } catch {}
+      portalRef.current = null;
+    };
+  }, []);
 
-  // メニュー開時は背景スクロールを抑制
+  // 背景スクロール抑制
   useEffect(() => {
     if (!isMenuOpen) return;
     const { body, documentElement } = document;
@@ -46,6 +43,15 @@ export default function Header() {
     };
   }, [isMenuOpen]);
 
+  const navigation = [
+    { name: 'ホーム', href: '/', icon: FaTrophy },
+    { name: 'プレイヤー', href: '/players', icon: FaUsers },
+    { name: 'ランキング', href: '/rankings', icon: FaChartLine },
+    { name: '試合結果', href: '/matches', icon: FaHistory },
+    { name: '新規登録', href: '/register', icon: FaUserPlus },
+    ...(isAdmin ? [{ name: '管理', href: '/admin/dashboard', icon: FaCog }] : []),
+  ];
+
   return (
     <header className="glass-card sticky top-0 z-[100] border-b border-purple-500/20">
       <nav className="container mx-auto px-4">
@@ -58,7 +64,7 @@ export default function Header() {
             </span>
           </Link>
 
-          {/* デスクトップメニュー */}
+          {/* デスクトップ */}
           <ul className="hidden md:flex space-x-1">
             {navigation.map((item) => (
               <li key={item.name}>
@@ -73,59 +79,70 @@ export default function Header() {
             ))}
           </ul>
 
-          {/* モバイルトグル（最前面に） */}
+          {/* モバイルトグル（最前面） */}
           <button
             type="button"
             aria-label={isMenuOpen ? 'メニューを閉じる' : 'メニューを開く'}
             aria-expanded={isMenuOpen}
             aria-controls="mobile-menu"
-            onClick={() => setIsMenuOpen((v) => !v)}
-            className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors relative z-[10000]"
+            onClick={() => setIsMenuOpen(v => !v)}
+            className="md:hidden p-2 rounded-lg hover:bg-purple-500/20 transition-colors relative"
+            style={{ zIndex: 2147483647 }}
           >
             {isMenuOpen ? <FaTimes size={24} /> : <FaBars size={24} />}
           </button>
         </div>
 
-        {/* モバイルメニュー：body直下へ描画（親のz/overflowの影響を回避） */}
-        {isMenuOpen &&
-          createPortal(
-            <>
-              {/* オーバーレイ（最上位） */}
-              <div
-                className="fixed inset-0 bg-black/45 md:hidden"
-                style={{ zIndex: 99998, paddingTop: 'env(safe-area-inset-top)' }}
-                onClick={() => setIsMenuOpen(false)}
-              />
-              {/* パネル本体：ヘッダー分のスペーサーを内部で確保 */}
-              <div
-                id="mobile-menu"
-                className="fixed inset-x-0 top-0 md:hidden bg-gray-900/95 backdrop-blur"
-                style={{ zIndex: 99999 }}
-                role="dialog"
-                aria-modal="true"
-              >
-                {/* h-16(=4rem) + ノッチ */}
-                <div aria-hidden style={{ height: 'calc(4rem + env(safe-area-inset-top))' }} />
-                <div className="py-4 border-t border-purple-500/20">
-                  <ul className="space-y-2">
-                    {navigation.map((item) => (
-                      <li key={item.name}>
-                        <Link
-                          href={item.href}
-                          className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
-                          onClick={() => setIsMenuOpen(false)}
-                        >
-                          <item.icon />
-                          {item.name}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+        {/* モバイルメニュー（body直下・超高z-index・inline styleで強制表示） */}
+        {isMenuOpen && portalRef.current && createPortal(
+          <>
+            {/* オーバーレイ */}
+            <div
+              id="mobile-menu-overlay"
+              onClick={() => setIsMenuOpen(false)}
+              style={{
+                position: 'fixed',
+                left: 0, top: 0, right: 0, bottom: 0,
+                background: 'rgba(0,0,0,0.45)',
+                zIndex: 2147483645,
+                paddingTop: 'env(safe-area-inset-top)',
+              }}
+            />
+            {/* パネル本体（ヘッダー高さ=64px + ノッチ分を内部paddingで吸収） */}
+            <div
+              id="mobile-menu"
+              role="dialog"
+              aria-modal="true"
+              style={{
+                position: 'fixed',
+                left: 0, right: 0, top: 0,
+                zIndex: 2147483646,
+                background: 'rgba(17,24,39,0.96)', // bg-gray-900/95
+                WebkitBackdropFilter: 'saturate(180%) blur(8px)',
+                backdropFilter: 'saturate(180%) blur(8px)',
+              }}
+            >
+              <div aria-hidden style={{ height: 'calc(64px + env(safe-area-inset-top))' }} />
+              <div className="py-4 border-t border-purple-500/20">
+                <ul className="space-y-2">
+                  {navigation.map((item) => (
+                    <li key={item.name}>
+                      <Link
+                        href={item.href}
+                        className="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-purple-500/20 transition-colors"
+                        onClick={() => setIsMenuOpen(false)}
+                      >
+                        <item.icon />
+                        {item.name}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
               </div>
-            </>,
-            typeof window !== 'undefined' ? document.body : (null as any)
-          )}
+            </div>
+          </>,
+          portalRef.current
+        )}
       </nav>
     </header>
   );
