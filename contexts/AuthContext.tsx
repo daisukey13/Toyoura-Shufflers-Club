@@ -10,18 +10,23 @@ type PlayerRow = {
   auth_user_id: string | null;
   user_id: string | null;
   handle_name: string | null;
+  team_name?: string | null;
   is_admin: boolean | null;
   is_active: boolean | null;
   is_deleted: boolean | null;
+  // DBに存在しなくてもOKな派生フィールド（UI用）
+  display_name?: string | null;
+  avatar_url?: string | null;
 };
 
 type AuthState = {
-  user: User | null | undefined;   // 未判定: undefined / 未ログイン: null / ログイン中: User
+  // 未判定: undefined / 未ログイン: null / ログイン中: User
+  user: User | null | undefined;
   player: PlayerRow | null;
   isAdmin: boolean;
   loading: boolean;
   refreshAuth: () => Promise<void>;
-  signOut: () => Promise<void>;    // ← 追加（互換用）
+  signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState>({
@@ -40,10 +45,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const reqIdRef = useRef(0);
 
+  // players から当該ユーザーのプレイヤー情報を取得し、表示名を合成
   const fetchPlayerByUserId = async (uid: string) => {
     const { data, error } = await supabase
       .from('players')
-      .select('id, auth_user_id, user_id, handle_name, is_admin, is_active, is_deleted')
+      .select(
+        [
+          'id',
+          'auth_user_id',
+          'user_id',
+          'handle_name',
+          'team_name',
+          'is_admin',
+          'is_active',
+          'is_deleted',
+          'avatar_url',
+        ].join(','),
+      )
       .or(`auth_user_id.eq.${uid},user_id.eq.${uid}`)
       .eq('is_deleted', false)
       .limit(1)
@@ -53,7 +71,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.warn('[AuthContext] fetchPlayer error:', error);
       return null;
     }
-    return (data as PlayerRow | null) ?? null;
+    if (!data) return null;
+
+    const merged: PlayerRow = {
+      ...data,
+      display_name:
+        // 将来 display_name カラムが追加された場合に備えて拾う
+        (data as any).display_name ??
+        data.handle_name ??
+        (data as any).team_name ??
+        null,
+    };
+
+    return merged;
   };
 
   const applySession = async () => {
@@ -62,6 +92,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error) console.warn('[AuthContext] getSession error:', error);
+
+    // 古いリクエストは破棄
     if (myReq !== reqIdRef.current) return;
 
     const currentUser = session?.user ?? null;
@@ -84,7 +116,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applySession();
   };
 
-  // 追加：サインアウト（互換）
   const signOut = async () => {
     try {
       setLoading(true);
@@ -101,6 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       if (!mounted) return;
       await applySession();
@@ -108,6 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null);
+
       if (session?.user?.id) {
         const myReq = ++reqIdRef.current;
         const p = await fetchPlayerByUserId(session.user.id);
@@ -118,6 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setPlayer(null);
         setIsAdmin(false);
       }
+
       setLoading(false);
     });
 
@@ -129,7 +163,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<AuthState>(
-    () => ({ user, player, isAdmin, loading, refreshAuth, signOut }),
+    () => ({
+      user,
+      player,
+      isAdmin,
+      loading,
+      refreshAuth,
+      signOut,
+    }),
     [user, player, isAdmin, loading]
   );
 
