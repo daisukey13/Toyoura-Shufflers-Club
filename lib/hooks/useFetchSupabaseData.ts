@@ -1,100 +1,188 @@
 // lib/hooks/useFetchSupabaseData.ts
+'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createClient } from '@/lib/supabase/client';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+/**
+ * NOTE:
+ * - `match_details` は VIEW（読み取り専用）想定。書き込みは `matches` に対して行ってください。
+ * - SELECT は公開でも読める前提のものが多いので、"読み取り系"は requireAuth を既定 false にしています。
+ */
 
-export function useFetchSupabaseData(options: any) {
-  const [data, setData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [retrying, setRetrying] = useState(false);
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
+type OrderBy =
+  | { column: string; ascending?: boolean }
+  | { columns: string[]; ascending?: boolean };
+
+type BaseOptions = {
+  tableName: string;
+  select?: string;                  // default: '*'
+  orderBy?: OrderBy;                // 複数列候補を順に試す
+  limit?: number;
+  retryCount?: number;              // default: 3
+  retryDelay?: number;              // default: 1000
+  enabled?: boolean;                // default: true
+  requireAuth?: boolean;            // default: true（読み取り系ラッパでは false を指定）
+  queryParams?: Record<string, string>; // 追加クエリ（eq系など）
+};
+
+function toOrderColumns(orderBy?: OrderBy): { cols: string[]; asc: boolean } {
+  if (!orderBy) return { cols: [], asc: false };
+  if ('columns' in orderBy) {
+    return { cols: orderBy.columns, asc: !!orderBy.ascending };
+  }
+  return { cols: [orderBy.column], asc: !!orderBy.ascending };
+}
+
+/** 内部: アクセストークン取得（必要なら少し待機してリトライ） */
+async function getAccessToken(requireAuth: boolean, tries = 3, delayMs = 300) {
+  const supabase = createClient();
+  for (let i = 0; i < tries; i++) {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token ?? null;
+    if (token) return token;
+    if (!requireAuth) return null; // 認証不要なら即 null でOK（Anonキーで読む）
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return null;
+}
+
+export function useFetchSupabaseData<T = any>(options: BaseOptions) {
   const {
     tableName,
+    select = '*',
     orderBy,
     limit,
     retryCount = 3,
-    retryDelay = 1000
+    retryDelay = 1000,
+    enabled = true,
+    requireAuth = true,
+    queryParams,
   } = options;
 
-  const fetchData = useCallback(async (attemptNumber = 1) => {
-    try {
-      console.log(`[Fetch API] Fetching data from ${tableName}, attempt ${attemptNumber}`);
-      
-      let url = `${SUPABASE_URL}/rest/v1/${tableName}?`;
-      const params = new URLSearchParams();
-      params.append('select', '*');
-      
-      if (orderBy) {
-        const order = orderBy.ascending ? 'asc' : 'desc';
-        params.append('order', `${orderBy.column}.${order}`);
-      }
-      
-      if (limit) {
-        params.append('limit', limit.toString());
-      }
-      
-      url += params.toString();
+  const [data, setData] = useState<T[]>([]);
+  const [loading, setLoading] = useState<boolean>(enabled);
+  const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'apikey': SUPABASE_ANON_KEY!,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation'
+  // フェッチ制御
+  const inflightKeyRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const lastKeyRef = useRef<string | null>(null); // StrictMode の二重実行回避（キーが同じ場合のみ抑止）
+
+  const { cols: orderCols, asc } = useMemo(() => toOrderColumns(orderBy), [orderBy]);
+  const baseKey = useMemo(
+    () => JSON.stringify({ tableName, select, orderCols, asc, limit, queryParams, requireAuth }),
+    [tableName, select, orderCols, asc, limit, queryParams, requireAuth]
+  );
+
+  const fetchOnce = useCallback(
+    async (token: string | null): Promise<T[]> => {
+      // 指定順に order 候補を試し、ダメなら順序無し
+      const candidates = orderCols.length ? [...orderCols] : [];
+      candidates.push('__NO_ORDER__');
+
+      for (const col of candidates) {
+        let url = `${SUPABASE_URL}/rest/v1/${tableName}?`;
+        const params = new URLSearchParams();
+        params.set('select', select);
+
+        if (queryParams) {
+          for (const [k, v] of Object.entries(queryParams)) params.set(k, v);
         }
-      });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        if (col !== '__NO_ORDER__') {
+          params.append('order', `${col}.${asc ? 'asc' : 'desc'}`);
+        }
+        if (typeof limit === 'number') params.append('limit', String(limit));
+
+        url += params.toString();
+
+        // 以前のリクエストを中断
+        abortRef.current?.abort();
+        abortRef.current = new AbortController();
+
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          signal: abortRef.current.signal,
+        });
+
+        if (!res.ok) {
+          // 列が存在しないなどの 400 は次候補へ
+          if (res.status === 400 && col !== '__NO_ORDER__') continue;
+          const errorText = await res.text();
+          throw new Error(`HTTP ${res.status}: ${errorText}`);
+        }
+
+        const json = (await res.json()) as T[];
+        return json ?? [];
       }
 
-      const result = await response.json();
-      console.log(`[Fetch API] Successfully fetched ${result?.length || 0} records from ${tableName}`);
-      
-      setData(result || []);
+      return [];
+    },
+    [tableName, select, orderCols, asc, limit, queryParams]
+  );
+
+  const fetchData = useCallback(
+    async (attemptNumber = 1) => {
+      if (!enabled) return;
+
+      if (inflightKeyRef.current === baseKey) return; // 二重フェッチ抑止
+      inflightKeyRef.current = baseKey;
+
+      setLoading(true);
       setError(null);
-      setRetrying(false);
-    } catch (err: any) {
-      console.error(`[Fetch API] Attempt ${attemptNumber} failed:`, err);
-      
-      if (attemptNumber < retryCount) {
-        setRetrying(true);
-        setTimeout(() => {
-          fetchData(attemptNumber + 1);
-        }, retryDelay * attemptNumber);
-      } else {
-        setError('データの読み込みに失敗しました。ネットワーク接続を確認してください。');
+
+      try {
+        const token = await getAccessToken(requireAuth);
+        if (requireAuth && !token) {
+          throw new Error('認証トークンが見つかりません（ログインが必要です）');
+        }
+
+        const rows = await fetchOnce(token);
+        setData(rows);
         setRetrying(false);
+      } catch (err: any) {
+        if (attemptNumber < retryCount) {
+          setRetrying(true);
+          setTimeout(() => {
+            fetchData(attemptNumber + 1);
+          }, retryDelay * attemptNumber);
+        } else {
+          setError(err?.message || 'データの読み込みに失敗しました。');
+          setRetrying(false);
+        }
+      } finally {
+        if (attemptNumber === 1 || attemptNumber >= retryCount) setLoading(false);
+        inflightKeyRef.current = null;
       }
-    } finally {
-      if (attemptNumber === 1 || attemptNumber >= retryCount) {
-        setLoading(false);
-      }
-    }
-  }, [tableName, orderBy, limit, retryCount, retryDelay]);
+    },
+    [enabled, baseKey, retryCount, retryDelay, fetchOnce, requireAuth]
+  );
 
   useEffect(() => {
-    let isMounted = true;
-    
-    const initFetch = async () => {
-      if (isMounted) {
-        setLoading(true);
-        setError(null);
-        await fetchData();
-      }
-    };
-    
-    initFetch();
-    
+    if (!enabled) return;
+
+    // StrictMode の初回二重実行を回避（baseKey が同じ時だけ抑止）
+    if (process.env.NODE_ENV !== 'production') {
+      if (lastKeyRef.current === baseKey) return;
+      lastKeyRef.current = baseKey;
+    }
+
+    fetchData();
     return () => {
-      isMounted = false;
+      abortRef.current?.abort();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, baseKey]);
 
   const refetch = useCallback(() => {
     setLoading(true);
@@ -105,259 +193,193 @@ export function useFetchSupabaseData(options: any) {
   return { data, loading, error, retrying, refetch };
 }
 
-export function useFetchPlayersData() {
+/* -------------------------
+ * 読み取り系ラッパ（既定で requireAuth: false）
+ * ------------------------*/
+
+export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: boolean }) {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
     tableName: 'players',
-    orderBy: { column: 'ranking_points', ascending: false }
+    select: '*',
+    orderBy: { columns: ['ranking_points', 'id'], ascending: false },
+    enabled: opts?.enabled ?? true,
+    requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
   });
 
-  const filteredData = data.filter((player: any) => 
-    player.is_active === true && 
-    player.is_deleted !== true
+  const filtered = useMemo(
+    () => data.filter((p: any) => p.is_active === true && p.is_deleted !== true),
+    [data]
   );
 
-  return { 
-    players: filteredData, 
-    loading, 
-    error, 
-    retrying, 
-    refetch 
-  };
+  return { players: filtered, loading, error, retrying, refetch };
 }
 
-export function useFetchMatchesData(limit?: number) {
+export function useFetchMatchesData(
+  limit?: number,
+  opts?: { enabled?: boolean; requireAuth?: boolean }
+) {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
-    tableName: 'match_details',
-    orderBy: { column: 'match_date', ascending: false },
-    limit
+    tableName: 'match_details', // VIEW（読み取り専用）
+    select: '*',
+    orderBy: { columns: ['match_date', 'created_at', 'id'], ascending: false }, // 列が無ければ自動で次候補/順序なしへ
+    limit,
+    enabled: opts?.enabled ?? true,
+    requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
   });
 
-  return { 
-    matches: data, 
-    loading, 
-    error, 
-    retrying, 
-    refetch 
-  };
+  return { matches: data, loading, error, retrying, refetch };
 }
 
-// プレーヤー詳細データ用のフック
-export function useFetchPlayerDetail(playerId: string) {
+/* -------------------------
+ * 詳細系フック（既定: 読み取りは公開想定で requireAuth: false）
+ * ------------------------*/
+
+export function useFetchPlayerDetail(
+  playerId: string,
+  opts?: { enabled?: boolean; requireAuth?: boolean }
+) {
   const [player, setPlayer] = useState<any>(null);
   const [matches, setMatches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [retrying, setRetrying] = useState(false);
 
-  const fetchPlayerData = useCallback(async (attemptNumber = 1) => {
-    if (!playerId) {
+  const enabled = opts?.enabled ?? true;
+  const requireAuth = opts?.requireAuth ?? false;
+
+  useEffect(() => {
+    if (!enabled || !playerId) {
       setLoading(false);
       return;
     }
 
-    try {
-      console.log(`[Fetch API] Fetching player detail for ID: ${playerId}, attempt ${attemptNumber}`);
-      
-      // プレーヤー基本情報の取得
-      const playerUrl = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}&select=*`;
-      const playerResponse = await fetch(playerUrl, {
-        headers: {
-          'apikey': SUPABASE_ANON_KEY!,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        }
-      });
+    let cancelled = false;
+    const supabase = createClient();
 
-      if (!playerResponse.ok) {
-        throw new Error(`Failed to fetch player: ${playerResponse.status}`);
-      }
-
-      const playerData = await playerResponse.json();
-      if (!playerData || playerData.length === 0) {
-        throw new Error('Player not found');
-      }
-
-      const playerInfo = playerData[0];
-      console.log('[Fetch API] Player data:', playerInfo);
-
-      // 試合履歴の取得（match_detailsテーブルから）
-      const matchesUrl = `${SUPABASE_URL}/rest/v1/match_details?or=(winner_id.eq.${playerId},loser_id.eq.${playerId})&order=match_date.desc&limit=50`;
-      const matchesResponse = await fetch(matchesUrl, {
-        headers: {
-          'apikey': SUPABASE_ANON_KEY!,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        }
-      });
-
-      let matchesData = [];
-      if (matchesResponse.ok) {
-        matchesData = await matchesResponse.json();
-        console.log('[Fetch API] Matches data:', matchesData.length);
-      }
-
-      setPlayer(playerInfo);
-      setMatches(matchesData);
-      setError(null);
-      setRetrying(false);
-
-    } catch (err: any) {
-      console.error(`[Fetch API] Attempt ${attemptNumber} failed:`, err);
-      
-      if (attemptNumber < 3) {
-        setRetrying(true);
-        setTimeout(() => {
-          fetchPlayerData(attemptNumber + 1);
-        }, 1000 * attemptNumber);
-      } else {
-        setError(err.message);
-        setRetrying(false);
-      }
-    } finally {
-      if (attemptNumber === 1 || attemptNumber >= 3) {
-        setLoading(false);
-      }
-    }
-  }, [playerId]);
-
-  useEffect(() => {
-    let isMounted = true;
-    
-    const initFetch = async () => {
-      if (isMounted) {
+    (async () => {
+      try {
         setLoading(true);
         setError(null);
-        await fetchPlayerData();
+
+        const token =
+          (await supabase.auth.getSession()).data.session?.access_token ??
+          (requireAuth ? null : SUPABASE_ANON_KEY);
+
+        if (requireAuth && !token) throw new Error('認証トークンが見つかりません');
+
+        // プレイヤー情報
+        const playerUrl = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}&select=*`;
+        const playerRes = await fetch(playerUrl, {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        if (!playerRes.ok) throw new Error(`Failed to fetch player: ${playerRes.status}`);
+        const playerData = await playerRes.json();
+        if (!playerData?.[0]) throw new Error('Player not found');
+        if (cancelled) return;
+
+        // 試合履歴（VIEW）
+        const matchUrl =
+          `${SUPABASE_URL}/rest/v1/match_details` +
+          `?or=(winner_id.eq.${playerId},loser_id.eq.${playerId})&order=match_date.desc&limit=50`;
+        const matchesRes = await fetch(matchUrl, {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        const matchesData = matchesRes.ok ? await matchesRes.json() : [];
+        if (cancelled) return;
+
+        setPlayer(playerData[0]);
+        setMatches(matchesData || []);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || '読み込みに失敗しました');
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    };
-    
-    initFetch();
-    
+    })();
+
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
-  }, [playerId]);
+  }, [playerId, enabled, requireAuth]);
 
   const refetch = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    fetchPlayerData();
-  }, [fetchPlayerData]);
+    // 必要に応じて実装（本件では省略）
+  }, []);
 
-  return { player, matches, loading, error, retrying, refetch };
+  return { player, matches, loading, error, refetch };
 }
 
-// お知らせ詳細データ用のフック
-export function useFetchNoticeDetail(noticeId: string) {
-  const [notice, setNotice] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+/* -------------------------
+ * 変更系ユーティリティ（必ずユーザートークンで実行）
+ * ------------------------*/
 
-  useEffect(() => {
-    if (!noticeId) {
-      setLoading(false);
-      return;
-    }
-
-    const fetchNoticeDetail = async () => {
-      try {
-        console.log(`[Fetch API] Fetching notice detail for ID: ${noticeId}`);
-        
-        const noticeUrl = `${SUPABASE_URL}/rest/v1/notices?id=eq.${noticeId}&select=*`;
-        const response = await fetch(noticeUrl, {
-          headers: {
-            'apikey': SUPABASE_ANON_KEY!,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch notice: ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (!data || data.length === 0) {
-          throw new Error('Notice not found');
-        }
-
-        setNotice(data[0]);
-        console.log('[Fetch API] Notice data:', data[0]);
-
-      } catch (err: any) {
-        console.error('[Fetch API] Error fetching notice detail:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchNoticeDetail();
-  }, [noticeId]);
-
-  return { notice, loading, error };
-}
-
-// プレーヤー更新用の関数
 export async function updatePlayer(playerId: string, updates: any) {
   try {
-    console.log(`[Fetch API] Updating player ${playerId}:`, updates);
-    
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('ログインが必要です');
+    const token = session.access_token;
+
     const url = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}`;
-    const response = await fetch(url, {
+    const res = await fetch(url, {
       method: 'PATCH',
       headers: {
-        'apikey': SUPABASE_ANON_KEY!,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`, // ★ ユーザーのアクセストークン
         'Content-Type': 'application/json',
-        'Prefer': 'return=representation'
+        Prefer: 'return=representation',
       },
-      body: JSON.stringify(updates)
+      body: JSON.stringify(updates),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to update player: ${errorText}`);
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Failed to update player: ${t}`);
     }
-
-    const result = await response.json();
-    console.log('[Fetch API] Player updated successfully:', result);
-    return { data: result[0], error: null };
-
-  } catch (err: any) {
-    console.error('[Fetch API] Error updating player:', err);
-    return { data: null, error: err.message };
+    const json = await res.json();
+    return { data: json?.[0] ?? null, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message || '更新に失敗しました' };
   }
 }
 
-// 試合登録用の関数
+/**
+ * 試合作成: 書き込みは `matches` テーブルへ
+ * - RLS 例: with check (registered_by = auth.uid()) を想定
+ *   → 呼び出し側で `registered_by: session.user.id` を入れてください
+ */
 export async function createMatch(matchData: any) {
   try {
-    console.log('[Fetch API] Creating new match:', matchData);
-    
-    const url = `${SUPABASE_URL}/rest/v1/match_details`;
-    const response = await fetch(url, {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('ログインが必要です');
+    const token = session.access_token;
+
+    const url = `${SUPABASE_URL}/rest/v1/matches`; // ★ VIEW ではなく基表へ
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
-        'apikey': SUPABASE_ANON_KEY!,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`, // ★ ユーザーのアクセストークン
         'Content-Type': 'application/json',
-        'Prefer': 'return=representation'
+        Prefer: 'return=representation',
       },
-      body: JSON.stringify(matchData)
+      body: JSON.stringify(matchData),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to create match: ${errorText}`);
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Failed to create match: ${t}`);
     }
-
-    const result = await response.json();
-    console.log('[Fetch API] Match created successfully:', result);
-    return { data: result[0], error: null };
-
-  } catch (err: any) {
-    console.error('[Fetch API] Error creating match:', err);
-    return { data: null, error: err.message };
+    const json = await res.json();
+    return { data: json?.[0] ?? null, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message || '登録に失敗しました' };
   }
 }

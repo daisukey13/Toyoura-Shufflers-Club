@@ -1,27 +1,13 @@
 // app/(main)/layout.tsx
+import Header from '@/components/layout/Header';
+import Footer from '@/components/layout/Footer';
 
-'use client';
-
-import GlobalNavigation from '@/components/GlobalNavigation';
-import { useEffect } from 'react';
-
-export default function MainLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  useEffect(() => {
-    console.log('MainLayout mounted');
-  }, []);
-
+export default function MainLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#2a2a3e]">
-      
-      <main className="lg:ml-64">
-        <div className="min-h-screen">
-          {children}
-        </div>
-      </main>
-    </div>
+    <>
+      <Header />
+      <main className="min-h-[calc(100vh-64px)]">{children}</main>
+      <Footer />
+    </>
   );
 }

@@ -1,27 +1,31 @@
 // app/(main)/admin/dashboard/page.tsx
-
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
-import { createClient } from '@/lib/supabase/client';
-import { FaCog, FaUsers, FaTrophy, FaSignOutAlt, FaChartLine, FaShieldAlt, FaGamepad, FaFire, FaBolt } from 'react-icons/fa';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import {
+  FaCog, FaUsers, FaTrophy, FaSignOutAlt, FaChartLine, FaShieldAlt, FaGamepad, FaFire, FaBolt
+} from 'react-icons/fa';
+import { createClient } from '@/lib/supabase/client';
 
-const supabase = createClient();
-
-interface RankingConfig {
+type RankingConfig = {
   k_factor: number;
   score_diff_multiplier: number;
   handicap_diff_multiplier: number;
   win_threshold_handicap_change: number;
   handicap_change_amount: number;
-}
+};
 
 export default function AdminDashboard() {
-  const { isAdmin, signOut, loading: authLoading } = useAuth();
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
+
+  // 認可フラグ: 'checking' | 'ok' | 'no'
+  const [authz, setAuthz] = useState<'checking' | 'ok' | 'no'>('checking');
+  const [userId, setUserId] = useState<string | null>(null);
+
+  // UI
   const [activeTab, setActiveTab] = useState<'overview' | 'settings'>('overview');
   const [stats, setStats] = useState({
     totalPlayers: 0,
@@ -38,83 +42,145 @@ export default function AdminDashboard() {
   });
   const [saving, setSaving] = useState(false);
 
-  // デバッグ用のログを追加
+  /** サーバ側Cookieベースでログインかを確認 → その後に管理者判定（RLSに従う） */
   useEffect(() => {
-    console.log('AdminDashboard - authLoading:', authLoading);
-    console.log('AdminDashboard - isAdmin:', isAdmin);
-  }, [authLoading, isAdmin]);
+    let cancelled = false;
+    (async () => {
+      try {
+        // 1) サーバCookie基準でログイン済みか（/login 循環対策）
+        const r = await fetch('/auth/whoami', { cache: 'no-store' });
+        const j = r.ok ? await r.json() : { authenticated: false };
+        if (!j?.authenticated) {
+          router.replace('/login?redirect=/admin/dashboard');
+          return;
+        }
 
-  useEffect(() => {
-    if (!authLoading && !isAdmin) {
-      console.log('非管理者のためリダイレクト中...');
-      router.push('/');  // /loginではなくトップページへ
-    }
-  }, [isAdmin, authLoading, router]);
+        // 2) クライアント側のユーザーも取得
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          router.replace('/login?redirect=/admin/dashboard');
+          return;
+        }
+        if (cancelled) return;
+        setUserId(user.id);
 
-  useEffect(() => {
-    if (isAdmin) {
-      fetchStats();
-      loadConfig();
-    }
-  }, [isAdmin]);
+        // 3) 管理者判定（どちらかが真ならOK）
+        let isAdmin = false;
 
+        const [{ data: adminRow }, { data: playerRow }] = await Promise.all([
+          supabase.from('app_admins').select('user_id').eq('user_id', user.id).maybeSingle(),
+          supabase.from('players').select('is_admin').eq('id', user.id).maybeSingle(),
+        ]);
+
+        if (adminRow?.user_id) isAdmin = true;
+        if (playerRow?.is_admin === true) isAdmin = true;
+
+        if (!isAdmin) {
+          setAuthz('no');
+          return;
+        }
+
+        setAuthz('ok');
+        // 初回統計取得
+        void fetchStats();
+        // 設定ロード
+        void loadConfig();
+      } catch {
+        setAuthz('no');
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, router]);
+
+  /** 統計情報の取得（RLS: 参照可能な範囲で集計） */
   const fetchStats = async () => {
     try {
-      const [playersResult, matchesResult] = await Promise.all([
-        supabase.from('players').select('id, is_active'),
-        supabase.from('matches').select('id, created_at'),
+      const [{ data: players }, { data: matches }] = await Promise.all([
+        supabase.from('players').select('id,is_active'),
+        supabase.from('matches').select('id,created_at'),
       ]);
 
-      if (playersResult.data && matchesResult.data) {
-        const today = new Date().toISOString().split('T')[0];
-        const todayMatchCount = matchesResult.data.filter(
-          m => m.created_at.startsWith(today)
+      const todayISO = new Date().toISOString().split('T')[0];
+
+      const totalPlayers = players?.length ?? 0;
+      const activePlayers = (players ?? []).filter((p) => (p as any).is_active).length;
+      const totalMatches = matches?.length ?? 0;
+      const todayMatches =
+        (matches ?? []).filter((m) =>
+          typeof (m as any).created_at === 'string'
+            ? (m as any).created_at.startsWith(todayISO)
+            : false
         ).length;
 
-        setStats({
-          totalPlayers: playersResult.data.length,
-          activePlayers: playersResult.data.filter(p => p.is_active).length,
-          totalMatches: matchesResult.data.length,
-          todayMatches: todayMatchCount,
-        });
-      }
+      setStats({ totalPlayers, activePlayers, totalMatches, todayMatches });
     } catch (error) {
-      console.error('Error fetching stats:', error);
+      console.error('[admin/dashboard] fetchStats error:', error);
     }
   };
 
+  /** 設定ロード（暫定: localStorage） */
   const loadConfig = () => {
-    // 設定をローカルストレージから読み込み（本来はデータベースから）
-    const savedConfig = localStorage.getItem('rankingConfig');
-    if (savedConfig) {
-      setConfig(JSON.parse(savedConfig));
+    try {
+      const raw = localStorage.getItem('rankingConfig');
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as RankingConfig;
+      setConfig((prev) => ({ ...prev, ...parsed }));
+    } catch (e) {
+      console.warn('[admin/dashboard] loadConfig parse error:', e);
     }
   };
 
+  /** 設定保存（将来は Supabase へ） */
   const saveConfig = () => {
-    setSaving(true);
-    // 設定をローカルストレージに保存（本来はデータベースに）
-    localStorage.setItem('rankingConfig', JSON.stringify(config));
-    setTimeout(() => {
+    try {
+      setSaving(true);
+      localStorage.setItem('rankingConfig', JSON.stringify(config));
+      setTimeout(() => {
+        setSaving(false);
+        alert('設定を保存しました');
+      }, 250);
+    } catch (e) {
       setSaving(false);
-      alert('設定を保存しました');
-    }, 500);
+      alert('設定の保存に失敗しました');
+      console.error('[admin/dashboard] saveConfig error:', e);
+    }
   };
 
+  /** サインアウト（サーバCookieも同期） */
   const handleLogout = async () => {
-    await signOut();
-    // signOutの中でrouter.push('/')が実行されるので、追加のリダイレクトは不要
+    try {
+      await supabase.auth.signOut();
+      try {
+        await fetch('/auth/callback', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ event: 'SIGNED_OUT', session: null }),
+        });
+      } catch {}
+    } finally {
+      router.replace('/');
+    }
   };
 
-  if (authLoading) {
+  /** 表示用の安全な幅計算（NaN/Infinity 回避） */
+  const percent = (num: number, den: number) => {
+    if (!den || den <= 0) return 0;
+    const v = (num / den) * 100;
+    return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
+  };
+
+  // 認証中表示
+  if (authz === 'checking') {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center">
-        <div className="text-white text-xl">読み込み中...</div>
+        <div className="text-white text-xl">認証を確認しています...</div>
       </div>
     );
   }
 
-  if (!isAdmin) {
+  // 権限なしフォールバック
+  if (authz === 'no') {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center">
         <div className="text-white text-xl">アクセス権限がありません</div>
@@ -122,6 +188,7 @@ export default function AdminDashboard() {
     );
   }
 
+  // --- 管理者のみ表示 ---
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
       <div className="container mx-auto px-4 py-8">
@@ -185,7 +252,7 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full" style={{ width: '100%' }}></div>
+                  <div className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full" style={{ width: '100%' }} />
                 </div>
               </div>
 
@@ -200,10 +267,10 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-gradient-to-r from-green-500 to-green-400 rounded-full" 
-                    style={{ width: `${(stats.activePlayers / stats.totalPlayers) * 100}%` }}
-                  ></div>
+                  <div
+                    className="h-full bg-gradient-to-r from-green-500 to-green-400 rounded-full"
+                    style={{ width: `${percent(stats.activePlayers, stats.totalPlayers)}%` }}
+                  />
                 </div>
               </div>
 
@@ -218,7 +285,7 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full" style={{ width: '100%' }}></div>
+                  <div className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full" style={{ width: '100%' }} />
                 </div>
               </div>
 
@@ -233,7 +300,10 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-purple-500 to-purple-400 rounded-full animate-pulse" style={{ width: `${Math.min((stats.todayMatches / 10) * 100, 100)}%` }}></div>
+                  <div
+                    className="h-full bg-gradient-to-r from-purple-500 to-purple-400 rounded-full animate-pulse"
+                    style={{ width: `${percent(stats.todayMatches, 10)}%` }}
+                  />
                 </div>
               </div>
             </div>
@@ -250,9 +320,7 @@ export default function AdminDashboard() {
                   </div>
                   <h3 className="text-2xl font-bold">プレイヤー管理</h3>
                 </div>
-                <p className="text-gray-400">
-                  プレイヤーの情報を編集・管理できます
-                </p>
+                <p className="text-gray-400">プレイヤーの情報を編集・管理できます</p>
               </Link>
 
               <Link
@@ -265,9 +333,7 @@ export default function AdminDashboard() {
                   </div>
                   <h3 className="text-2xl font-bold">試合管理</h3>
                 </div>
-                <p className="text-gray-400">
-                  試合結果の編集・削除を行えます
-                </p>
+                <p className="text-gray-400">試合結果の編集・削除を行えます</p>
               </Link>
             </div>
           </div>
@@ -280,22 +346,17 @@ export default function AdminDashboard() {
                 <FaCog className="text-purple-400" />
                 ランキング計算設定
               </h2>
-              
+
               <div className="space-y-8">
                 {/* K係数 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    K係数（ELOレーティング）
-                  </label>
-                  <p className="text-sm text-gray-400 mb-4">
-                    レーティング変動の大きさを決定します。大きいほど1試合での変動が大きくなります。
-                    通常は16〜64の範囲で設定します。
-                  </p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">K係数（ELOレーティング）</label>
+                  <p className="text-sm text-gray-400 mb-4">レーティング変動の大きさ。通常は16〜64。</p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
-                      min="16"
-                      max="64"
+                      min={16}
+                      max={64}
                       value={config.k_factor}
                       onChange={(e) => setConfig({ ...config, k_factor: parseInt(e.target.value) })}
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
@@ -308,19 +369,14 @@ export default function AdminDashboard() {
 
                 {/* スコア差倍率 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    スコア差倍率
-                  </label>
-                  <p className="text-sm text-gray-400 mb-4">
-                    試合のスコア差（15-0と15-14など）によるポイント変動への影響度。
-                    0.01〜0.1の範囲が推奨されます。
-                  </p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">スコア差倍率</label>
+                  <p className="text-sm text-gray-400 mb-4">0.01〜0.1 推奨。</p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
-                      min="0.01"
-                      max="0.1"
-                      step="0.01"
+                      min={0.01}
+                      max={0.1}
+                      step={0.01}
                       value={config.score_diff_multiplier}
                       onChange={(e) => setConfig({ ...config, score_diff_multiplier: parseFloat(e.target.value) })}
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
@@ -331,21 +387,16 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                {/* ハンディキャップ差倍率 */}
+                {/* ハンディ差倍率 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    ハンディキャップ差倍率
-                  </label>
-                  <p className="text-sm text-gray-400 mb-4">
-                    プレイヤー間のハンディキャップ差によるポイント変動への影響度。
-                    ハンディキャップが高い方が勝った場合、より多くのポイントを獲得します。
-                  </p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ差倍率</label>
+                  <p className="text-sm text-gray-400 mb-4">0.01〜0.05 推奨。</p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
-                      min="0.01"
-                      max="0.05"
-                      step="0.01"
+                      min={0.01}
+                      max={0.05}
+                      step={0.01}
                       value={config.handicap_diff_multiplier}
                       onChange={(e) => setConfig({ ...config, handicap_diff_multiplier: parseFloat(e.target.value) })}
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
@@ -356,22 +407,19 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                {/* ハンディキャップ変更閾値 */}
+                {/* ハンディ変更閾値 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    ハンディキャップ変更閾値（点差）
-                  </label>
-                  <p className="text-sm text-gray-400 mb-4">
-                    この点差以上で勝利した場合、勝者のハンディキャップが減少し、
-                    敗者のハンディキャップが増加します。
-                  </p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ変更閾値（点差）</label>
+                  <p className="text-sm text-gray-400 mb-4">この点差以上で勝利した場合にハンディを調整。</p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
-                      min="5"
-                      max="15"
+                      min={5}
+                      max={15}
                       value={config.win_threshold_handicap_change}
-                      onChange={(e) => setConfig({ ...config, win_threshold_handicap_change: parseInt(e.target.value) })}
+                      onChange={(e) =>
+                        setConfig({ ...config, win_threshold_handicap_change: parseInt(e.target.value) })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
@@ -380,21 +428,19 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                {/* ハンディキャップ変更量 */}
+                {/* ハンディ変更量 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    ハンディキャップ変更量
-                  </label>
-                  <p className="text-sm text-gray-400 mb-4">
-                    閾値を超えた場合のハンディキャップ変更量です。
-                  </p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ変更量</label>
+                  <p className="text-sm text-gray-400 mb-4">閾値を超えた場合の変更量。</p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
-                      min="1"
-                      max="5"
+                      min={1}
+                      max={5}
                       value={config.handicap_change_amount}
-                      onChange={(e) => setConfig({ ...config, handicap_change_amount: parseInt(e.target.value) })}
+                      onChange={(e) =>
+                        setConfig({ ...config, handicap_change_amount: parseInt(e.target.value) })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
@@ -429,7 +475,6 @@ export default function AdminDashboard() {
           border-radius: 50%;
           box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
         }
-
         .slider::-moz-range-thumb {
           width: 20px;
           height: 20px;
