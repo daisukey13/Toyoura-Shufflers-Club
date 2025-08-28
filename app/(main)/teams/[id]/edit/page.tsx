@@ -394,11 +394,12 @@ export default function TeamEditPage() {
     }
     setRemovingId(playerId);
     setMError(null);
+    
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
-
+    }
       const res = await fetch(
         `${BASE}/rest/v1/team_members?team_id=eq.${teamId}&player_id=eq.${playerId}`,
         {
