@@ -94,9 +94,8 @@ export default function AdminDashboard() {
           supabase.from('app_admins').select('user_id').eq('user_id', user.id).maybeSingle(),
           supabase.from('players').select('is_admin').eq('id', user.id).maybeSingle(),
         ]);
-        if (adminRow?.user_id) isAdmin = true;
-        if (playerRow?.is_admin === true) isAdmin = true;
-
+        if (adminRow && adminRow.user_id) isAdmin = true;
+if (playerRow && playerRow.is_admin === true) isAdmin = true;
         if (!isAdmin) {
           setAuthz('no');
           return;
@@ -161,13 +160,16 @@ export default function AdminDashboard() {
     }
   };
 
-  
+
   /** 公開トグル */
   const togglePublish = async (target: Notice) => {
     const next = !target.is_published;
     setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
     try {
-      const { error } = await supabase.from('notices').update({ is_published: next }).eq('id', target.id);
+     const { error } = await (supabase.from('notices') as any)
+  .update({ is_published: next } as any)
+  .eq('id', target.id);
+
       if (error) throw error;
     } catch (e) {
       console.error('[admin/dashboard] toggle publish error:', e);

@@ -62,7 +62,7 @@ export default function ResetPasswordPage() {
 
         // 1) 新方式（?code=...）かつ PKCE 検証子がローカルにある場合のみ交換
         if (codeFromQuery && hasPkceVerifier) {
-          const { error } = await supabase.auth.exchangeCodeForSession({
+          const { error } = await supabase.auth.exchangeCodeForSession(codeFromQuery);
             code: codeFromQuery, // ★ 文字列のみ渡す
           });
           if (error) throw error;

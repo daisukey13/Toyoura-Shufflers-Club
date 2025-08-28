@@ -51,10 +51,10 @@ export default function AdminNoticesPage() {
           .eq('id', user.id)
           .maybeSingle();
         if (plErr) throw plErr;
-        if (!player?.is_admin) {
-          router.replace('/');
-          return;
-        }
+       if (!player || !player.is_admin) {
+  router.replace('/');
+  return;
+}
         setIsAdmin(true);
         await fetchNotices();
       } catch (e) {
@@ -98,10 +98,10 @@ export default function AdminNoticesPage() {
     // 楽観的更新
     setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
     try {
-      const { error } = await supabase
-        .from('notices')
-        .update({ is_published: next })
-        .eq('id', target.id);
+      const { error } = await (supabase.from('notices') as any)
+  .update({ is_published: next } as any)
+  .eq('id', target.id);
+
       if (error) throw error;
     } catch (e) {
       console.error('[admin/notices] toggle publish error:', e);

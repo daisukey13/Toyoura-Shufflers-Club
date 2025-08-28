@@ -125,7 +125,9 @@ export default function TeamEditPage() {
     setMError(null);
 
     try {
-      const { data: { session] } } = await supabase.auth.getSession();
+      // ✨ 修正1: 余計な ']' を削除＋errorも受け取る
+      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
       const token = session?.access_token;
 
       // チーム本体
@@ -221,7 +223,8 @@ export default function TeamEditPage() {
     setSavedMsg(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
 
@@ -293,7 +296,8 @@ export default function TeamEditPage() {
     setAdding(true);
     setMError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
 
@@ -325,7 +329,7 @@ export default function TeamEditPage() {
       // プレイヤー詳細を取得
       const ps = await restGet<Player[]>(
         `/rest/v1/players?id=eq.${pid}&select=id,handle_name,avatar_url,ranking_points,handicap,is_active`,
-        session.access_token
+        token
       );
       const player = ps?.[0];
 
@@ -351,7 +355,8 @@ export default function TeamEditPage() {
     setSavingRoleId(playerId);
     setMError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
 
@@ -394,12 +399,14 @@ export default function TeamEditPage() {
     }
     setRemovingId(playerId);
     setMError(null);
-    
+
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      // ✨ 修正2: tryブロックの中で完結させる
+      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
-    }
+
       const res = await fetch(
         `${BASE}/rest/v1/team_members?team_id=eq.${teamId}&player_id=eq.${playerId}`,
         {
