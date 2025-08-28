@@ -70,7 +70,9 @@ export default function ResetPasswordPage() {
 
         // 3) code（PKCE：メールリンクの新方式その2）
         if (codeFromQuery) {
-          const { error } = await supabase.auth.exchangeCodeForSession({ code: codeFromQuery });
+         // 73行 付近
+const { error } = await supabase.auth.exchangeCodeForSession(codeFromQuery);
+
           if (error) {
             // PKCE の code_verifier が無い（別ブラウザ等）場合の既知エラー
             if (/code verifier|both auth code and code verifier/i.test(String(error.message))) {

@@ -61,13 +61,13 @@ export default function NoticeDetailPage({ params }: PageProps) {
   }
 
   const title = notice.title ?? '無題';
-  const dateText = notice.date
-    ? new Date(notice.date).toLocaleDateString('ja-JP', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      })
-    : '';
+  const dateValue =
+  (notice as any).date ??
+  (notice as any).created_at ??
+  null;
+ const dateText = dateValue
+  ? new Date(dateValue).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })
+  : '';
 
   return (
     <main className="min-h-screen bg-[#2a2a3e] text-white">

@@ -199,8 +199,12 @@ export default function TeamProfilePage() {
             };
           });
 
-        setRecentMatches(rows);
-      }
+        setRecentMatches(
+  rows.map(r => ({
+    ...r,
+    result: (r.winner_team_no === r.my_team_no ? 'W' : 'L') as 'W' | 'L',
+  }))
+);
     } catch (e: any) {
       setError(e?.message || '読み込みに失敗しました');
     } finally {

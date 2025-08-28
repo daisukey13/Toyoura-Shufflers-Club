@@ -66,10 +66,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     console.log('Player data fetched successfully:', data)
-    console.log('Is admin?', data.is_admin)
-    console.log('Display name:', data.display_name)
-    return data
-  }
+  if (data) {
+  console.log('Is admin?', data.is_admin);
+  console.log('Display name:', data.display_name);
+}
 
   // 認証状態を更新する関数
   const refreshAuth = async () => {

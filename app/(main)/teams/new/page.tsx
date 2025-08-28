@@ -50,7 +50,8 @@ export default function TeamCreatePage() {
     setSuccessMsg(null);
 
     try {
-      const { data: { user, session } } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
+const { data: { session } } = await supabase.auth.getSession();
       if (!user || !session) throw new Error('ログインが必要です');
       const token = session.access_token;
 

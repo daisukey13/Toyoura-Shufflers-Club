@@ -174,7 +174,7 @@ export default function TeamsPage() {
   // 取得（VIEW: team_rankings）
   const { teams, loading, error, retrying, refetch } = useTeamRankings({
     enabled: true,
-    orderBy: sortBy,
+    orderBy: sortBy as any,
     ascending: dir === 'asc',
   });
 
