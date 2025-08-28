@@ -5,9 +5,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
 /**
- * NOTE:
+ * NOTE
+ * - 読み取りは基本「公開でもOK」を想定し、読み取り系ラッパの既定 requireAuth は false。
  * - `match_details` は VIEW（読み取り専用）想定。書き込みは `matches` に対して行ってください。
- * - SELECT は公開でも読める前提のものが多いので、"読み取り系"は requireAuth を既定 false にしています。
  */
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -23,7 +23,7 @@ type BaseOptions = {
   orderBy?: OrderBy;                // 複数列候補を順に試す
   limit?: number;
   retryCount?: number;              // default: 3
-  retryDelay?: number;              // default: 1000
+  retryDelay?: number;              // default: 1000 (指数バックオフ気味に使用)
   enabled?: boolean;                // default: true
   requireAuth?: boolean;            // default: true（読み取り系ラッパでは false を指定）
   queryParams?: Record<string, string>; // 追加クエリ（eq系など）
@@ -193,9 +193,9 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
   return { data, loading, error, retrying, refetch };
 }
 
-/* -------------------------
+/* =========================================================
  * 読み取り系ラッパ（既定で requireAuth: false）
- * ------------------------*/
+ * =========================================================*/
 
 export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: boolean }) {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
@@ -221,7 +221,7 @@ export function useFetchMatchesData(
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
     tableName: 'match_details', // VIEW（読み取り専用）
     select: '*',
-    orderBy: { columns: ['match_date', 'created_at', 'id'], ascending: false }, // 列が無ければ自動で次候補/順序なしへ
+    orderBy: { columns: ['match_date', 'created_at', 'id'], ascending: false }, // 列が無ければ自動で次候補/順不同へ
     limit,
     enabled: opts?.enabled ?? true,
     requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
@@ -230,9 +230,71 @@ export function useFetchMatchesData(
   return { matches: data, loading, error, retrying, refetch };
 }
 
-/* -------------------------
- * 詳細系フック（既定: 読み取りは公開想定で requireAuth: false）
- * ------------------------*/
+/** チームランキング（team_rankings VIEW） */
+export type TeamRankingRow = {
+  id: string;
+  name: string;
+  team_size?: number | null;
+  avg_rp?: number | null;
+  avg_hc?: number | null;
+  played?: number | null;
+  wins?: number | null;
+  losses?: number | null;
+  win_pct?: number | null;
+  last_match_at?: string | null;
+};
+
+export function useTeamRankings(opts?: {
+  enabled?: boolean;
+  requireAuth?: boolean; // 既定: false（公開ビューを想定）
+  order?: 'avg_rp' | 'win_pct' | 'last_match_at';
+  direction?: 'asc' | 'desc';
+  limit?: number;
+}) {
+  const orderCol = opts?.order ?? 'avg_rp';
+  const asc = (opts?.direction ?? 'desc') === 'asc';
+
+  const { data, loading, error, retrying, refetch } = useFetchSupabaseData<TeamRankingRow>({
+    tableName: 'team_rankings',
+    select:
+      'id,name,team_size,avg_rp,avg_hc,played,wins,losses,win_pct,last_match_at',
+    orderBy: { column: orderCol, ascending: asc },
+    limit: opts?.limit,
+    enabled: opts?.enabled ?? true,
+    requireAuth: opts?.requireAuth ?? false,
+  });
+
+  return { teams: data, loading, error, retrying, refetch };
+}
+
+/** チーム一覧（UI 選択用） */
+export type TeamRow = { id: string; name: string };
+
+export function useTeamsList(opts?: {
+  enabled?: boolean;
+  requireAuth?: boolean;
+  order?: 'name' | 'created_at';
+  direction?: 'asc' | 'desc';
+  limit?: number;
+}) {
+  const orderCol = opts?.order ?? 'name';
+  const asc = (opts?.direction ?? 'asc') === 'asc';
+
+  const { data, loading, error, retrying, refetch } = useFetchSupabaseData<TeamRow>({
+    tableName: 'teams',
+    select: 'id,name',
+    orderBy: { column: orderCol, ascending: asc },
+    limit: opts?.limit,
+    enabled: opts?.enabled ?? true,
+    requireAuth: opts?.requireAuth ?? false, // 公開で読める運用なら false、RLS が厳しいなら true に変更
+  });
+
+  return { teams: data, loading, error, retrying, refetch };
+}
+
+/* =========================================================
+ * 詳細系フック（既定: requireAuth: false）
+ * =========================================================*/
 
 export function useFetchPlayerDetail(
   playerId: string,
@@ -309,15 +371,15 @@ export function useFetchPlayerDetail(
   }, [playerId, enabled, requireAuth]);
 
   const refetch = useCallback(() => {
-    // 必要に応じて実装（本件では省略）
+    // 必要に応じて再取得ロジックを実装
   }, []);
 
   return { player, matches, loading, error, refetch };
 }
 
-/* -------------------------
+/* =========================================================
  * 変更系ユーティリティ（必ずユーザートークンで実行）
- * ------------------------*/
+ * =========================================================*/
 
 export async function updatePlayer(playerId: string, updates: any) {
   try {
@@ -351,8 +413,8 @@ export async function updatePlayer(playerId: string, updates: any) {
 
 /**
  * 試合作成: 書き込みは `matches` テーブルへ
- * - RLS 例: with check (registered_by = auth.uid()) を想定
- *   → 呼び出し側で `registered_by: session.user.id` を入れてください
+ * - 必須カラム（例: reporter_id / registered_by など）は呼び出し側でセットしてください
+ * - RLS 例: with check (reporter_id = auth.uid()) or (registered_by = auth.uid())
  */
 export async function createMatch(matchData: any) {
   try {

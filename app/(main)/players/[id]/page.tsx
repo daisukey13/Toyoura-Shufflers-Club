@@ -1,345 +1,426 @@
+// app/(main)/players/[id]/page.tsx
 'use client';
 
-import { useState, useEffect, useMemo, memo } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useFetchPlayerDetail } from '@/lib/hooks/useFetchSupabaseData';
-import { FaTrophy, FaMedal, FaChartLine, FaArrowLeft, FaUser } from 'react-icons/fa';
-import type { Player } from '@/types/player';
+import { useParams } from 'next/navigation';
+import {
+  FaCrown,
+  FaMedal,
+  FaChartLine,
+  FaTrophy,
+  FaArrowLeft,
+  FaUsers,
+} from 'react-icons/fa';
+import {
+  useFetchPlayerDetail,
+  useFetchPlayersData,
+} from '@/lib/hooks/useFetchSupabaseData';
+import { createClient } from '@/lib/supabase/client';
 
-// 画像の遅延読み込み用カスタムコンポーネント
-const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
-  return (
-    <img
-      src={src}
-      alt={alt}
-      className={className}
-      loading="lazy"
-      decoding="async"
-      onError={(e) => {
-        (e.target as HTMLImageElement).src = '/default-avatar.png';
-      }}
-    />
-  );
+/* ───────────────────────────── Types / helpers ───────────────────────────── */
+type Player = {
+  id: string;
+  handle_name: string;
+  avatar_url?: string | null;
+  ranking_points?: number | null;
+  handicap?: number | null;
+  wins?: number | null;
+  losses?: number | null;
+  is_active?: boolean | null;
+  address?: string | null;
 };
 
-// 統計カードコンポーネント
-const StatsCard = memo(function StatsCard({ 
-  value, 
-  label, 
-  icon: Icon, 
-  color 
-}: { 
-  value: number | string; 
-  label: string; 
-  icon?: any; 
-  color: string 
-}) {
+type TeamMemberRow = { team_id: string; role?: string | null };
+type Team = { id: string; name: string; avatar_url?: string | null };
+type TeamWithRole = Team & { role?: string | null };
+
+function gamesOf(p?: Player | null) {
+  if (!p) return 0;
+  return (p.wins ?? 0) + (p.losses ?? 0);
+}
+function winRateOf(p?: Player | null) {
+  if (!p) return 0;
+  const w = p.wins ?? 0;
+  const l = p.losses ?? 0;
+  const g = w + l;
+  return g ? Math.round((w / g) * 100) : 0;
+}
+
+/* ───────────────────────────── Rank badge (Huge) ───────────────────────────── */
+function rankTheme(rank?: number | null) {
+  if (!rank) return { ring: 'from-purple-500 to-pink-600', glow: 'bg-purple-400' };
+  if (rank === 1) return { ring: 'from-yellow-300 to-yellow-500', glow: 'bg-yellow-300' };
+  if (rank === 2) return { ring: 'from-gray-200 to-gray-400', glow: 'bg-gray-300' };
+  if (rank === 3) return { ring: 'from-orange-300 to-orange-500', glow: 'bg-orange-400' };
+  return { ring: 'from-purple-400 to-pink-500', glow: 'bg-purple-400' };
+}
+
+function HugeRankBadge({ rank }: { rank?: number | null }) {
+  const t = rankTheme(rank);
   return (
-    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 sm:p-6 text-center border border-white/20">
-      {Icon && <Icon className={`text-2xl sm:text-3xl ${color} mx-auto mb-2`} />}
-      <div className={`text-2xl sm:text-3xl font-bold ${color} mb-1`}>{value}</div>
-      <div className="text-xs sm:text-sm text-gray-400">{label}</div>
+    <div className="relative inline-block">
+      {/* soft glow */}
+      <div className={`absolute -inset-4 rounded-full blur-2xl opacity-40 ${t.glow}`} />
+      {/* ring */}
+      <div className={`relative rounded-full p-1 bg-gradient-to-br ${t.ring}`}>
+        <div className="rounded-full bg-[#1f1f2f] p-4 sm:p-5">
+          <div className="flex items-center justify-center">
+            {/* ランク数字（勝利数より2倍以上大きい） */}
+            <span className="font-extrabold tracking-tight text-6xl sm:text-7xl text-yellow-100 drop-shadow">
+              {rank ?? '—'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Crown for Top3 */}
+      {rank && rank <= 3 && (
+        <div className="absolute -top-4 -right-4 sm:-top-5 sm:-right-5">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-yellow-400/20 border border-yellow-400/40 flex items-center justify-center">
+            <FaCrown className="text-yellow-300 text-xl sm:text-2xl" />
+          </div>
+        </div>
+      )}
     </div>
   );
-});
+}
 
-// 試合結果カードコンポーネント
-const MatchCard = memo(function MatchCard({ match }: { match: any }) {
-  return (
-    <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 sm:p-4 border border-white/20 hover:border-purple-400/40 transition-all">
-      <div className="flex items-center justify-between gap-3">
-        {/* 対戦相手情報 */}
-        <Link 
-          href={`/players/${match.opponent_id}`} 
-          className="flex items-center gap-2 sm:gap-3 min-w-0 hover:opacity-80 transition-opacity"
-        >
-          <LazyImage
-            src={match.opponent_avatar || '/default-avatar.png'}
-            alt={match.opponent_name}
-            className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover flex-shrink-0"
-          />
-          <div className="min-w-0">
-            <div className="font-semibold text-yellow-100 text-sm sm:text-base truncate">
-              {match.opponent_name}
-            </div>
-            <div className="text-xs text-gray-400">
-              {new Date(match.match_date).toLocaleDateString('ja-JP')}
-            </div>
-          </div>
-        </Link>
-        
-        {/* スコアと結果 */}
-        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-          <div className="text-right">
-            <div className="text-lg sm:text-xl font-bold">
-              <span className={match.result === 'win' ? 'text-green-400' : 'text-gray-400'}>
-                {match.player_score}
-              </span>
-              <span className="text-gray-500 mx-1">-</span>
-              <span className={match.result === 'loss' ? 'text-red-400' : 'text-gray-400'}>
-                {match.opponent_score}
-              </span>
-            </div>
-          </div>
-          <div className={`px-2 py-1 rounded-full text-xs font-bold ${
-            match.result === 'win' 
-              ? 'bg-green-500/20 text-green-400' 
-              : 'bg-red-500/20 text-red-400'
-          }`}>
-            {match.result === 'win' ? 'W' : 'L'}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-});
+/* ───────────────────────────── Page ───────────────────────────── */
+export default function PlayerProfilePage() {
+  const params = useParams<{ id: string }>();
+  const playerId = params?.id;
 
-export default function PlayerDetailPage() {
-  const params = useParams();
-  const router = useRouter();
-  const playerId = params.id as string;
-  
-  // カスタムフックを使用してプレーヤーデータを取得
-  const { player, matches, loading, error, refetch } = useFetchPlayerDetail(playerId) as { 
-    player: Player | null; 
-    matches: any[]; 
-    loading: boolean; 
-    error: any; 
-    refetch: () => void;
-  };
+  // 個別プレイヤー詳細（試合履歴など）
+  const { player, matches, loading, error } = useFetchPlayerDetail(playerId, {
+    requireAuth: false,
+  });
 
-  // 勝率の計算
-  const winRate = useMemo(() => {
-    return player && player.matches_played > 0 
-      ? Math.round((player.wins / player.matches_played) * 100) 
-      : 0;
-  }, [player]);
-
-  // 最近の成績を整形
-  const recentPerformance = useMemo(() => {
-    return matches?.slice(0, 10).map(match => {
-      const isWinner = match.winner_id === playerId;
-      return {
-        ...match,
-        result: isWinner ? 'win' : 'loss',
-        player_score: isWinner ? match.winner_score : match.loser_score,
-        opponent_score: isWinner ? match.loser_score : match.winner_score,
-        opponent_id: isWinner ? match.loser_id : match.winner_id,
-        opponent_name: isWinner ? match.loser_name : match.winner_name,
-        opponent_avatar: isWinner ? match.loser_avatar : match.winner_avatar,
-      };
-    }) || [];
-  }, [matches, playerId]);
-
-  // 直近5試合の勝敗
-  const recentResults = useMemo(() => {
-    return recentPerformance.slice(0, 5);
-  }, [recentPerformance]);
-
-  // ローディング状態
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-purple-900 via-purple-800 to-pink-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-400 mx-auto"></div>
-          <p className="mt-4 text-gray-300">読み込み中...</p>
-        </div>
-      </div>
+  // 全プレイヤーから順位算出（RP降順）
+  const { players: allPlayers } = useFetchPlayersData({ requireAuth: false });
+  const { rank, totalActive } = useMemo(() => {
+    const arr = [...allPlayers].sort(
+      (a: any, b: any) => (b.ranking_points ?? 0) - (a.ranking_points ?? 0)
     );
-  }
+    const idx = arr.findIndex((p: any) => p.id === playerId);
+    return { rank: idx >= 0 ? idx + 1 : null, totalActive: arr.length };
+  }, [allPlayers, playerId]);
 
-  // エラー状態
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-purple-900 via-purple-800 to-pink-900">
-        <div className="container mx-auto px-4 py-6">
-          <div className="mb-6">
-            <Link 
-              href="/players" 
-              className="inline-flex items-center gap-2 text-gray-400 hover:text-yellow-100 transition-colors"
-            >
-              <FaArrowLeft className="text-sm" />
-              <span>戻る</span>
-            </Link>
-          </div>
-          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
-            <p className="text-red-400">エラーが発生しました: {error}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const wr = winRateOf(player);
+  const games = gamesOf(player);
 
-  // プレーヤーが見つからない場合
-  if (!player) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-purple-900 via-purple-800 to-pink-900">
-        <div className="container mx-auto px-4 py-6">
-          <div className="mb-6">
-            <Link 
-              href="/players" 
-              className="inline-flex items-center gap-2 text-gray-400 hover:text-yellow-100 transition-colors"
-            >
-              <FaArrowLeft className="text-sm" />
-              <span>戻る</span>
-            </Link>
-          </div>
-          <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
-            <p className="text-gray-300">プレーヤーが見つかりません</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  /* ───────── 所属チームを取得（team_members → teams） ───────── */
+  const [teams, setTeams] = useState<TeamWithRole[]>([]);
+  const [teamsLoading, setTeamsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+
+    (async () => {
+      if (!playerId) return;
+      setTeamsLoading(true);
+      try {
+        // 1) team_members から所属チームID+役割を取得
+        const { data: memberRows, error: mErr } = await supabase
+          .from('team_members')
+          .select('team_id, role')
+          .eq('player_id', playerId);
+
+        if (mErr) throw mErr;
+        const ids = (memberRows ?? []).map((r) => r.team_id).filter(Boolean);
+        if (ids.length === 0) {
+          if (!cancelled) {
+            setTeams([]);
+            setTeamsLoading(false);
+          }
+          return;
+        }
+
+        // 2) teams 情報をまとめて取得
+        const { data: teamRows, error: tErr } = await supabase
+          .from('teams')
+          .select('id, name, avatar_url')
+          .in('id', ids);
+
+        if (tErr) throw tErr;
+
+        // 3) role を結合
+        const roleMap = new Map<string, string | null>();
+        (memberRows as TeamMemberRow[]).forEach((r) => roleMap.set(r.team_id, r.role ?? null));
+        const merged: TeamWithRole[] = (teamRows ?? []).map((t) => ({
+          ...t,
+          role: roleMap.get(t.id) ?? null,
+        }));
+
+        if (!cancelled) {
+          setTeams(merged);
+          setTeamsLoading(false);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.error('[player profile] fetch teams error:', e);
+          setTeams([]);
+          setTeamsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [playerId]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-purple-900 via-purple-800 to-pink-900">
-      <div className="container mx-auto px-4 py-6">
-        {/* ヘッダー */}
-        <div className="mb-6">
-          <Link 
-            href="/players" 
-            className="inline-flex items-center gap-2 text-gray-400 hover:text-yellow-100 transition-colors"
+    <div className="min-h-screen bg-[#2a2a3e] text-white">
+      <div className="container mx-auto px-4 py-6 sm:py-8">
+        {/* 戻る */}
+        <div className="mb-4">
+          <Link
+            href="/players"
+            className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
           >
-            <FaArrowLeft className="text-sm" />
-            <span>戻る</span>
+            <FaArrowLeft /> 一覧へ戻る
           </Link>
         </div>
 
-        {/* プロフィールカード */}
-        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 sm:p-8 mb-6 border border-white/20">
-          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
-            {/* アバター */}
-            <div className="relative">
-              <div className="absolute -inset-1 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full blur-sm"></div>
-              <LazyImage
-                src={player.avatar_url || '/default-avatar.png'}
-                alt={player.full_name}
-                className="relative w-24 h-24 sm:w-32 sm:h-32 rounded-full object-cover border-2 border-purple-500"
-              />
+        {/* ローディング / エラー */}
+        {loading && (
+          <div className="max-w-4xl mx-auto glass-card rounded-2xl p-6 sm:p-8">
+            <div className="h-7 w-60 bg-white/10 rounded mb-6" />
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="h-40 bg-white/10 rounded" />
+              <div className="h-40 bg-white/10 rounded" />
             </div>
+          </div>
+        )}
+        {error && !loading && (
+          <div className="max-w-4xl mx-auto glass-card rounded-2xl p-6 border border-red-500/40 bg-red-500/10">
+            読み込みに失敗しました: {error}
+          </div>
+        )}
 
-            {/* 基本情報 */}
-            <div className="flex-1 text-center sm:text-left">
-              <h1 className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-2">
-                {player.full_name}
-              </h1>
-              <p className="text-base sm:text-lg text-gray-400 mb-3">@{player.handle_name}</p>
-              
-              {/* バッジ */}
-              <div className="flex flex-wrap gap-2 justify-center sm:justify-start mb-4">
-                <div className="px-3 py-1.5 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-full">
-                  <span className="text-yellow-300 font-semibold text-sm">
-                    #{player.current_rank || '-'} ランキング
-                  </span>
+        {!loading && !error && player && (
+          <div className="max-w-5xl mx-auto space-y-6 sm:space-y-8">
+            {/* ── ヒーロー：巨大ランク＋基本情報 ── */}
+            <div className="glass-card rounded-2xl p-6 sm:p-8 border border-purple-500/30">
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8">
+                {/* Huge Rank */}
+                <div className="shrink-0">
+                  <HugeRankBadge rank={rank} />
+                  <div className="text-center mt-2 text-xs sm:text-sm text-gray-400">
+                    {rank ? `全${totalActive}人中` : '順位集計外'}
+                  </div>
                 </div>
-                <div className="px-3 py-1.5 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-full">
-                  <span className="text-blue-300 font-semibold text-sm">
-                    {player.ranking_points} pts
-                  </span>
-                </div>
-                <div className={`px-3 py-1.5 rounded-full ${
-                  player.is_active 
-                    ? 'bg-green-500/20 text-green-400' 
-                    : 'bg-gray-500/20 text-gray-400'
-                }`}>
-                  <span className="font-semibold text-sm">
-                    {player.is_active ? 'アクティブ' : '非アクティブ'}
-                  </span>
+
+                {/* 名前＋RP/HC（特大表示） */}
+                <div className="flex-1 w-full">
+                  <div className="flex items-center gap-4 sm:gap-5">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={player.avatar_url || '/default-avatar.png'}
+                      alt={player.handle_name}
+                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 border-purple-500/40 object-cover"
+                    />
+                    <div className="min-w-0">
+                      <h1 className="text-2xl sm:text-3xl font-extrabold text-yellow-100 truncate">
+                        {player.handle_name}
+                      </h1>
+                      {/* ↓ 小さなトロフィー＆順位チップは削除済み */}
+                    </div>
+                  </div>
+
+                  {/* RP / HC を特大で */}
+                  <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4">
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
+                      <div className="flex items-center justify-center gap-2 text-purple-200 mb-1">
+                        <FaMedal className="text-lg sm:text-xl" />
+                        <span className="text-xs sm:text-sm">ランキングポイント</span>
+                      </div>
+                      <div className="text-4xl sm:text-5xl font-black text-yellow-100 tracking-tight">
+                        {player.ranking_points ?? 0}
+                      </div>
+                    </div>
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
+                      <div className="flex items-center justify-center gap-2 text-blue-200 mb-1">
+                        <FaChartLine className="text-lg sm:text-xl" />
+                        <span className="text-xs sm:text-sm">ハンディキャップ</span>
+                      </div>
+                      <div className="text-4xl sm:text-5xl font-black text-blue-100 tracking-tight">
+                        {player.handicap ?? 0}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 勝利/敗北/勝率（Rank数値より小さい= text-2xl） */}
+                  <div className="mt-5 grid grid-cols-3 gap-3 sm:gap-4">
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
+                      <div className="text-2xl font-extrabold text-green-400">
+                        {player.wins ?? 0}
+                      </div>
+                      <div className="text-xs sm:text-sm text-gray-400">勝利</div>
+                    </div>
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
+                      <div className="text-2xl font-extrabold text-red-400">
+                        {player.losses ?? 0}
+                      </div>
+                      <div className="text-xs sm:text-sm text-gray-400">敗北</div>
+                    </div>
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
+                      <div className="text-2xl font-extrabold text-blue-400">
+                        {wr}%
+                      </div>
+                      <div className="text-xs sm:text-sm text-gray-400">勝率</div>
+                    </div>
+                  </div>
+
+                  {/* 勝率バー */}
+                  <div className="mt-3 sm:mt-4">
+                    <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          wr >= 60
+                            ? 'bg-green-500'
+                            : wr >= 40
+                            ? 'bg-yellow-500'
+                            : 'bg-red-500'
+                        }`}
+                        style={{ width: `${wr}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 text-right text-xs text-gray-500">
+                      {games} 試合
+                    </div>
+                  </div>
                 </div>
               </div>
+            </div>
 
-              {/* メタ情報 */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                <div>
-                  <span className="text-gray-500">ハンディ:</span>
-                  <span className="ml-1 text-gray-300 font-medium">{player.handicap}</span>
+            {/* ── 所属チーム ─────────────────────────────────── */}
+            <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
+              <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5 flex items-center gap-2">
+                <FaUsers className="text-purple-300" />
+                所属チーム
+              </h2>
+
+              {teamsLoading ? (
+                <div className="text-gray-400">読み込み中...</div>
+              ) : teams.length === 0 ? (
+                <div className="text-gray-400">所属チームはありません。</div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                  {teams.map((t) => (
+                    <Link
+                      key={t.id}
+                      href={`/teams/${t.id}`}
+                      className="flex items-center gap-3 p-3 rounded-xl border border-purple-500/30 bg-gray-900/50 hover:border-purple-400/60 transition-colors"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={t.avatar_url || '/default-avatar.png'}
+                        alt={t.name}
+                        className="w-10 h-10 rounded-full border-2 border-purple-500/40 object-cover"
+                      />
+                      <div className="min-w-0">
+                        <div className="font-semibold text-yellow-100 truncate">{t.name}</div>
+                        {t.role && (
+                          <div className="text-xs text-purple-300 truncate">役割: {t.role}</div>
+                        )}
+                      </div>
+                    </Link>
+                  ))}
                 </div>
-                <div>
-                  <span className="text-gray-500">チーム:</span>
-                  <span className="ml-1 text-gray-300 font-medium">{player.team_id || 'なし'}</span>
+              )}
+            </div>
+
+            {/* ── 直近の試合（簡易） ──────────────────────────── */}
+            <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
+              <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5">
+                直近の試合
+              </h2>
+
+              {(!matches || matches.length === 0) && (
+                <div className="text-gray-400">まだ試合がありません。</div>
+              )}
+
+              {matches && matches.length > 0 && (
+                <div className="space-y-3">
+                  {matches.slice(0, 8).map((m: any) => {
+                    const isWin = m.winner_id === playerId;
+                    const oppName =
+                      m.winner_id === playerId ? m.loser_name : m.winner_name;
+                    const oppId =
+                      m.winner_id === playerId ? m.loser_id : m.winner_id;
+
+                    return (
+                      <div
+                        key={m.id}
+                        className={`rounded-xl p-3 sm:p-4 border transition-colors ${
+                          isWin
+                            ? 'bg-green-500/10 border-green-500/30'
+                            : 'bg-red-500/10 border-red-500/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-xs text-gray-400">
+                              {new Date(m.match_date).toLocaleString('ja-JP', {
+                                month: 'numeric',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </div>
+                            <div className="font-semibold text-yellow-100 truncate">
+                              {isWin ? '勝利' : '敗北'}：{oppName}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-lg sm:text-xl font-extrabold text-white">
+                              15 - {m.loser_score ?? 0}
+                            </div>
+                            <div
+                              className={`text-xs sm:text-sm ${
+                                isWin ? 'text-green-300' : 'text-red-300'
+                              }`}
+                            >
+                              {isWin ? '+' : ''}
+                              {isWin
+                                ? m.winner_points_change ?? 0
+                                : m.loser_points_change ?? 0}
+                              pt
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 相手プロフィールリンク */}
+                        {oppId && (
+                          <div className="mt-1 text-right">
+                            <Link
+                              href={`/players/${oppId}`}
+                              className="text-purple-300 hover:text-purple-200 text-xs sm:text-sm"
+                            >
+                              相手プロフィール →
+                            </Link>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="col-span-2 sm:col-span-1">
-                  <span className="text-gray-500">登録:</span>
-                  <span className="ml-1 text-gray-300 font-medium">
-                    {new Date(player.created_at).toLocaleDateString('ja-JP')}
-                  </span>
-                </div>
+              )}
+
+              <div className="mt-4 text-right">
+                <Link
+                  href="/matches"
+                  className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
+                >
+                  <FaTrophy /> 試合結果一覧へ
+                </Link>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* 統計情報 */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
-          <StatsCard
-            value={player.matches_played}
-            label="試合数"
-            icon={FaChartLine}
-            color="text-purple-400"
-          />
-          <StatsCard
-            value={player.wins}
-            label="勝利"
-            icon={FaTrophy}
-            color="text-green-400"
-          />
-          <StatsCard
-            value={player.losses}
-            label="敗北"
-            color="text-red-400"
-          />
-          <StatsCard
-            value={`${winRate}%`}
-            label="勝率"
-            icon={FaMedal}
-            color="text-yellow-400"
-          />
-        </div>
-
-        {/* 最近の試合結果 */}
-        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 sm:p-6 border border-white/20">
-          <h2 className="text-xl sm:text-2xl font-bold text-yellow-100 mb-4 sm:mb-6 flex items-center gap-2">
-            <FaChartLine className="text-purple-400" />
-            最近の試合結果
-          </h2>
-          
-          {/* 直近5試合の勝敗表示 */}
-          {recentResults.length > 0 && (
-            <div className="mb-4 sm:mb-6">
-              <p className="text-sm text-gray-400 mb-2">直近5試合</p>
-              <div className="flex gap-2">
-                {recentResults.map((match: any, index: number) => (
-                  <div
-                    key={index}
-                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center text-white font-bold shadow-lg ${
-                      match.result === 'win' 
-                        ? 'bg-gradient-to-br from-green-400 to-emerald-500' 
-                        : 'bg-gradient-to-br from-red-400 to-rose-500'
-                    }`}
-                    title={`${match.result === 'win' ? '勝利' : '敗北'} vs ${match.opponent_name}`}
-                  >
-                    {match.result === 'win' ? 'W' : 'L'}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          
-          {/* 詳細な試合結果 */}
-          {recentPerformance.length > 0 ? (
-            <div className="space-y-3">
-              {recentPerformance.map((match: any, index: number) => (
-                <MatchCard key={index} match={match} />
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <p className="text-gray-400">まだ試合記録がありません</p>
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

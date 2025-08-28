@@ -1,4 +1,4 @@
-// app/admin/notices/page.tsx
+// app/(main)/admin/notices/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -13,12 +13,18 @@ type Notice = {
   id: string;
   title: string;
   content: string;
-  date: string;          // DBが date 型想定（YYYY-MM-DD）
+  date: string | null;          // YYYY-MM-DD or null
   is_published: boolean;
   created_by?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
+
+function asTime(v?: string | null) {
+  if (!v) return 0;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
 
 export default function AdminNoticesPage() {
   const router = useRouter();
@@ -31,27 +37,24 @@ export default function AdminNoticesPage() {
   useEffect(() => {
     (async () => {
       try {
-        // 認証チェック
+        // 認証
         const { data: { user }, error: userErr } = await supabase.auth.getUser();
         if (userErr) throw userErr;
         if (!user) {
-          router.replace('/'); // 必要なら /login に変更
+          router.replace('/');
           return;
         }
-
-        // 管理者判定（players.is_admin）
+        // 管理者判定
         const { data: player, error: plErr } = await supabase
           .from('players')
           .select('is_admin')
           .eq('id', user.id)
           .maybeSingle();
-
         if (plErr) throw plErr;
         if (!player?.is_admin) {
           router.replace('/');
           return;
         }
-
         setIsAdmin(true);
         await fetchNotices();
       } catch (e) {
@@ -68,14 +71,20 @@ export default function AdminNoticesPage() {
   const fetchNotices = async () => {
     setLoading(true);
     try {
+      // ※ サーバー側 order を使わない（date で 400 を回避）
       const { data, error } = await supabase
         .from('notices')
-        .select('*')
-        .order('date', { ascending: false })
-        .order('created_at', { ascending: false, nullsFirst: false });
-
+        .select('*');
       if (error) throw error;
-      setNotices(data ?? []);
+
+      const sorted = (data ?? []).sort((a: Notice, b: Notice) => {
+        // 優先キー: date（YYYY-MM-DD）→ 次点: created_at
+        const at = asTime(a.date ?? a.created_at ?? null);
+        const bt = asTime(b.date ?? b.created_at ?? null);
+        return bt - at; // 降順
+      });
+
+      setNotices(sorted);
     } catch (e) {
       console.error('[admin/notices] fetch error:', e);
       alert('お知らせの取得に失敗しました。');
@@ -86,26 +95,18 @@ export default function AdminNoticesPage() {
 
   const togglePublish = async (target: Notice) => {
     const next = !target.is_published;
-
     // 楽観的更新
-    setNotices((prev) =>
-      prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n))
-    );
-
+    setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
     try {
       const { error } = await supabase
         .from('notices')
         .update({ is_published: next })
         .eq('id', target.id);
-
       if (error) throw error;
-      // 成功ならそのまま
     } catch (e) {
-      // 失敗 → ロールバック
       console.error('[admin/notices] toggle publish error:', e);
-      setNotices((prev) =>
-        prev.map((n) => (n.id === target.id ? { ...n, is_published: !next } : n))
-      );
+      // ロールバック
+      setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: !next } : n)));
       const msg = String((e as any)?.message || e);
       let hint = '';
       if (/row-level security|RLS/i.test(msg)) {
@@ -117,18 +118,15 @@ export default function AdminNoticesPage() {
 
   const deleteNotice = async (id: string) => {
     if (!confirm('このお知らせを削除してもよろしいですか？')) return;
-
-    // 楽観的に一旦除去
     const snapshot = notices;
+    // 楽観的
     setNotices((prev) => prev.filter((n) => n.id !== id));
-
     try {
       const { error } = await supabase.from('notices').delete().eq('id', id);
       if (error) throw error;
-      // 成功ならOK
     } catch (e) {
       console.error('[admin/notices] delete error:', e);
-      setNotices(snapshot); // ロールバック
+      setNotices(snapshot);
       const msg = String((e as any)?.message || e);
       let hint = '';
       if (/row-level security|RLS/i.test(msg)) {
@@ -145,7 +143,6 @@ export default function AdminNoticesPage() {
       </div>
     );
   }
-
   if (!isAdmin) return null;
 
   return (
@@ -189,14 +186,18 @@ export default function AdminNoticesPage() {
                     </div>
 
                     <p className="text-gray-400 mb-2">
-                      {new Date(notice.date).toLocaleDateString('ja-JP', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                      })}
+                      {(() => {
+                        const base = notice.date || notice.created_at || '';
+                        return base
+                          ? new Date(base).toLocaleDateString('ja-JP', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric',
+                            })
+                          : '日付なし';
+                      })()}
                     </p>
 
-                    {/* プラグイン無しでもある程度省略表示になるように */}
                     <p
                       className="text-gray-300 overflow-hidden text-ellipsis"
                       style={{
