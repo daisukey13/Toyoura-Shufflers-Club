@@ -30,25 +30,32 @@ function ForgotPasswordInner() {
   const [error, setError] = useState<string>('');
   const [sent, setSent] = useState(false);
 
-  // Prefill email from query (?email=)
   useEffect(() => {
     setMounted(true);
     const qEmail = searchParams?.get('email');
     if (qEmail && typeof qEmail === 'string') setEmail(qEmail);
   }, [searchParams]);
 
+  // 元の遷移先 (?redirect=) を受け取り、/reset-password にリダイレクトする絶対URLを生成
   const redirectParam = useMemo(() => {
     const r = searchParams?.get('redirect');
     return r && r !== '/login' ? r : '/';
   }, [searchParams]);
 
+  const siteOrigin = useMemo(() => {
+    // 環境変数(本番ドメイン)があれば最優先。なければクライアントで window.origin を使用
+    const env = (process.env.NEXT_PUBLIC_SITE_URL || '').replace(/\/$/, '');
+    if (env) return env;
+    if (typeof window !== 'undefined') return window.location.origin;
+    return '';
+  }, [mounted]);
+
   const redirectTo = useMemo(() => {
-    if (!mounted) return '';
-    // /reset-password に戻し、元の遷移先は ?redirect= に載せる
-    const base = `${window.location.origin}/reset-password`;
+    if (!mounted || !siteOrigin) return '';
+    const base = `${siteOrigin}/reset-password`;
     const qs = redirectParam ? `?redirect=${encodeURIComponent(redirectParam)}` : '';
     return `${base}${qs}`;
-  }, [mounted, redirectParam]);
+  }, [mounted, siteOrigin, redirectParam]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,17 +65,19 @@ function ForgotPasswordInner() {
     setError('');
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo, // ← Supabase Auth 設定のリダイレクト許可URLに含めてください
+        // ※ Supabase Auth の「リダイレクトURL許可リスト」に `redirectTo` のドメインを必ず登録してください
+        redirectTo,
       });
       if (error) throw error;
       setSent(true);
     } catch (err: any) {
       const msg = String(err?.message || err);
-      // よくある文言のやわらか表現
       if (/email.*not valid|invalid/i.test(msg)) {
         setError('メールアドレスの形式が正しくありません。');
       } else if (/over request rate|rate/i.test(msg)) {
         setError('リクエストが多すぎます。しばらくしてからお試しください。');
+      } else if (/not (allowed|whitelisted)|URL.*not/i.test(msg)) {
+        setError('リダイレクト先URLが許可されていません。管理者にお問い合わせください。');
       } else {
         setError(msg || 'メール送信に失敗しました。');
       }
@@ -152,7 +161,7 @@ function ForgotPasswordInner() {
   );
 }
 
-/* ---------------- Default export: add Suspense wrapper (CSR bailout対策) ---------------- */
+/* ---------------- Default export: Suspense wrapper (CSR bailout対策) ---------------- */
 export default function ForgotPasswordPage() {
   return (
     <Suspense fallback={<Fallback />}>

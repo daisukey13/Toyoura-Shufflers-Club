@@ -1,22 +1,39 @@
 // app/update-password/page.tsx
 'use client';
 
-import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { FaKey, FaArrowLeft, FaCheck } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
-const supabase = createClient();
+// Supabase client storageKey を 'tsc-auth' にしている前提。
+// PKCE の code_verifier は `${storageKey}-code-verifier` に保存されます。
+const PKCE_VERIFIER_KEY = 'tsc-auth-code-verifier';
 
-/** 実処理を行う内側のコンポーネント（useSearchParams を使用するため Suspense 配下に置く） */
+type Stage = 'checking' | 'ready' | 'done' | 'error';
+
+/* ───────── Suspense Fallback ───────── */
+function Fallback() {
+  return (
+    <div className="min-h-screen grid place-items-center p-4">
+      <div className="w-full max-w-md glass-card rounded-xl p-8 text-center text-gray-300">
+        リンクを確認しています...
+      </div>
+    </div>
+  );
+}
+
+/* ───────── Inner (useSearchParams を使うため Suspense 配下) ───────── */
 function UpdatePasswordInner() {
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const params = useSearchParams();
+
   const code = useMemo(() => params.get('code') || '', [params]);
   const redirectTo = useMemo(() => params.get('redirect') || '', [params]);
 
-  const [stage, setStage] = useState<'checking' | 'ready' | 'done' | 'error'>('checking');
+  const [stage, setStage] = useState<Stage>('checking');
   const [error, setError] = useState<string | null>(null);
 
   const [pw, setPw] = useState('');
@@ -29,8 +46,15 @@ function UpdatePasswordInner() {
     (async () => {
       try {
         if (!code) throw new Error('無効なリンクです（code がありません）。');
+
         const { error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) throw error;
+
+        // 念のため後片付け（PKCE 検証子の削除）
+        try {
+          localStorage.removeItem(PKCE_VERIFIER_KEY);
+        } catch {}
+
         if (!cancelled) setStage('ready');
       } catch (e: any) {
         const msg = String(e?.message || e);
@@ -48,7 +72,7 @@ function UpdatePasswordInner() {
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, supabase]);
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,10 +91,13 @@ function UpdatePasswordInner() {
       const { error } = await supabase.auth.updateUser({ password: pw });
       if (error) throw error;
       setStage('done');
-      // 少し待ってからログインへ
+
+      // 少し待ってからログインへ。?reset=success と元の遷移先を引き継ぐ
       setTimeout(() => {
-        if (redirectTo) router.replace(`/login?redirect=${encodeURIComponent(redirectTo)}`);
-        else router.replace('/login');
+        const next = redirectTo
+          ? `/login?reset=success&redirect=${encodeURIComponent(redirectTo)}`
+          : '/login?reset=success';
+        router.replace(next);
       }, 1200);
     } catch (e: any) {
       setError(String(e?.message || e));
@@ -79,13 +106,7 @@ function UpdatePasswordInner() {
     }
   };
 
-  if (stage === 'checking') {
-    return (
-      <div className="min-h-screen grid place-items-center">
-        <div className="text-gray-300">リンクを確認しています...</div>
-      </div>
-    );
-  }
+  if (stage === 'checking') return <Fallback />;
 
   if (stage === 'error') {
     return (
@@ -186,18 +207,11 @@ function UpdatePasswordInner() {
   );
 }
 
-/** 事前レンダー時の CSR bailout 警告回避のため、useSearchParams を Suspense で包む */
+/* ───────── Default export ───────── */
 export default function UpdatePasswordPage() {
+  // CSR bailout 対策で Suspense で包む
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen grid place-items-center p-4">
-          <div className="w-full max-w-md glass-card rounded-xl p-8 text-center text-gray-300">
-            リンクを確認しています...
-          </div>
-        </div>
-      }
-    >
+    <Suspense fallback={<Fallback />}>
       <UpdatePasswordInner />
     </Suspense>
   );

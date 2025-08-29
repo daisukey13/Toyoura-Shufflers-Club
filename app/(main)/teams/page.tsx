@@ -19,15 +19,24 @@ import { FaUsers, FaTrophy, FaPercent, FaSearch } from 'react-icons/fa';
 import { useTeamRankings, TeamRankItem } from '@/lib/hooks/useTeamRankings';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
-// 仮想リスト（件数が多いとき用）
+/* ---------------- Suspense fallback ---------------- */
+function Fallback() {
+  return (
+    <div className="container mx-auto px-4 py-10 text-center text-gray-300">
+      画面を読み込み中…
+    </div>
+  );
+}
+
+/* ---------------- Virtual list (for many rows) ---------------- */
 const VirtualList = lazy(() => import('@/components/VirtualList'));
 
-// ───────────────── Rank Badge ─────────────────
+/* ---------------- Rank Badge ---------------- */
 const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
   if (rank === 1) {
     return (
       <div className="relative">
-        <div className="absolute -inset-1 bg-yellow-400 rounded-full blur-sm animate-pulse"></div>
+        <div className="absolute -inset-1 bg-yellow-400 rounded-full blur-sm animate-pulse" />
         <div className="relative bg-gradient-to-br from-yellow-400 to-yellow-600 text-gray-900 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-bold text-base sm:text-lg">
           1
         </div>
@@ -37,7 +46,7 @@ const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
   if (rank === 2) {
     return (
       <div className="relative">
-        <div className="absolute -inset-1 bg-gray-300 rounded-full blur-sm"></div>
+        <div className="absolute -inset-1 bg-gray-300 rounded-full blur-sm" />
         <div className="relative bg-gradient-to-br from-gray-300 to-gray-500 text-gray-900 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-bold text-base sm:text-lg">
           2
         </div>
@@ -47,7 +56,7 @@ const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
   if (rank === 3) {
     return (
       <div className="relative">
-        <div className="absolute -inset-1 bg-orange-500 rounded-full blur-sm"></div>
+        <div className="absolute -inset-1 bg-orange-500 rounded-full blur-sm" />
         <div className="relative bg-gradient-to-br from-orange-400 to-orange-600 text-gray-900 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-bold text-base sm:text-lg">
           3
         </div>
@@ -61,7 +70,7 @@ const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
   );
 });
 
-// ───────────────── Team Card ─────────────────
+/* ---------------- Team Card ---------------- */
 const TeamCard = memo(function TeamCard({
   team,
   rank,
@@ -139,10 +148,10 @@ const TeamCard = memo(function TeamCard({
   );
 });
 
-// ───────────────── Page ─────────────────
+/* ---------------- Page Inner (wrapped by Suspense) ---------------- */
 type SortKey = 'avg_rp' | 'win_pct' | 'name';
 
-export default function TeamsPage() {
+function TeamsInner() {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
@@ -150,7 +159,8 @@ export default function TeamsPage() {
   // URL 同期: ?q= / ?sort= / ?dir=
   const initialQ = search.get('q') ?? '';
   const initialSort = (search.get('sort') as SortKey) ?? 'avg_rp';
-  const initialDir = (search.get('dir') as 'asc' | 'desc') ?? (initialSort === 'name' ? 'asc' : 'desc');
+  const initialDir =
+    (search.get('dir') as 'asc' | 'desc') ?? (initialSort === 'name' ? 'asc' : 'desc');
 
   const [q, setQ] = useState(initialQ);
   const [sortBy, setSortBy] = useState<SortKey>(initialSort);
@@ -195,34 +205,13 @@ export default function TeamsPage() {
         return sign * (a.name ?? '').localeCompare(b.name ?? '');
       }
       if (sortBy === 'win_pct') {
-        return sign * (((a.win_pct ?? 0) - (b.win_pct ?? 0)));
+        return sign * ((a.win_pct ?? 0) - (b.win_pct ?? 0));
       }
       // avg_rp
-      return sign * (((a.avg_rp ?? 0) - (b.avg_rp ?? 0)));
+      return sign * ((a.avg_rp ?? 0) - (b.avg_rp ?? 0));
     });
     return arr;
   }, [filtered, sortBy, dir]);
-
-  // 集計
-  const stats = useMemo(() => {
-    const n = teams.length || 0;
-    const topAvgRp = Math.round([...teams].sort((a, b) => (b.avg_rp ?? 0) - (a.avg_rp ?? 0))[0]?.avg_rp ?? 0);
-    const avgOfAvgRp = n > 0 ? Math.round(teams.reduce((s, r) => s + (r.avg_rp ?? 0), 0) / n) : 0;
-    return { teamCount: n, topAvgRp, avgOfAvgRp };
-  }, [teams]);
-
-  // イベント
-  const handleSort = useCallback((k: SortKey) => {
-    startTransition(() => {
-      if (k === sortBy) {
-        // 方向をトグル
-        setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-      } else {
-        setSortBy(k);
-        setDir(k === 'name' ? 'asc' : 'desc');
-      }
-    });
-  }, [sortBy]);
 
   const renderItem = useCallback(
     (index: number) => {
@@ -261,7 +250,15 @@ export default function TeamsPage() {
           {/* ソート */}
           <div className="inline-flex rounded-lg overflow-hidden shadow-lg">
             <button
-              onClick={() => handleSort('avg_rp')}
+              onClick={() => {
+                startTransition(() => {
+                  if (sortBy === 'avg_rp') setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                  else {
+                    setSortBy('avg_rp');
+                    setDir('desc');
+                  }
+                });
+              }}
               className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
                 sortBy === 'avg_rp'
                   ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
@@ -274,7 +271,15 @@ export default function TeamsPage() {
               平均RP {isPending && sortBy === 'avg_rp' ? '…' : ''}
             </button>
             <button
-              onClick={() => handleSort('win_pct')}
+              onClick={() => {
+                startTransition(() => {
+                  if (sortBy === 'win_pct') setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                  else {
+                    setSortBy('win_pct');
+                    setDir('desc');
+                  }
+                });
+              }}
               className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
                 sortBy === 'win_pct'
                   ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
@@ -287,7 +292,15 @@ export default function TeamsPage() {
               勝率 {isPending && sortBy === 'win_pct' ? '…' : ''}
             </button>
             <button
-              onClick={() => handleSort('name')}
+              onClick={() => {
+                startTransition(() => {
+                  if (sortBy === 'name') setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                  else {
+                    setSortBy('name');
+                    setDir('asc');
+                  }
+                });
+              }}
               className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
                 sortBy === 'name'
                   ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
@@ -332,7 +345,9 @@ export default function TeamsPage() {
             <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20">
               <FaTrophy className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
               <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
-                {Math.round([...teams].sort((a,b)=>(b.avg_rp??0)-(a.avg_rp??0))[0]?.avg_rp ?? 0)}
+                {Math.round(
+                  [...teams].sort((a, b) => (b.avg_rp ?? 0) - (a.avg_rp ?? 0))[0]?.avg_rp ?? 0
+                )}
               </div>
               <div className="text-gray-400 text-xs sm:text-base">最高平均RP</div>
             </div>
@@ -367,5 +382,15 @@ export default function TeamsPage() {
         </>
       )}
     </div>
+  );
+}
+
+/* ---------------- Default export: wrap with Suspense ----------------
+   useSearchParams()/usePathname() を使っているためページを Suspense で包みます。 */
+export default function TeamsPage() {
+  return (
+    <Suspense fallback={<Fallback />}>
+      <TeamsInner />
+    </Suspense>
   );
 }

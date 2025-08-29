@@ -1,42 +1,44 @@
-// app/auth/callback/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { createServerClient } from '@supabase/ssr';
 
-export async function POST(req: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const { event, session } = await req.json().catch(() => ({ event: 'UNKNOWN', session: null }));
+type Body = {
+  event: 'SIGNED_IN' | 'SIGNED_OUT' | 'TOKEN_REFRESHED';
+  session: any | null;
+};
 
-  // このレスポンスに Cookie を積む
-  const res = NextResponse.json({ ok: true });
+export async function POST(req: Request) {
+  const { event, session } = (await req.json()) as Body;
 
-  const supabase = createServerClient(url, anon, {
-    cookies: {
-      get(name: string) {
-        return req.cookies.get(name)?.value;
+  const cookieStore = cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          cookieStore.set(name, value, options);
+        },
+        remove(name: string, options: any) {
+          cookieStore.set(name, '', { ...options, maxAge: 0 });
+        },
       },
-      set(name: string, value: string, options: CookieOptions) {
-        res.cookies.set(name, value, options);
-      },
-      remove(name: string, options: CookieOptions) {
-        res.cookies.set(name, '', { ...options, maxAge: 0 });
-      },
-    },
-  });
+    }
+  );
 
   try {
-    if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
-      // クッキーへセッションを反映
-      await supabase.auth.setSession({
-        access_token: session.access_token,
-        refresh_token: session.refresh_token,
-      });
+    if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+      if (session) {
+        await supabase.auth.setSession(session);
+      }
     } else if (event === 'SIGNED_OUT') {
       await supabase.auth.signOut();
     }
-  } catch (e) {
-    // 失敗しても 200 を返す（クライアント側でリトライ可）
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, message: String(e?.message || e) }, { status: 500 });
   }
-
-  return res;
 }

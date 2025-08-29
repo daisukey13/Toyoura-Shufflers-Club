@@ -58,6 +58,12 @@ function ResetPasswordPageInner() {
     return typeof val === 'string' ? val : '';
   }, [searchParams]);
 
+  // 元々の遷移先 (?redirect=) を保持してログインへフォワード
+  const redirectNext = useMemo(() => {
+    const r = searchParams?.get('redirect');
+    return typeof r === 'string' ? r : '';
+  }, [searchParams]);
+
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
@@ -76,6 +82,10 @@ function ResetPasswordPageInner() {
         if (codeFromQuery && hasPkceVerifier) {
           const { error } = await supabase.auth.exchangeCodeForSession(codeFromQuery);
           if (error) throw error;
+          // 後片付け（念のため）
+          try {
+            localStorage.removeItem(PKCE_VERIFIER_KEY);
+          } catch {}
           setStage('READY');
           return;
         }
@@ -145,7 +155,12 @@ function ResetPasswordPageInner() {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
       setStage('DONE');
-      setTimeout(() => router.replace('/login?reset=success'), 1200);
+      setTimeout(() => {
+        const next = redirectNext
+          ? `/login?reset=success&redirect=${encodeURIComponent(redirectNext)}`
+          : '/login?reset=success';
+        router.replace(next);
+      }, 1200);
     } catch (e: any) {
       setError(e?.message || 'パスワード更新に失敗しました。');
     } finally {
@@ -198,7 +213,7 @@ function ResetPasswordPageInner() {
           <div className="inline-block p-4 rounded-full bg-purple-600/20 mb-3">
             <FaLock className="text-3xl text-purple-400" />
           </div>
-          <h1 className="text-2xl font-bold text-yellow-100">パスワード再設定</h1>
+        <h1 className="text-2xl font-bold text-yellow-100">パスワード再設定</h1>
           <p className="text-gray-400 mt-2">新しいパスワードを入力してください</p>
         </div>
 
