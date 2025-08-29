@@ -125,7 +125,6 @@ export default function TeamEditPage() {
     setMError(null);
 
     try {
-      // ✨ 修正1: 余計な ']' を削除＋errorも受け取る
       const { data: { session }, error: sessErr } = await supabase.auth.getSession();
       if (sessErr) throw sessErr;
       const token = session?.access_token;
@@ -186,6 +185,23 @@ export default function TeamEditPage() {
   useEffect(() => {
     if (authed === true) loadAll();
   }, [authed, loadAll]);
+
+  // 🔧 Hook は早期 return より前で呼ぶ
+  const eligiblePlayers = useMemo(() => {
+    const kw = search.trim().toLowerCase();
+    return allPlayers
+      .filter((p) => {
+        // すでにこのチームのメンバーは除外
+        if (members.find((m) => m.player_id === p.id)) return false;
+        // 他チーム所属は除外
+        const tId = occupiedMap.get(p.id);
+        if (tId && tId !== teamId) return false;
+        // 検索
+        if (!kw) return true;
+        return p.handle_name.toLowerCase().includes(kw);
+      })
+      .slice(0, 30); // 表示上限
+  }, [allPlayers, occupiedMap, members, teamId, search]);
 
   // 未ログイン
   if (authed === false) {
@@ -263,22 +279,6 @@ export default function TeamEditPage() {
   };
 
   // ===== メンバー管理 =====
-
-  const eligiblePlayers = useMemo(() => {
-    const kw = search.trim().toLowerCase();
-    return allPlayers
-      .filter((p) => {
-        // すでにこのチームのメンバーは除外
-        if (members.find((m) => m.player_id === p.id)) return false;
-        // 他チーム所属は除外
-        const tId = occupiedMap.get(p.id);
-        if (tId && tId !== teamId) return false;
-        // 検索
-        if (!kw) return true;
-        return p.handle_name.toLowerCase().includes(kw);
-      })
-      .slice(0, 30); // 表示上限
-  }, [allPlayers, occupiedMap, members, teamId, search]);
 
   const onAddMember = async (playerId: string) => {
     if (!playerId) return;
@@ -401,7 +401,6 @@ export default function TeamEditPage() {
     setMError(null);
 
     try {
-      // ✨ 修正2: tryブロックの中で完結させる
       const { data: { session }, error: sessErr } = await supabase.auth.getSession();
       if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
