@@ -40,6 +40,11 @@ type Notice = {
   updated_at?: string | null;
 };
 
+type AdminRow = { user_id: string };
+type PlayerFlagRow = { is_admin: boolean | null };
+type PlayerStatRow = { id: string; is_active: boolean | null };
+type MatchRow = { id: string; created_at: string | null };
+
 export default function AdminDashboard() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -90,12 +95,15 @@ export default function AdminDashboard() {
         setUserId(user.id);
 
         let isAdmin = false;
-        const [{ data: adminRow }, { data: playerRow }] = await Promise.all([
-          supabase.from('app_admins').select('user_id').eq('user_id', user.id).maybeSingle(),
-          supabase.from('players').select('is_admin').eq('id', user.id).maybeSingle(),
+        const [adminResp, playerResp] = await Promise.all([
+          (supabase.from('app_admins') as any).select('user_id').eq('user_id', user.id).maybeSingle(),
+          (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
         ]);
-        if (adminRow && adminRow.user_id) isAdmin = true;
-if (playerRow && playerRow.is_admin === true) isAdmin = true;
+        const adminRow = (adminResp?.data ?? null) as AdminRow | null;
+        const playerRow = (playerResp?.data ?? null) as PlayerFlagRow | null;
+
+        if (adminRow?.user_id) isAdmin = true;
+        if (playerRow?.is_admin === true) isAdmin = true;
         if (!isAdmin) {
           setAuthz('no');
           return;
@@ -118,21 +126,20 @@ if (playerRow && playerRow.is_admin === true) isAdmin = true;
   /** 統計情報 */
   const fetchStats = async () => {
     try {
-      const [{ data: players }, { data: matches }] = await Promise.all([
-        supabase.from('players').select('id,is_active'),
-        supabase.from('matches').select('id,created_at'),
+      const [playersResp, matchesResp] = await Promise.all([
+        (supabase.from('players') as any).select('id,is_active'),
+        (supabase.from('matches') as any).select('id,created_at'),
       ]);
+      const players = (playersResp?.data ?? []) as PlayerStatRow[];
+      const matches = (matchesResp?.data ?? []) as MatchRow[];
 
       const todayISO = new Date().toISOString().split('T')[0];
-      const totalPlayers = players?.length ?? 0;
-      const activePlayers = (players ?? []).filter((p) => (p as any).is_active).length;
-      const totalMatches = matches?.length ?? 0;
-      const todayMatches =
-        (matches ?? []).filter((m) =>
-          typeof (m as any).created_at === 'string'
-            ? (m as any).created_at.startsWith(todayISO)
-            : false
-        ).length;
+      const totalPlayers = players.length;
+      const activePlayers = players.filter((p) => !!p.is_active).length;
+      const totalMatches = matches.length;
+      const todayMatches = matches.filter((m) =>
+        typeof m.created_at === 'string' ? m.created_at.startsWith(todayISO) : false
+      ).length;
 
       setStats({ totalPlayers, activePlayers, totalMatches, todayMatches });
     } catch (error) {
@@ -141,13 +148,11 @@ if (playerRow && playerRow.is_admin === true) isAdmin = true;
   };
 
   /** お知らせ取得（最新3件、公開/非公開問わず） */
-    const fetchNotices = async () => {
+  const fetchNotices = async () => {
     setNLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('notices')
+      const { data, error } = await (supabase.from('notices') as any)
         .select('*')
-        // 🚫 nullslast を使わず、単純に2キー降順
         .order('date', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(3);
@@ -160,15 +165,14 @@ if (playerRow && playerRow.is_admin === true) isAdmin = true;
     }
   };
 
-
   /** 公開トグル */
   const togglePublish = async (target: Notice) => {
     const next = !target.is_published;
     setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
     try {
-     const { error } = await (supabase.from('notices') as any)
-  .update({ is_published: next } as any)
-  .eq('id', target.id);
+      const { error } = await (supabase.from('notices') as any)
+        .update({ is_published: next } as any)
+        .eq('id', target.id);
 
       if (error) throw error;
     } catch (e) {

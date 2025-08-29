@@ -31,7 +31,7 @@ type Player = {
   address?: string | null;
 };
 
-type TeamMemberRow = { team_id: string; role?: string | null };
+type TeamMemberRow = { team_id: string | null; role?: string | null };
 type Team = { id: string; name: string; avatar_url?: string | null };
 type TeamWithRole = Team & { role?: string | null };
 
@@ -121,14 +121,19 @@ export default function PlayerProfilePage() {
       if (!playerId) return;
       setTeamsLoading(true);
       try {
-        // 1) team_members から所属チームID+役割を取得
-        const { data: memberRows, error: mErr } = await supabase
-          .from('team_members')
+        // 1) team_members から所属チームID+役割を取得（I/O境界を any で緩める）
+        const { data: memberRows, error: mErr } = await (supabase.from('team_members') as any)
           .select('team_id, role')
           .eq('player_id', playerId);
-
         if (mErr) throw mErr;
-        const ids = (memberRows ?? []).map((r) => r.team_id).filter(Boolean);
+
+        const members = (memberRows ?? []) as TeamMemberRow[];
+
+        // null を除外しつつ ID 配列に
+        const ids: string[] = members
+          .map((r) => r.team_id)
+          .filter((v): v is string => typeof v === 'string' && v.length > 0);
+
         if (ids.length === 0) {
           if (!cancelled) {
             setTeams([]);
@@ -138,17 +143,20 @@ export default function PlayerProfilePage() {
         }
 
         // 2) teams 情報をまとめて取得
-        const { data: teamRows, error: tErr } = await supabase
-          .from('teams')
+        const { data: teamRows, error: tErr } = await (supabase.from('teams') as any)
           .select('id, name, avatar_url')
           .in('id', ids);
-
         if (tErr) throw tErr;
+
+        const teamsRaw = (teamRows ?? []) as Team[];
 
         // 3) role を結合
         const roleMap = new Map<string, string | null>();
-        (memberRows as TeamMemberRow[]).forEach((r) => roleMap.set(r.team_id, r.role ?? null));
-        const merged: TeamWithRole[] = (teamRows ?? []).map((t) => ({
+        members.forEach((r) => {
+          if (r.team_id) roleMap.set(r.team_id, r.role ?? null);
+        });
+
+        const merged: TeamWithRole[] = teamsRaw.map((t) => ({
           ...t,
           role: roleMap.get(t.id) ?? null,
         }));
@@ -226,7 +234,6 @@ export default function PlayerProfilePage() {
                       <h1 className="text-2xl sm:text-3xl font-extrabold text-yellow-100 truncate">
                         {player.handle_name}
                       </h1>
-                      {/* ↓ 小さなトロフィー＆順位チップは削除済み */}
                     </div>
                   </div>
 

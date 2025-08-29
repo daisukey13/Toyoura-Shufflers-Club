@@ -38,6 +38,7 @@ type Team = {
   description?: string | null;
   created_by?: string | null;
   created_at?: string | null;
+  avatar_url?: string | null;
 };
 
 type TeamRank = {
@@ -87,7 +88,9 @@ const LazyImg = (props: { src?: string | null; alt: string; className?: string }
     className={props.className}
     loading="lazy"
     decoding="async"
-    onError={(e) => ((e.target as HTMLImageElement).src = '/default-avatar.png')}
+    onError={(e) => {
+      (e.currentTarget as HTMLImageElement).src = '/default-avatar.png';
+    }}
   />
 );
 
@@ -143,11 +146,7 @@ export default function TeamProfilePage() {
         setMembers([]);
       }
 
-      /* 4) 直近の団体戦
-            - match_teams から該当 match_id と自チームの team_no を取得
-            - matches をまとめて取得
-            - 対戦相手の team_id/name を取得するため、同じ match_id の別 team_no も取得
-       */
+      /* 4) 直近の団体戦 */
       const myMt = await restGet<MatchTeamsRow[]>(
         `/rest/v1/match_teams?team_id=eq.${teamId}&select=match_id,team_id,team_no&order=match_id.desc&limit=50`
       );
@@ -159,22 +158,35 @@ export default function TeamProfilePage() {
         const matches = await restGet<MatchRow[]>(
           `/rest/v1/matches?id=in.(${inM})&select=id,mode,status,match_date,winner_team_no,winner_score,loser_score&order=match_date.desc&limit=50`
         );
-        const byId = new Map(myMt.map((r) => [r.match_id, r.team_no]));
+        const byId = new Map<string, number>(myMt.map((r) => [r.match_id, r.team_no]));
 
         // 対戦相手の team_id を取るために、同じ match の両チーム行を取得
         const bothSides = await restGet<MatchTeamsRow[]>(
           `/rest/v1/match_teams?match_id=in.(${inM})&select=match_id,team_id,team_no`
         );
-        const opponentMap = new Map<string, { opponent_team_id?: string | null; opponent_team_no?: number | null }>();
+        const opponentMap = new Map<
+          string,
+          { opponent_team_id?: string | null; opponent_team_no?: number | null }
+        >();
         for (const r of bothSides) {
           const myNo = byId.get(r.match_id);
           if (!myNo) continue;
           if (r.team_no !== myNo) {
-            opponentMap.set(r.match_id, { opponent_team_id: r.team_id, opponent_team_no: r.team_no });
+            opponentMap.set(r.match_id, {
+              opponent_team_id: r.team_id,
+              opponent_team_no: r.team_no,
+            });
           }
         }
+
         // 相手チーム名を取得
-        const opponentIds = Array.from(new Set(Array.from(opponentMap.values()).map((v) => v.opponent_team_id).filter(Boolean))) as string[];
+        const opponentIds = Array.from(
+          new Set(
+            Array.from(opponentMap.values())
+              .map((v) => v.opponent_team_id)
+              .filter(Boolean)
+          )
+        ) as string[];
         let opponentNameMap = new Map<string, string>();
         if (opponentIds.length) {
           const inOpp = opponentIds.map((id) => `"${id}"`).join(',');
@@ -182,29 +194,26 @@ export default function TeamProfilePage() {
           opponentNameMap = new Map(oppTeams.map((o) => [o.id, o.name]));
         }
 
-        const rows = (matches ?? [])
-          .filter((m) => m.mode === 'teams')
-          .map((m) => {
-            const my_team_no = byId.get(m.id) ?? 0;
-            const win = (m.winner_team_no ?? 0) === my_team_no;
-            const opp = opponentMap.get(m.id);
-            const opponent_team_id = opp?.opponent_team_id ?? null;
-            const opponent_team_name = opponent_team_id ? opponentNameMap.get(opponent_team_id) ?? null : null;
-            return {
-              ...m,
-              my_team_no,
-              result: win ? 'W' : 'L',
-              opponent_team_id,
-              opponent_team_name,
-            };
-          });
+        // rows の作成
+        const rows = (matches ?? []).map((m) => {
+          const myNo = byId.get(m.id) ?? 1;
+          const opp = opponentMap.get(m.id);
+          const opponent_team_id = opp?.opponent_team_id ?? null;
+          const opponent_team_name = opponent_team_id
+            ? opponentNameMap.get(opponent_team_id) ?? null
+            : null;
+          const result: 'W' | 'L' = m.winner_team_no === myNo ? 'W' : 'L';
+          return {
+            ...m,
+            my_team_no: myNo,
+            result,
+            opponent_team_id,
+            opponent_team_name,
+          };
+        });
 
-        setRecentMatches(
-  rows.map(r => ({
-    ...r,
-    result: (r.winner_team_no === r.my_team_no ? 'W' : 'L') as 'W' | 'L',
-  }))
-);
+        setRecentMatches(rows);
+      }
     } catch (e: any) {
       setError(e?.message || '読み込みに失敗しました');
     } finally {
@@ -214,13 +223,9 @@ export default function TeamProfilePage() {
 
   useEffect(() => {
     if (!teamId) return;
-    let cancelled = false;
     (async () => {
       await load();
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [teamId, load]);
 
   const wins = useMemo(() => recentMatches.filter((m) => m.result === 'W').length, [recentMatches]);
@@ -266,10 +271,7 @@ export default function TeamProfilePage() {
                 <div className="grid grid-cols-3 gap-3">
                   <StatBox label="メンバー" value={teamRank?.team_size ?? members.length} />
                   <StatBox label="平均RP" value={Math.round(teamRank?.avg_rp ?? 0)} />
-                  <StatBox
-                    label="平均HC"
-                    value={Math.round(teamRank?.avg_hc ?? 0)}
-                  />
+                  <StatBox label="平均HC" value={Math.round(teamRank?.avg_hc ?? 0)} />
                 </div>
               </div>
 
@@ -396,13 +398,13 @@ function StatBox(props: { label: string; value: string | number; icon?: 'trophy'
     <div className="glass-card rounded-lg p-3 border border-purple-500/30 flex items-center gap-3">
       <div className="w-9 h-9 rounded-full bg-purple-600/20 border border-purple-500/40 flex items-center justify-center">
         {props.icon === 'trophy' ? (
-          <FaTrophy className="text-yellow-300" />
+          <FaTrophy />
         ) : props.icon === 'medal' ? (
-          <FaMedal className="text-purple-200" />
+          <FaMedal />
         ) : props.icon === 'calendar' ? (
-          <FaCalendarAlt className="text-purple-200" />
+          <FaCalendarAlt />
         ) : (
-          <FaUser className="text-purple-200" />
+          <FaUser />
         )}
       </div>
       <div>

@@ -82,7 +82,6 @@ export default function RegisterPage() {
       .limit(1)
       .maybeSingle();
     if (error) {
-      // RLS などで読めない環境ではここでは弾けない（挿入時に検出）
       if (process.env.NODE_ENV !== 'production') console.warn('[ensureHandleUnique]', error.message);
       return true;
     }
@@ -120,7 +119,7 @@ export default function RegisterPage() {
 
   // パスコード送信
   const onSubmitPasscode = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault(); // ← 重要：?付きの遷移を防止
+    e.preventDefault();
     setPasscodeError(null);
     const input = passcodeInput.trim();
     const expected = PASSCODE.trim();
@@ -130,7 +129,7 @@ export default function RegisterPage() {
       return;
     }
     if (input === expected) {
-      setUnlocked(true); // 永続化しない
+      setUnlocked(true);
     } else {
       setPasscodeError('招待コードが違います。');
     }
@@ -187,7 +186,7 @@ export default function RegisterPage() {
         losses: 0,
       };
       {
-        const { error } = await supabase.from('players').insert(publicRow);
+        const { error } = await supabase.from('players').insert(publicRow as any);
         if (error) throw error;
       }
 
@@ -201,10 +200,9 @@ export default function RegisterPage() {
           email: formData.email.trim(),
           phone: formData.phone.trim(),
         };
-        const { error } = await supabase.from('players_private').upsert(base, { onConflict: key });
+        const { error } = await supabase.from('players_private').upsert(base, { onConflict: key } as any);
         if (!error) { saved = true; break; }
         lastErr = error;
-        // 想定内（列が無い/ユニーク制約が無い/スキーマキャッシュ）の場合のみ次候補へ
         if (!/does not exist|no unique|exclusion|schema cache/i.test(String(error?.message))) {
           break;
         }
@@ -248,7 +246,7 @@ export default function RegisterPage() {
               <FaUserPlus className="text-2xl sm:text-3xl text-white" />
             </div>
           </div>
-          <h1 className="text-2xl sm:text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-4xl font-bold text白 mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
             新規プレイヤー登録
           </h1>
           <p className="text-sm sm:text-base text-gray-300">豊浦シャッフラーズクラブへようこそ</p>
@@ -338,7 +336,7 @@ export default function RegisterPage() {
 
               {/* アカウント */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
                   <FaLock className="text-purple-400" />
                   アカウント情報
                 </h2>
@@ -385,7 +383,7 @@ export default function RegisterPage() {
                     required
                     value={formData.passwordConfirm}
                     onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
-                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
                       passwordError && formData.passwordConfirm ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                     }`}
                     placeholder="パスワードを再入力"
@@ -396,7 +394,7 @@ export default function RegisterPage() {
 
               {/* 連絡先 + アバター */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
                   <FaPhone className="text-purple-400" />
                   連絡先情報 / アバター
                 </h2>
@@ -411,7 +409,7 @@ export default function RegisterPage() {
                     required
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
+                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
                     placeholder="例: 090-1234-5678"
                   />
                 </div>
@@ -425,7 +423,7 @@ export default function RegisterPage() {
                     required
                     value={formData.address}
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
+                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text白 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
                   >
                     <option value="" className="bg-gray-800">選択してください</option>
                     {addressOptions.map((a) => (
@@ -444,10 +442,8 @@ export default function RegisterPage() {
                     value={formData.avatar_url}
                     onChange={(url) => setFormData({ ...formData, avatar_url: url })}
                     pageSize={20}
-                    maxItems={200}
                     bucket="avatars"
                     prefix="preset"
-                    dense
                   />
                 </div>
               </div>
@@ -482,7 +478,7 @@ export default function RegisterPage() {
                 <button
                   type="button"
                   onClick={() => router.push('/')}
-                  className="px-6 sm:px-8 py-2.5 bg-gray-700 text-white rounded-xl hover:bg-gray-600"
+                  className="px-6 sm:px-8 py-2.5 bg-gray-700 text白 rounded-xl hover:bg-gray-600"
                 >
                   キャンセル
                 </button>
@@ -495,7 +491,7 @@ export default function RegisterPage() {
                     !formData.isHighSchoolOrAbove ||
                     !formData.agreeToTerms
                   }
-                  className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text白 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {loading ? (<><FaSpinner className="animate-spin" /> 登録中...</>) : (<><FaUserPlus /> 登録する</>)}
                 </button>

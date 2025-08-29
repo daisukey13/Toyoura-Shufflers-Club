@@ -1,198 +1,166 @@
-'use client'
+// contexts/debug-AuthContext.tsx
+'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { User } from '@supabase/supabase-js'
-import { useRouter } from 'next/navigation'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { User } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase/browserClient';
 
-interface Player {
-  id: string
-  display_name: string
-  is_admin: boolean
-}
+type PlayerRow = {
+  id: string;
+  auth_user_id: string | null;
+  user_id: string | null;
+  handle_name: string | null;
+  team_name?: string | null;
+  is_admin: boolean | null;
+  is_active: boolean | null;
+  is_deleted: boolean | null;
+  display_name?: string | null;
+  avatar_url?: string | null;
+};
 
-interface AuthContextType {
-  user: User | null
-  player: Player | null
-  isAdmin: boolean
-  loading: boolean
-  signOut: () => Promise<void>
-  refreshAuth: () => Promise<void>
-}
+type AuthState = {
+  user: User | null | undefined;
+  player: PlayerRow | null;
+  isAdmin: boolean;
+  loading: boolean;
+  refreshAuth: () => Promise<void>;
+  signOut: () => Promise<void>;
+};
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
+const DebugAuthContext = createContext<AuthState>({
+  user: undefined,
   player: null,
   isAdmin: false,
   loading: true,
-  signOut: async () => {},
   refreshAuth: async () => {},
-})
-
-export const useAuth = () => {
-  const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error('useAuth must be used within AuthProvider')
-  }
-  return context
-}
+  signOut: async () => {},
+});
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null)
-  const [player, setPlayer] = useState<Player | null>(null)
-  const [loading, setLoading] = useState(true)
-  const router = useRouter()
-  const supabase = createClient()
+  const [user, setUser] = useState<User | null | undefined>(undefined);
+  const [player, setPlayer] = useState<PlayerRow | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const reqIdRef = useRef(0);
 
-  // プレーヤー情報を取得する関数
-  const fetchPlayer = async (userId: string) => {
-    console.log('Fetching player for user:', userId)
-    
-    const { data, error } = await supabase
-      .from('players')
-      .select('id, display_name, is_admin')
-      .eq('user_id', userId)
-      .single()
+  const fetchPlayerByUserId = async (uid: string) => {
+    const { data: raw, error } = await (supabase.from('players') as any)
+      .select('id,auth_user_id,user_id,handle_name,team_name,is_admin,is_active,is_deleted,avatar_url,display_name')
+      .or(`auth_user_id.eq.${uid},user_id.eq.${uid}`)
+      .eq('is_deleted', false as any)
+      .limit(1)
+      .maybeSingle();
 
     if (error) {
-      console.error('Error fetching player:', error)
-      console.error('Error details:', {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code
-      })
-      return null
+      console.warn('[debug-AuthContext] fetchPlayer error:', error);
+      return null;
+    }
+    if (!raw) return null;
+
+    const d = raw as any;
+    const merged: PlayerRow = {
+      id: String(d.id),
+      auth_user_id: d.auth_user_id ?? null,
+      user_id: d.user_id ?? null,
+      handle_name: d.handle_name ?? null,
+      team_name: d.team_name ?? null,
+      is_admin: typeof d.is_admin === 'boolean' ? d.is_admin : null,
+      is_active: typeof d.is_active === 'boolean' ? d.is_active : null,
+      is_deleted: typeof d.is_deleted === 'boolean' ? d.is_deleted : null,
+      display_name: d.display_name ?? d.handle_name ?? d.team_name ?? null,
+      avatar_url: d.avatar_url ?? null,
+    };
+
+    return merged;
+  };
+
+  const applySession = async () => {
+    setLoading(true);
+    const myReq = ++reqIdRef.current;
+
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error) console.warn('[debug-AuthContext] getSession error:', error);
+
+    if (myReq !== reqIdRef.current) return;
+
+    const currentUser = session?.user ?? null;
+    setUser(currentUser);
+    console.log('[debug-AuthContext] user:', currentUser?.id);
+
+    if (currentUser) {
+      const p = await fetchPlayerByUserId(currentUser.id);
+      if (myReq !== reqIdRef.current) return;
+      setPlayer(p);
+      setIsAdmin(!!p?.is_admin);
+      console.log('[debug-AuthContext] player:', p);
+    } else {
+      setPlayer(null);
+      setIsAdmin(false);
     }
 
-    console.log('Player data fetched successfully:', data)
-  if (data) {
-  console.log('Is admin?', data.is_admin);
-  console.log('Display name:', data.display_name);
-}
+    setLoading(false);
+  };
 
-  // 認証状態を更新する関数
   const refreshAuth = async () => {
-    console.log('refreshAuth: Starting auth refresh...')
-    
-    try {
-      // 現在のセッションを取得
-      const { data: { session }, error } = await supabase.auth.getSession()
-      
-      if (error) {
-        console.error('refreshAuth: Error getting session:', error)
-        setUser(null)
-        setPlayer(null)
-        setLoading(false)
-        return
-      }
+    await applySession();
+  };
 
-      if (session?.user) {
-        console.log('refreshAuth: Session found, user:', session.user.id)
-        setUser(session.user)
-        
-        // プレーヤー情報を取得
-        const playerData = await fetchPlayer(session.user.id)
-        if (playerData) {
-          console.log('refreshAuth: Setting player data:', playerData)
-          setPlayer(playerData)
-          console.log('refreshAuth: Player set with admin status:', playerData.is_admin)
-        } else {
-          console.log('refreshAuth: No player data found')
-          setPlayer(null)
-        }
-      } else {
-        console.log('refreshAuth: No session found')
-        setUser(null)
-        setPlayer(null)
-      }
-    } catch (error) {
-      console.error('refreshAuth: Unexpected error:', error)
-      setUser(null)
-      setPlayer(null)
-    } finally {
-      console.log('refreshAuth: Setting loading to false')
-      setLoading(false)
-    }
-  }
-
-  // 初回マウント時とセッション変更時の処理
-  useEffect(() => {
-    console.log('AuthProvider: Component mounted, checking session...')
-    
-    // 初回の認証チェック
-    refreshAuth()
-
-    // 認証状態の変更を監視
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('AuthProvider: Auth state changed:', event, session?.user?.id)
-      
-      if (event === 'SIGNED_IN' && session) {
-        console.log('AuthProvider: User signed in, updating state...')
-        setUser(session.user)
-        const playerData = await fetchPlayer(session.user.id)
-        if (playerData) {
-          console.log('AuthProvider: Player data in auth change:', playerData)
-          setPlayer(playerData)
-        }
-        setLoading(false)
-      } else if (event === 'SIGNED_OUT') {
-        console.log('AuthProvider: User signed out')
-        setUser(null)
-        setPlayer(null)
-        setLoading(false)
-      } else if (event === 'TOKEN_REFRESHED' && session) {
-        console.log('AuthProvider: Token refreshed')
-        // トークンがリフレッシュされた場合も更新
-        setUser(session.user)
-        const playerData = await fetchPlayer(session.user.id)
-        if (playerData) {
-          setPlayer(playerData)
-        }
-        setLoading(false)
-      }
-    })
-
-    return () => {
-      console.log('AuthProvider: Cleaning up subscription')
-      subscription.unsubscribe()
-    }
-  }, [])  // supabaseを依存配列から除外
-
-  // ログアウト処理
   const signOut = async () => {
     try {
-      console.log('signOut: Starting sign out process...')
-      await supabase.auth.signOut()
-      setUser(null)
-      setPlayer(null)
-      router.push('/')
-    } catch (error) {
-      console.error('signOut: Error signing out:', error)
+      setLoading(true);
+      const { error } = await supabase.auth.signOut();
+      if (error) console.warn('[debug-AuthContext] signOut error:', error);
+    } finally {
+      setUser(null);
+      setPlayer(null);
+      setIsAdmin(false);
+      setLoading(false);
     }
-  }
+  };
 
-  // isAdminの計算
-  const isAdmin = player?.is_admin === true
-
-  // デバッグ用：状態が更新されるたびにログ出力
   useEffect(() => {
-    console.log('AuthProvider State Update:', {
-      user: user?.id,
-      player: player,
-      isAdmin: isAdmin,
-      loading: loading
-    })
-  }, [user, player, isAdmin, loading])
+    let mounted = true;
+    (async () => {
+      if (!mounted) return;
+      await applySession();
+    })();
 
-  const value = {
-    user,
-    player,
-    isAdmin,
-    loading,
-    signOut,
-    refreshAuth,
-  }
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setUser(session?.user ?? null);
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
+      if (session?.user?.id) {
+        const myReq = ++reqIdRef.current;
+        const p = await fetchPlayerByUserId(session.user.id);
+        if (myReq !== reqIdRef.current) return;
+        setPlayer(p);
+        setIsAdmin(!!p?.is_admin);
+      } else {
+        setPlayer(null);
+        setIsAdmin(false);
+      }
+
+      setLoading(false);
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  const value = useMemo<AuthState>(
+    () => ({
+      user,
+      player,
+      isAdmin,
+      loading,
+      refreshAuth,
+      signOut,
+    }),
+    [user, player, isAdmin, loading]
+  );
+
+  return <DebugAuthContext.Provider value={value}>{children}</DebugAuthContext.Provider>;
+};
+
+export const useAuth = () => useContext(DebugAuthContext);

@@ -9,6 +9,9 @@ import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
 
+// ---- 型（ローカルで厳格化） ----
+type PlayerFlagRow = { is_admin: boolean | null };
+
 type Notice = {
   id: string;
   title: string;
@@ -38,23 +41,26 @@ export default function AdminNoticesPage() {
     (async () => {
       try {
         // 認証
-        const { data: { user }, error: userErr } = await supabase.auth.getUser();
+        const {
+          data: { user },
+          error: userErr,
+        } = await supabase.auth.getUser();
         if (userErr) throw userErr;
         if (!user) {
           router.replace('/');
           return;
         }
-        // 管理者判定
-        const { data: player, error: plErr } = await supabase
-          .from('players')
+        // 管理者判定（from の型は緩め、結果をローカル型で受ける）
+        const { data: pRow, error: plErr } = await (supabase.from('players') as any)
           .select('is_admin')
           .eq('id', user.id)
           .maybeSingle();
         if (plErr) throw plErr;
-       if (!player || !player.is_admin) {
-  router.replace('/');
-  return;
-}
+        const player = (pRow ?? null) as PlayerFlagRow | null;
+        if (!player?.is_admin) {
+          router.replace('/');
+          return;
+        }
         setIsAdmin(true);
         await fetchNotices();
       } catch (e) {
@@ -71,13 +77,13 @@ export default function AdminNoticesPage() {
   const fetchNotices = async () => {
     setLoading(true);
     try {
-      // ※ サーバー側 order を使わない（date で 400 を回避）
-      const { data, error } = await supabase
-        .from('notices')
-        .select('*');
+      // サーバー order を使わず、クライアントで安定ソート
+      const { data, error } = await (supabase.from('notices') as any).select('*');
       if (error) throw error;
 
-      const sorted = (data ?? []).sort((a: Notice, b: Notice) => {
+      const list = (data ?? []) as Notice[];
+
+      const sorted = list.sort((a, b) => {
         // 優先キー: date（YYYY-MM-DD）→ 次点: created_at
         const at = asTime(a.date ?? a.created_at ?? null);
         const bt = asTime(b.date ?? b.created_at ?? null);
@@ -99,9 +105,8 @@ export default function AdminNoticesPage() {
     setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
     try {
       const { error } = await (supabase.from('notices') as any)
-  .update({ is_published: next } as any)
-  .eq('id', target.id);
-
+        .update({ is_published: next } as any)
+        .eq('id', target.id);
       if (error) throw error;
     } catch (e) {
       console.error('[admin/notices] toggle publish error:', e);
@@ -122,7 +127,7 @@ export default function AdminNoticesPage() {
     // 楽観的
     setNotices((prev) => prev.filter((n) => n.id !== id));
     try {
-      const { error } = await supabase.from('notices').delete().eq('id', id);
+      const { error } = await (supabase.from('notices') as any).delete().eq('id', id);
       if (error) throw error;
     } catch (e) {
       console.error('[admin/notices] delete error:', e);
@@ -227,7 +232,7 @@ export default function AdminNoticesPage() {
 
                     <Link
                       href={`/admin/notices/${notice.id}/edit`}
-                      className="p-2 rounded-lg hover:bg-purple-900/20 transition-colors"
+                      className="p-2 rounded-lg hover:bg紫-900/20 transition-colors"
                       title="編集"
                     >
                       <FaEdit className="text-purple-400" />
