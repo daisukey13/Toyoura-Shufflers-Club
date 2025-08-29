@@ -27,10 +27,19 @@ import { useTeamRankings, TeamRankItem } from '@/lib/hooks/useTeamRankings';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 import { calcWinRate } from '@/lib/stats';
 
-// ─────────────────────────── Virtual list ───────────────────────────
+/* ─────────────────────────── Fallback (for Suspense wrapper) ─────────────────────────── */
+function Fallback() {
+  return (
+    <div className="container mx-auto px-4 py-10 text-center text-gray-300">
+      画面を読み込み中…
+    </div>
+  );
+}
+
+/* ─────────────────────────── Virtual list ─────────────────────────── */
 const VirtualList = lazy(() => import('@/components/VirtualList'));
 
-// ─────────────────────────── Lazy image ───────────────────────────
+/* ─────────────────────────── Lazy image ─────────────────────────── */
 const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => (
   // eslint-disable-next-line @next/next/no-img-element
   <img
@@ -45,7 +54,7 @@ const LazyImage = ({ src, alt, className }: { src: string; alt: string; classNam
   />
 );
 
-// ─────────────────────────── Rank Badge ───────────────────────────
+/* ─────────────────────────── Rank Badge ─────────────────────────── */
 const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
   if (rank === 1) {
     return (
@@ -84,7 +93,7 @@ const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
   );
 });
 
-// ─────────────────────────── Types ───────────────────────────
+/* ─────────────────────────── Types ─────────────────────────── */
 type Player = {
   id: string;
   handle_name: string;
@@ -96,11 +105,12 @@ type Player = {
   losses?: number | null;
 };
 
-// ─────────────────────────── Player Card ───────────────────────────
+/* ─────────────────────────── utils ─────────────────────────── */
 function eq(a: any, b: any) {
   return a === b || (Number.isNaN(a) && Number.isNaN(b));
 }
 
+/* ─────────────────────────── Player Card ─────────────────────────── */
 const PlayerCard = memo(
   function PlayerCard({ player, rank }: { player: Player; rank: number }) {
     const isTop3 = rank <= 3;
@@ -199,7 +209,7 @@ const PlayerCard = memo(
   }
 );
 
-// ─────────────────────────── Team Card ───────────────────────────
+/* ─────────────────────────── Team Card ─────────────────────────── */
 const TeamCard = memo(function TeamCard({
   team,
   rank,
@@ -277,7 +287,7 @@ const TeamCard = memo(function TeamCard({
   );
 });
 
-// ─────────────────────────── Stats Cards ───────────────────────────
+/* ─────────────────────────── Stats Cards ─────────────────────────── */
 const StatsCardsPlayers = memo(function StatsCardsPlayers({
   stats,
 }: {
@@ -338,10 +348,10 @@ const StatsCardsTeams = memo(function StatsCardsTeams({
   );
 });
 
-// ─────────────────────────── Page ───────────────────────────
+/* ─────────────────────────── Inner Page (wrapped by Suspense) ─────────────────────────── */
 type TabKey = 'players' | 'teams';
 
-export default function RankingsPage() {
+function RankingsInner() {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
@@ -361,7 +371,7 @@ export default function RankingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  // ── Players ──
+  /* ── Players ── */
   const { players, loading: pLoading, error: pError, retrying: pRetrying, refetch: pRefetch } =
     usePlayersData();
 
@@ -402,7 +412,7 @@ export default function RankingsPage() {
     [sortedPlayers]
   );
 
-  // ── Teams ──
+  /* ── Teams ── */
   const { teams, loading: tLoading, error: tError, retrying: tRetrying, refetch: tRefetch } =
     useTeamRankings({ enabled: tab === 'teams', orderBy: 'avg_rp', ascending: false });
 
@@ -439,7 +449,7 @@ export default function RankingsPage() {
     [sortedTeams]
   );
 
-  // ─────────────────────────── UI ───────────────────────────
+  /* ─────────────────────────── UI ─────────────────────────── */
   return (
     <div className="container mx-auto px-4 py-6 sm:py-8">
       {/* ヘッダー */}
@@ -613,5 +623,16 @@ export default function RankingsPage() {
         </>
       )}
     </div>
+  );
+}
+
+/* ─────────────────────────── Default export: wrap in Suspense ───────────────────────────
+   useSearchParams()/usePathname() があるため、ページ全体を Suspense で包み
+   Vercel の「useSearchParams を Suspense で包んでください」エラーを回避します。 */
+export default function RankingsPage() {
+  return (
+    <Suspense fallback={<Fallback />}>
+      <RankingsInner />
+    </Suspense>
   );
 }

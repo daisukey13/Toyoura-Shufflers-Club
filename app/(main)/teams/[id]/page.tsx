@@ -1,7 +1,7 @@
 // app/(main)/teams/[id]/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, Suspense } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -94,8 +94,8 @@ const LazyImg = (props: { src?: string | null; alt: string; className?: string }
   />
 );
 
-/* ========= ページ ========= */
-export default function TeamProfilePage() {
+/* ========= 本体 ========= */
+function TeamProfileInner() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const teamId = params?.id;
@@ -412,5 +412,20 @@ function StatBox(props: { label: string; value: string | number; icon?: 'trophy'
         <div className="text-base font-semibold text-yellow-100">{props.value}</div>
       </div>
     </div>
+  );
+}
+
+/* ========= デフォルトエクスポート（Suspense で包む：CSR bailout系の事前レンダー警告を回避） ========= */
+export default function TeamProfilePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center p-6">
+          <div className="glass-card rounded-xl p-8 text-center text-gray-300">読み込み中…</div>
+        </div>
+      }
+    >
+      <TeamProfileInner />
+    </Suspense>
   );
 }

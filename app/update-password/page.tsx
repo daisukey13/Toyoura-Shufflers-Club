@@ -1,6 +1,7 @@
+// app/update-password/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { FaKey, FaArrowLeft, FaCheck } from 'react-icons/fa';
@@ -8,7 +9,8 @@ import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
 
-export default function UpdatePasswordPage() {
+/** 実処理を行う内側のコンポーネント（useSearchParams を使用するため Suspense 配下に置く） */
+function UpdatePasswordInner() {
   const router = useRouter();
   const params = useSearchParams();
   const code = useMemo(() => params.get('code') || '', [params]);
@@ -21,19 +23,31 @@ export default function UpdatePasswordPage() {
   const [pw2, setPw2] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // メールリンクの code をセッションに交換
+  // メールリンクの code をセッションに交換（PKCE）
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         if (!code) throw new Error('無効なリンクです（code がありません）。');
         const { error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) throw error;
-        setStage('ready');
+        if (!cancelled) setStage('ready');
       } catch (e: any) {
-        setError(String(e?.message || e));
-        setStage('error');
+        const msg = String(e?.message || e);
+        // PKCE 関連のエラーメッセージをユーザー向けに言い換え
+        if (/both auth code and code verifier/i.test(msg)) {
+          setError('検証に必要な情報が見つかりませんでした。もう一度メールを送信してやり直してください。');
+        } else if (/unmarshal.*auth_code.*string/i.test(msg)) {
+          setError('リンクの形式が不正です。メールを再送して再度お試しください。');
+        } else {
+          setError(msg);
+        }
+        if (!cancelled) setStage('error');
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [code]);
 
   const handleUpdate = async (e: React.FormEvent) => {
@@ -79,7 +93,7 @@ export default function UpdatePasswordPage() {
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
           <h1 className="text-2xl font-bold text-yellow-100 mb-2">リンクエラー</h1>
           <p className="text-red-400 mb-4">{error}</p>
-          <Link href="/reset-password" className="text-purple-400 hover:text-purple-300">
+          <Link href="/forgot-password" className="text-purple-400 hover:text-purple-300">
             もう一度やり直す
           </Link>
         </div>
@@ -138,6 +152,7 @@ export default function UpdatePasswordPage() {
                 placeholder="••••••••"
                 required
                 autoComplete="new-password"
+                minLength={6}
               />
             </div>
 
@@ -153,6 +168,7 @@ export default function UpdatePasswordPage() {
                 placeholder="••••••••"
                 required
                 autoComplete="new-password"
+                minLength={6}
               />
             </div>
 
@@ -167,5 +183,22 @@ export default function UpdatePasswordPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** 事前レンダー時の CSR bailout 警告回避のため、useSearchParams を Suspense で包む */
+export default function UpdatePasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen grid place-items-center p-4">
+          <div className="w-full max-w-md glass-card rounded-xl p-8 text-center text-gray-300">
+            リンクを確認しています...
+          </div>
+        </div>
+      }
+    >
+      <UpdatePasswordInner />
+    </Suspense>
   );
 }

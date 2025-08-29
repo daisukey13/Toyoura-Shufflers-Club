@@ -1,7 +1,11 @@
 // app/login/page.tsx
 'use client';
+import { redirect } from 'next/navigation';
 
-import { useEffect, useState } from 'react';
+export default function AdminLogin() {
+  redirect('/login?redirect=/admin'); // 目的地は必要に応じて調整
+}
+import { Suspense, useEffect, useState } from 'react';
 import Script from 'next/script';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -23,7 +27,8 @@ declare global {
   }
 }
 
-export default function LoginPage() {
+/** useSearchParams を使う実処理は Suspense の内側に隔離 */
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirect') || null;
@@ -54,7 +59,9 @@ export default function LoginPage() {
   useEffect(() => {
     setError('');
     setCfToken('');
-    try { window.turnstile?.reset(); } catch {}
+    try {
+      window.turnstile?.reset();
+    } catch {}
   }, [mode]);
 
   const onTurnstileLoaded = () => setWidgetReady(true);
@@ -107,13 +114,18 @@ export default function LoginPage() {
       if (signInError) throw new Error('メールまたはパスワードが正しくありません。');
 
       // 成功したら Turnstile をリセット（念のため）
-      try { window.turnstile?.reset(); } catch {}
+      try {
+        window.turnstile?.reset();
+      } catch {}
 
       await goAfterLogin();
     } catch (err: any) {
       setError(err?.message || 'ログインに失敗しました');
       // 失敗時もリセットして再入力可能に
-      try { window.turnstile?.reset(); setCfToken(''); } catch {}
+      try {
+        window.turnstile?.reset();
+        setCfToken('');
+      } catch {}
     } finally {
       setLoading(false);
     }
@@ -273,5 +285,14 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** ページのデフォルトエクスポートは Suspense で包む */
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center p-8">読み込み中...</div>}>
+      <LoginContent />
+    </Suspense>
   );
 }

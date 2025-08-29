@@ -1,7 +1,7 @@
 // app/login/page.tsx
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Script from 'next/script';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -32,7 +32,22 @@ function toE164JapanForView(input: string): string {
   return s;
 }
 
-export default function LoginPage() {
+function Fallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="glass-card rounded-xl p-8">
+          <div className="h-6 w-32 bg-white/10 rounded mb-4" />
+          <div className="h-10 w-full bg-white/10 rounded mb-3" />
+          <div className="h-10 w-full bg-white/10 rounded" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Suspense でラップした内側本体 */
+function LoginPageInner() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -81,7 +96,9 @@ export default function LoginPage() {
         if (!cancelled) setAlreadyAuthed(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [mounted, hasRedirect, redirectSafe, router]);
 
   /** phone モードで Turnstile を明示レンダー */
@@ -198,17 +215,7 @@ export default function LoginPage() {
 
   // マウント前はスケルトン
   if (!mounted || alreadyAuthed === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-md">
-          <div className="glass-card rounded-xl p-8">
-            <div className="h-6 w-32 bg-white/10 rounded mb-4" />
-            <div className="h-10 w-full bg-white/10 rounded mb-3" />
-            <div className="h-10 w-full bg-white/10 rounded" />
-          </div>
-        </div>
-      </div>
-    );
+    return <Fallback />;
   }
 
   // 既ログインだが redirect が無い（手動アクセス）のときは案内を表示
@@ -217,10 +224,19 @@ export default function LoginPage() {
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
           <h1 className="text-xl font-bold mb-2">すでにログイン中です</h1>
-          <p className="text-gray-400 mb-6">トップページ、もしくは管理ページに移動できます。別アカウントでログインする場合はアカウント切替を押してください。</p>
+          <p className="text-gray-400 mb-6">
+            トップページ、もしくは管理ページに移動できます。別アカウントでログインする場合はアカウント切替を押してください。
+          </p>
           <div className="flex gap-3 justify-center">
-            <Link href="/" className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 transition-colors">トップへ</Link>
-            <Link href="/admin/dashboard" className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 transition-colors">管理ページへ</Link>
+            <Link href="/" className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 transition-colors">
+              トップへ
+            </Link>
+            <Link
+              href="/admin/dashboard"
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 transition-colors"
+            >
+              管理ページへ
+            </Link>
             <button
               onClick={handleSwitchAccount}
               className="px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-700 transition-colors"
@@ -238,7 +254,8 @@ export default function LoginPage() {
       {SITE_KEY && (
         <Script
           src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
-          async defer
+          async
+          defer
           onLoad={() => setScriptReady(true)}
         />
       )}
@@ -374,5 +391,14 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  // Suspense で useSearchParams を含むクライアントを包む
+  return (
+    <Suspense fallback={<Fallback />}>
+      <LoginPageInner />
+    </Suspense>
   );
 }

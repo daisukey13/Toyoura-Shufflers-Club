@@ -1,21 +1,36 @@
 // app/(main)/reset-password/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { FaLock, FaSpinner } from 'react-icons/fa';
 
-const supabase = createClient();
+// ★ client.ts の storageKey が 'tsc-auth' なので、それに合わせる
+const PKCE_VERIFIER_KEY = 'tsc-auth-code-verifier';
 
-type Stage = 'INIT' | 'VERIFYING' | 'READY' | 'ERROR' | 'DONE' | 'PKCE_MISSING';
+type Stage = 'INIT' | 'VERIFYING' | 'READY' | 'ERROR' | 'DONE';
 
 function parseHashFragment(hash: string) {
   const s = hash?.startsWith('#') ? hash.slice(1) : hash || '';
   return Object.fromEntries(new URLSearchParams(s).entries());
 }
 
-export default function ResetPasswordPage() {
+/* ───────── Suspense Fallback ───────── */
+function Fallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6">
+      <div className="glass-card rounded-xl p-8 text-center">
+        <FaSpinner className="mx-auto mb-3 animate-spin text-purple-400" />
+        <p className="text-gray-300">リンクを検証しています...</p>
+      </div>
+    </div>
+  );
+}
+
+/* ───────── Page Inner (wrapped by Suspense) ───────── */
+function ResetPasswordPageInner() {
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -27,78 +42,90 @@ export default function ResetPasswordPage() {
   const [password2, setPassword2] = useState('');
   const [updating, setUpdating] = useState(false);
 
-  // PKCE フォールバック用（同ブラウザで再送）
-  const [emailForResend, setEmailForResend] = useState('');
-  const [resending, setResending] = useState(false);
-  const [resendMsg, setResendMsg] = useState<string | null>(null);
+  // URL からコード類を読む（必ず string になるようガード）
+  const codeFromQuery = useMemo(() => {
+    const val = searchParams?.get('code');
+    return typeof val === 'string' ? val : '';
+  }, [searchParams]);
 
-  const codeFromQuery = useMemo(() => searchParams?.get('code') || '', [searchParams]);
-  const tokenHashFromQuery = useMemo(() => searchParams?.get('token_hash') || '', [searchParams]);
-  const typeFromQuery = useMemo(() => searchParams?.get('type') || '', [searchParams]);
+  const tokenHashFromQuery = useMemo(() => {
+    const val = searchParams?.get('token_hash');
+    return typeof val === 'string' ? val : '';
+  }, [searchParams]);
 
-  useEffect(() => { setMounted(true); }, []);
+  const typeFromQuery = useMemo(() => {
+    const val = searchParams?.get('type');
+    return typeof val === 'string' ? val : '';
+  }, [searchParams]);
 
-  // セッション確立: メールのリンクから遷移直後に 1 回だけ
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
     if (!mounted) return;
 
-    const run = async () => {
+    (async () => {
       setStage('VERIFYING');
       setError(null);
 
       try {
-        // 1) 旧方式: #access_token & #refresh_token（メール内ハッシュ）
         const hashObj = parseHashFragment(window.location.hash);
+        const hasPkceVerifier =
+          typeof window !== 'undefined' && !!localStorage.getItem(PKCE_VERIFIER_KEY);
+
+        // 1) 新方式（?code=...）かつ PKCE 検証子がローカルにある場合のみ交換
+        if (codeFromQuery && hasPkceVerifier) {
+          const { error } = await supabase.auth.exchangeCodeForSession(codeFromQuery);
+          if (error) throw error;
+          setStage('READY');
+          return;
+        }
+
+        // 2) token_hash + type=recovery（verifyOtp）
+        if (
+          (tokenHashFromQuery || hashObj.token_hash) &&
+          (typeFromQuery === 'recovery' || hashObj.type === 'recovery')
+        ) {
+          const token_hash = tokenHashFromQuery || hashObj.token_hash;
+          const { data, error } = await supabase.auth.verifyOtp({
+            type: 'recovery',
+            token_hash,
+          });
+          if (error || !data.session) throw error ?? new Error('セッション確立に失敗しました');
+          setStage('READY');
+          return;
+        }
+
+        // 3) 旧フラグメント方式（#access_token & #refresh_token & type=recovery）
         if (hashObj.access_token && hashObj.refresh_token && hashObj.type === 'recovery') {
           const { data, error } = await supabase.auth.setSession({
             access_token: hashObj.access_token,
             refresh_token: hashObj.refresh_token,
           });
-          if (error || !data.session) throw error ?? new Error('セッションの確立に失敗しました');
+          if (error || !data.session) throw error ?? new Error('セッション確立に失敗しました');
           setStage('READY');
           return;
         }
 
-        // 2) token_hash + type=recovery（メールリンクの新方式その1）
-        if ((tokenHashFromQuery || hashObj.token_hash) && (typeFromQuery === 'recovery' || hashObj.type === 'recovery')) {
-          const token_hash = tokenHashFromQuery || hashObj.token_hash;
-          const { data, error } = await supabase.auth.verifyOtp({ type: 'recovery', token_hash });
-          if (error || !data.session) throw error ?? new Error('セッションの確立に失敗しました');
-          setStage('READY');
-          return;
-        }
-
-        // 3) code（PKCE：メールリンクの新方式その2）
-        if (codeFromQuery) {
-         // 73行 付近
-const { error } = await supabase.auth.exchangeCodeForSession(codeFromQuery);
-
-          if (error) {
-            // PKCE の code_verifier が無い（別ブラウザ等）場合の既知エラー
-            if (/code verifier|both auth code and code verifier/i.test(String(error.message))) {
-              setStage('PKCE_MISSING');
-              setError('このリンクは同じブラウザでリセット手続きを開始した場合のみ有効です。お手数ですが、ここから再送してください。');
-              return;
-            }
-            throw error;
-          }
-          setStage('READY');
-          return;
-        }
-
+        // どれにも当てはまらない
         setError('無効または期限切れのリンクです。もう一度お試しください。');
         setStage('ERROR');
       } catch (e: any) {
-        setError(e?.message || 'リンクの検証に失敗しました。');
+        const msg = String(e?.message || e);
+        // よくあるPKCE系の文言をユーザー向けに言い換え
+        if (/both auth code and code verifier/i.test(msg)) {
+          setError(
+            'このリンクの検証に必要な情報が見つかりませんでした。もう一度「パスワードを忘れた」からメールを送信し直してください。'
+          );
+        } else if (/unmarshal.*auth_code.*string/i.test(msg)) {
+          setError('リンクのパラメータが不正です。メールを再送して再度お試しください。');
+        } else {
+          setError(msg || 'リンクの検証に失敗しました。');
+        }
         setStage('ERROR');
       }
-    };
+    })();
+  }, [mounted, codeFromQuery, tokenHashFromQuery, typeFromQuery, supabase]);
 
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, codeFromQuery, tokenHashFromQuery, typeFromQuery]);
-
-  // パスワード更新
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (stage !== 'READY') return;
@@ -126,77 +153,8 @@ const { error } = await supabase.auth.exchangeCodeForSession(codeFromQuery);
     }
   };
 
-  // PKCE フォールバック: 同ブラウザからリセットメール再送
-  const resendResetMail = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setResendMsg(null);
-    setResending(true);
-    try {
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const { error } = await supabase.auth.resetPasswordForEmail(emailForResend.trim(), {
-        redirectTo: `${origin}/reset-password`,
-      });
-      if (error) throw error;
-      setResendMsg('メールを送信しました。届いたリンクをこのブラウザで開いてください。');
-    } catch (e: any) {
-      setResendMsg(e?.message || 'メール送信に失敗しました。');
-    } finally {
-      setResending(false);
-    }
-  };
-
-  // ---------- Render ----------
-  if (!mounted || stage === 'INIT' || stage === 'VERIFYING') {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="glass-card rounded-xl p-8 text-center">
-          <FaSpinner className="mx-auto mb-3 animate-spin text-purple-400" />
-          <p className="text-gray-300">リンクを検証しています...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (stage === 'PKCE_MISSING') {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="glass-card rounded-xl p-8 w-full max-w-md">
-          <div className="text-center mb-4">
-            <p className="text-red-400 font-medium mb-2">エラー</p>
-            <p className="text-gray-300">{error}</p>
-          </div>
-          <form onSubmit={resendResetMail} className="space-y-4">
-            <div>
-              <label className="block text-sm text-gray-300 mb-2">メールアドレス</label>
-              <input
-                type="email"
-                value={emailForResend}
-                onChange={(e) => setEmailForResend(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-gray-800/50 border border-purple-500/30 focus:border-purple-400 focus:outline-none transition-colors"
-                placeholder="example@email.com"
-                required
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={resending}
-              className="w-full gradient-button py-3 rounded-lg text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {resending ? '送信中…' : 'このブラウザで開く用に再送する'}
-            </button>
-          </form>
-
-          {resendMsg && (
-            <p className="mt-4 text-sm text-center text-gray-300">{resendMsg}</p>
-          )}
-
-          <div className="mt-6 text-center">
-            <a href="/login" className="text-purple-400 hover:text-purple-300">ログインへ戻る</a>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // ----- UI -----
+  if (!mounted || stage === 'INIT' || stage === 'VERIFYING') return <Fallback />;
 
   if (stage === 'ERROR') {
     return (
@@ -205,8 +163,14 @@ const { error } = await supabase.auth.exchangeCodeForSession(codeFromQuery);
           <p className="text-red-400 font-medium mb-2">エラー</p>
           <p className="text-gray-300 mb-4">{error}</p>
           <a
-            href="/login"
+            href="/forgot-password"
             className="inline-block px-5 py-2 rounded-lg border border-purple-500 text-purple-300 hover:bg-purple-500/10 transition-colors"
+          >
+            もう一度メールを送る
+          </a>
+          <a
+            href="/login"
+            className="inline-block px-5 py-2 ml-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-600/10 transition-colors"
           >
             ログインへ戻る
           </a>
@@ -283,5 +247,14 @@ const { error } = await supabase.auth.exchangeCodeForSession(codeFromQuery);
         </form>
       </div>
     </div>
+  );
+}
+
+/* ───────── Default export: wrap with Suspense (CSR bailout対策) ───────── */
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={<Fallback />}>
+      <ResetPasswordPageInner />
+    </Suspense>
   );
 }
