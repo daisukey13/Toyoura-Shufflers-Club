@@ -116,7 +116,7 @@ export default function MyPage() {
           .from('players')
           .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses, matches_played, created_at')
           .eq('id', user.id)
-          .single();
+          .maybeSingle();
         if (error && error.code !== 'PGRST116') throw error;
 
         let current = player as Player | null;
@@ -124,7 +124,8 @@ export default function MyPage() {
           const initialHandle = (user.email?.split('@')[0] || 'Player') + '-' + user.id.slice(0, 6);
           const { data: created, error: iErr } = await supabase
             .from('players')
-            .insert({ id: user.id, handle_name: initialHandle })
+            // 型未生成環境対策：配列 + any
+            .insert([{ id: user.id, handle_name: initialHandle }] as any)
             .select('*')
             .single();
           if (iErr) throw iErr;
@@ -155,7 +156,7 @@ export default function MyPage() {
     })();
   }, [router]);
 
-  /* ===== 最近試合の取得（関数化して使い回し） ===== */
+  /* ===== 最近試合取得 ===== */
   const fetchRecentMatches = useCallback(async () => {
     if (!userId) return;
     setMatchesLoading(true);
@@ -214,7 +215,7 @@ export default function MyPage() {
     try {
       const { error } = await supabase
         .from('players')
-        .update({ handle_name: handle.trim(), avatar_url: avatarUrl || null })
+        .update({ handle_name: handle.trim(), avatar_url: avatarUrl || null } as any)
         .eq('id', userId);
       if (error) throw error;
       setProfileMsg('保存しました。');
@@ -238,7 +239,7 @@ export default function MyPage() {
     setAvatarBucketMissing(false);
     try {
       const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-      const path = `public/users/${userId}/${Date.now()}.${ext}`; // ← 一意に格納
+      const path = `public/users/${userId}/${Date.now()}.${ext}`;
       const up = await supabase.storage.from('avatars').upload(path, file, {
         cacheControl: '3600',
         upsert: true,
@@ -267,7 +268,7 @@ export default function MyPage() {
     setPickerItems([]);
     setPickerPage(1);
     try {
-      // 1) 自分の画像（avatars/public/users/<uid> 以下）
+      // 自分の画像（avatars/public/users/<uid> 以下）
       const ownListRes = await supabase.storage.from('avatars').list(`public/users/${userId}`, {
         limit: 200, sortBy: { column: 'created_at', order: 'desc' }
       });
@@ -276,10 +277,10 @@ export default function MyPage() {
         .map((f) => {
           const fullPath = `public/users/${userId}/${f.name}`;
           const { data } = supabase.storage.from('avatars').getPublicUrl(fullPath);
-          return { fullPath, url: data?.publicUrl || '', source: 'own', created_at: f.created_at as any };
+          return { fullPath, url: data?.publicUrl || '', source: 'own', created_at: (f as any).created_at ?? null };
         });
 
-      // 2) プリセット（avatars/preset）
+      // プリセット（avatars/preset）
       const presetRes = await supabase.storage.from('avatars').list(`preset`, {
         limit: 200, sortBy: { column: 'name', order: 'asc' }
       });
@@ -288,7 +289,7 @@ export default function MyPage() {
         .map((f) => {
           const fullPath = `preset/${f.name}`;
           const { data } = supabase.storage.from('avatars').getPublicUrl(fullPath);
-          return { fullPath, url: data?.publicUrl || '', source: 'preset', created_at: f.created_at as any };
+          return { fullPath, url: data?.publicUrl || '', source: 'preset', created_at: (f as any).created_at ?? null };
         });
 
       const all = [...ownItems, ...presetItems].filter((x) => !!x.url);
@@ -315,7 +316,9 @@ export default function MyPage() {
       <div className="flex items-center justify-between gap-3 text-sm text-gray-300">
         <div>
           全 {pickerItems.length} 件中{' '}
-          <span className="text-yellow-100">{(pickerPage - 1) * PAGE_SIZE + 1}–{Math.min(pickerPage * PAGE_SIZE, pickerItems.length)}</span>
+          <span className="text-yellow-100">
+            {(pickerPage - 1) * PAGE_SIZE + 1}–{Math.min(pickerPage * PAGE_SIZE, pickerItems.length)}
+          </span>
           件を表示
         </div>
         <div className="inline-flex items-center gap-1">
@@ -349,7 +352,7 @@ export default function MyPage() {
       if ((count ?? 0) >= TEAM_CAP) { setJoinMsg('定員オーバーのため参加できません（各チーム最大4名）。'); return; }
       const { data: already } = await supabase.from('team_members').select('team_id').eq('player_id', userId).limit(1);
       if ((already || []).length > 0) { setJoinMsg('すでにチームに参加済みです。'); return; }
-      const { error: jErr } = await supabase.from('team_members').insert({ team_id: team.id, player_id: userId });
+      const { error: jErr } = await supabase.from('team_members').insert([{ team_id: team.id, player_id: userId }] as any);
       if (jErr) throw jErr;
       setMyTeam({ id: team.id, name: team.name });
       setJoinMsg(`「${team.name}」に参加しました！`);
@@ -432,13 +435,7 @@ export default function MyPage() {
       // matches
       const { data: m, error: mErr } = await supabase
         .from('matches')
-        .insert({
-          mode: regMode,
-          status: 'completed',
-          match_date: dt.toISOString(),
-          winner_score,
-          loser_score,
-        })
+        .insert([{ mode: regMode, status: 'completed', match_date: dt.toISOString(), winner_score, loser_score }] as any)
         .select('id')
         .single();
       if (mErr) throw mErr;
@@ -447,14 +444,12 @@ export default function MyPage() {
       const { error: mpErr } = await supabase.from('match_players').insert([
         { match_id: m.id, player_id: userId, side_no: 1 },
         { match_id: m.id, player_id: oppo.id, side_no: 2 },
-      ]);
+      ] as any);
       if (mpErr) throw mpErr;
 
       setRegDone('試合を登録しました。');
       setRegOpen(false);
-      // 入力をリセット
       setRegMy(0); setRegOpp(0); setOppo(null); setOppoQuery('');
-      // リストを更新
       await fetchRecentMatches();
     } catch (e: any) {
       setRegError(e?.message || '登録に失敗しました。スキーマとRLSをご確認ください。');
