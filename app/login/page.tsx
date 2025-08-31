@@ -1,7 +1,6 @@
-// app/login/page.tsx
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Script from 'next/script';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -10,12 +9,12 @@ import { FaLock, FaPhone, FaEnvelope, FaArrowLeft } from 'react-icons/fa';
 
 type Mode = 'email' | 'phone';
 
-// Turnstile 型
 declare global {
   interface Window {
     turnstile?: {
       render: (el: HTMLElement, opts: any) => string;
       reset: (id?: string) => void;
+      remove: (id?: string) => void;
       getResponse: (id?: string) => string;
     };
   }
@@ -46,21 +45,19 @@ function Fallback() {
   );
 }
 
-/** Suspense でラップした内側本体 */
 function LoginPageInner() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Hydration 安定化
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  const DEFAULT_AFTER_LOGIN = '/mypage';
   const redirectQ = mounted ? (searchParams.get('redirect') ?? '') : '';
   const hasRedirect = !!(redirectQ && redirectQ !== '/login');
-  const redirectSafe = hasRedirect ? redirectQ : '/';
+  const redirectSafe = hasRedirect ? redirectQ : DEFAULT_AFTER_LOGIN;
 
-  // 既ログインか（サーバCookie基準）
   const [alreadyAuthed, setAlreadyAuthed] = useState<boolean | null>(null);
 
   const [mode, setMode] = useState<Mode>('email');
@@ -73,11 +70,15 @@ function LoginPageInner() {
   // Turnstile
   const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
   const [scriptReady, setScriptReady] = useState(false);
-  const [cfToken, setCfToken] = useState<string>('');
+  const [scriptError, setScriptError] = useState('');
+  const [cfToken, setCfToken] = useState('');
+  const [cfMsg, setCfMsg] = useState('');
   const widgetHostRef = useRef<HTMLDivElement | null>(null);
   const widgetIdRef = useRef<string | null>(null);
+  const tokenTimeRef = useRef<number>(0); // 取得時刻(ms)
+  const TOKEN_TTL_MS = 110 * 1000; // 110秒で期限切れ扱い
 
-  /** サーバCookieの実セッション確認 */
+  /** whoami で実セッション確認 */
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
@@ -87,51 +88,103 @@ function LoginPageInner() {
         const j = r.ok ? await r.json() : { authenticated: false };
         if (cancelled) return;
         setAlreadyAuthed(!!j?.authenticated);
-
-        // ✅ redirect= があるときだけ自動遷移（手動アクセス時は滞在）
-        if (j?.authenticated && hasRedirect) {
-          router.replace(redirectSafe);
-        }
+        if (j?.authenticated && hasRedirect) router.replace(redirectSafe);
       } catch {
         if (!cancelled) setAlreadyAuthed(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [mounted, hasRedirect, redirectSafe, router]);
 
-  /** phone モードで Turnstile を明示レンダー */
-  useEffect(() => {
-    if (!mounted) return;
-    if (mode !== 'phone') return;
-    if (!SITE_KEY || !scriptReady) return;
+  /** CAPTCHA を無効化（入力変更/失敗/期限切れ時） */
+  const resetCaptcha = useCallback((hint?: string) => {
+    try {
+      if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
+    } catch {}
+    tokenTimeRef.current = 0;
+    setCfToken('');
+    setCfMsg(hint || '');
+  }, []);
+
+  /** phone タブ時だけ Turnstile を mount */
+  const mountTurnstile = useCallback(() => {
+    setCfMsg('');
+    setCfToken('');
+    tokenTimeRef.current = 0;
+    if (!SITE_KEY) {
+      setCfMsg('電話番号ログインには CAPTCHA の Site key が必要です（NEXT_PUBLIC_TURNSTILE_SITE_KEY）。');
+      return;
+    }
     const host = widgetHostRef.current;
     if (!host) return;
 
+    // 既存があれば使い回し（reset）
     if (widgetIdRef.current && window.turnstile) {
-      window.turnstile.reset(widgetIdRef.current);
-      setCfToken('');
+      resetCaptcha();
       return;
     }
-    if (window.turnstile) {
-      const id = window.turnstile.render(host, {
-        sitekey: SITE_KEY,
-        action: 'login',
-        size: 'flexible',
-        callback: (token: string) => setCfToken(token),
-        'error-callback': () => setCfToken(''),
-        'timeout-callback': () => setCfToken(''),
-      });
-      widgetIdRef.current = id;
-      setCfToken('');
-    }
-  }, [mounted, mode, SITE_KEY, scriptReady]);
 
+    if (window.turnstile) {
+      try {
+        const id = window.turnstile.render(host, {
+          sitekey: SITE_KEY,
+          action: 'login',
+          theme: 'auto',
+          size: 'flexible',
+          callback: (token: string) => {
+            setCfToken(token);
+            tokenTimeRef.current = Date.now();
+            setCfMsg('');
+          },
+          'expired-callback': () =>
+            resetCaptcha('CAPTCHA の有効期限が切れました。もう一度完了してください。'),
+          'timeout-callback': () =>
+            resetCaptcha('CAPTCHA がタイムアウトしました。再度お試しください。'),
+          'error-callback': () =>
+            resetCaptcha('CAPTCHA の初期化に失敗しました。拡張機能/ネットワーク/CSP をご確認ください。'),
+        });
+        widgetIdRef.current = id;
+      } catch {
+        setCfMsg('CAPTCHA の初期化に失敗しました。');
+      }
+    }
+  }, [SITE_KEY, resetCaptcha]);
+
+  /** タブ離脱やアンマウントで確実に破棄 */
+  const unmountTurnstile = useCallback(() => {
+    try {
+      if (widgetIdRef.current && window.turnstile) window.turnstile.remove(widgetIdRef.current);
+    } catch {}
+    widgetIdRef.current = null;
+    tokenTimeRef.current = 0;
+    setCfToken('');
+    setCfMsg('');
+  }, []);
+
+  // スクリプト読み込み完了時 / モード切替で mount/unmount
   useEffect(() => {
     if (!mounted) return;
-    setCfToken('');
-  }, [mounted, mode]);
+    if (mode === 'phone' && scriptReady) {
+      mountTurnstile();
+    } else {
+      unmountTurnstile();
+    }
+    return () => {
+      if (mode !== 'phone') return;
+      unmountTurnstile();
+    };
+  }, [mounted, mode, scriptReady, mountTurnstile, unmountTurnstile]);
+
+  // スクリプトが来ないときのガード
+  useEffect(() => {
+    if (!mounted || mode !== 'phone' || scriptReady) return;
+    const t = setTimeout(() => {
+      if (!scriptReady) {
+        setScriptError('CAPTCHA スクリプトを読み込めませんでした。ネットワーク/拡張機能/CSP を確認してください。');
+      }
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [mounted, mode, scriptReady]);
 
   const syncServerSession = async (event: 'SIGNED_IN' | 'TOKEN_REFRESHED', session: any) => {
     try {
@@ -147,6 +200,21 @@ function LoginPageInner() {
     router.replace(redirectSafe);
   };
 
+  /** 直前に常に最新トークンを取得 */
+  const getFreshToken = useCallback(() => {
+    // 状態が空でも widget から取得できる場合がある
+    const fromWidget =
+      (widgetIdRef.current && window.turnstile?.getResponse(widgetIdRef.current)) || '';
+    const token = fromWidget || cfToken || '';
+    if (!token) return '';
+    // 期限チェック
+    const age = Date.now() - tokenTimeRef.current;
+    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) {
+      return '';
+    }
+    return token;
+  }, [cfToken]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -157,17 +225,36 @@ function LoginPageInner() {
 
       if (mode === 'phone') {
         if (!SITE_KEY) throw new Error('CAPTCHA 用 Site key が未設定です。');
-        if (!cfToken) throw new Error('人間確認（CAPTCHA）を完了してください。');
+
+        const token = getFreshToken();
+        if (!token) {
+          resetCaptcha('CAPTCHA を完了してください。');
+          throw new Error('CAPTCHA を完了してください。');
+        }
+
         const res = await fetch('/api/login/resolve-email', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ phone, token: cfToken }),
+          body: JSON.stringify({ phone, token }),
         });
         const json = await res.json();
+
         if (!res.ok) {
           if (json?.error === 'not_found') throw new Error('この電話番号のユーザーが見つかりませんでした。');
           if (json?.error === 'invalid_phone') throw new Error('電話番号の形式が正しくありません。');
-          if (json?.error === 'captcha_failed') throw new Error('人間確認に失敗しました。もう一度お試しください。');
+
+          // Turnstile 失敗の詳細を表示
+          if (json?.error === 'captcha_failed') {
+            const codes: string[] = json?.codes || [];
+            let msg = '人間確認に失敗しました。もう一度 CAPTCHA を完了してください。';
+            if (codes.includes('timeout-or-duplicate')) msg = 'CAPTCHA の有効期限が切れたか、既に使用済みです。もう一度実施してください。';
+            if (codes.includes('invalid-input-secret')) msg = 'サーバ側の Turnstile シークレットが正しくありません（管理者設定が必要）。';
+            if (codes.includes('missing-input-secret')) msg = 'サーバ側のシークレットが未設定です（管理者設定が必要）。';
+            if (codes.includes('invalid-input-response')) msg = 'CAPTCHA 応答が無効です。ページを再読み込みして再度お試しください。';
+
+            resetCaptcha(msg);
+            throw new Error(msg);
+          }
           throw new Error(json?.message || '照会に失敗しました。');
         }
         loginEmail = json.email;
@@ -179,29 +266,23 @@ function LoginPageInner() {
       });
       if (signInError) throw new Error('メールまたはパスワードが正しくありません。');
 
-      if (data.session) {
-        await syncServerSession('SIGNED_IN', data.session);
-      }
+      if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
       try {
         if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
+        tokenTimeRef.current = 0;
         setCfToken('');
       } catch {}
 
       await afterSuccessRedirect();
     } catch (err: any) {
       setError(err?.message || 'ログインに失敗しました');
-      try {
-        if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
-        setCfToken('');
-      } catch {}
     } finally {
       setLoading(false);
     }
   };
 
   const handleSwitchAccount = async () => {
-    // アカウント切替：ログアウトして同ページを再表示
     try {
       await supabase.auth.signOut();
       await fetch('/auth/callback', {
@@ -213,34 +294,22 @@ function LoginPageInner() {
     setAlreadyAuthed(false);
   };
 
-  // マウント前はスケルトン
-  if (!mounted || alreadyAuthed === null) {
-    return <Fallback />;
-  }
+  if (!mounted || alreadyAuthed === null) return <Fallback />;
 
-  // 既ログインだが redirect が無い（手動アクセス）のときは案内を表示
   if (alreadyAuthed && !hasRedirect) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
           <h1 className="text-xl font-bold mb-2">すでにログイン中です</h1>
-          <p className="text-gray-400 mb-6">
-            トップページ、もしくは管理ページに移動できます。別アカウントでログインする場合はアカウント切替を押してください。
-          </p>
+          <p className="text-gray-400 mb-6">別アカウントでログインする場合はアカウント切替を押してください。</p>
           <div className="flex gap-3 justify-center">
-            <Link href="/" className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 transition-colors">
-              トップへ
+            <Link href={DEFAULT_AFTER_LOGIN} className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 transition-colors">
+              マイページへ
             </Link>
-            <Link
-              href="/admin/dashboard"
-              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 transition-colors"
-            >
+            <Link href="/admin/dashboard" className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 transition-colors">
               管理ページへ
             </Link>
-            <button
-              onClick={handleSwitchAccount}
-              className="px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-700 transition-colors"
-            >
+            <button onClick={handleSwitchAccount} className="px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-700 transition-colors">
               アカウント切替
             </button>
           </div>
@@ -251,20 +320,20 @@ function LoginPageInner() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
-      {SITE_KEY && (
+      {!!SITE_KEY && (
         <Script
+          id="cf-turnstile"
           src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
-          async
-          defer
+          strategy="afterInteractive"
           onLoad={() => setScriptReady(true)}
+          onError={() =>
+            setScriptError('CAPTCHA スクリプトの読み込みに失敗しました。ネットワーク/拡張機能/CSP を確認してください。')
+          }
         />
       )}
 
       <div className="w-full max-w-md">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 text-purple-400 hover:text-purple-300 mb-8 transition-colors"
-        >
+        <Link href="/" className="inline-flex items-center gap-2 text-purple-400 hover:text-purple-300 mb-8 transition-colors">
           <FaArrowLeft /> トップページに戻る
         </Link>
 
@@ -279,7 +348,7 @@ function LoginPageInner() {
 
           {!SITE_KEY && mode === 'phone' && (
             <div className="mb-4 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-yellow-300 text-sm">
-              NEXT_PUBLIC_TURNSTILE_SITE_KEY が未設定のため、電話番号ログインは利用できません。
+              電話番号ログインを使うには <code>NEXT_PUBLIC_TURNSTILE_SITE_KEY</code> を設定してください。
             </div>
           )}
 
@@ -288,9 +357,7 @@ function LoginPageInner() {
               type="button"
               onClick={() => setMode('email')}
               className={`px-4 py-2 rounded-lg border flex items-center justify-center gap-2 transition-colors ${
-                mode === 'email'
-                  ? 'border-purple-400 text-purple-300 bg-purple-500/10'
-                  : 'border-purple-500/30 text-gray-300 hover:bg-purple-500/10'
+                mode === 'email' ? 'border-purple-400 text-purple-300 bg-purple-500/10' : 'border-purple-500/30 text-gray-300 hover:bg-purple-500/10'
               }`}
             >
               <FaEnvelope /> メール
@@ -299,9 +366,7 @@ function LoginPageInner() {
               type="button"
               onClick={() => setMode('phone')}
               className={`px-4 py-2 rounded-lg border flex items-center justify-center gap-2 transition-colors ${
-                mode === 'phone'
-                  ? 'border-purple-400 text-purple-300 bg-purple-500/10'
-                  : 'border-purple-500/30 text-gray-300 hover:bg-purple-500/10'
+                mode === 'phone' ? 'border-purple-400 text-purple-300 bg-purple-500/10' : 'border-purple-500/30 text-gray-300 hover:bg-purple-500/10'
               }`}
             >
               <FaPhone /> 電話番号
@@ -329,30 +394,38 @@ function LoginPageInner() {
                 />
               </div>
             ) : (
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  電話番号（+81 もしくは 0 から）
-                </label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  onBlur={() => setPhone(toE164JapanForView(phone))}
-                  className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
-                  placeholder="+819012345678 または 09012345678"
-                  autoComplete="tel"
-                  required
-                />
-                <p className="text-xs text-gray-400 mt-2">
-                  入力後フォーカスを外すと自動で <code>+81</code> 形式に整形されます（見た目のみ）。
-                </p>
-                {SITE_KEY && (
-                  <div className="mt-4">
-                    <div ref={widgetHostRef} />
-                    {!cfToken && <p className="text-xs text-gray-500 mt-2">CAPTCHA を完了してください。</p>}
-                  </div>
-                )}
-              </div>
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    電話番号（+81 もしくは 0 から）
+                  </label>
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => {
+                      setPhone(e.target.value);
+                      resetCaptcha('電話番号が変更されました。CAPTCHA を再度完了してください。');
+                    }}
+                    onBlur={() => setPhone(toE164JapanForView(phone))}
+                    className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
+                    placeholder="+819012345678 または 09012345678"
+                    autoComplete="tel"
+                    required
+                  />
+                  <p className="text-xs text-gray-400 mt-2">
+                    入力後フォーカスを外すと自動で <code>+81</code> 形式に整形されます（見た目のみ）。
+                  </p>
+                </div>
+
+                <div className="mt-4">
+                  <div ref={widgetHostRef} style={{ minHeight: 80 }} />
+                  {!cfToken && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      {cfMsg || (scriptError ? scriptError : !scriptReady ? 'CAPTCHA を読み込み中です…' : 'CAPTCHA を完了してください。')}
+                    </p>
+                  )}
+                </div>
+              </>
             )}
 
             <div>
@@ -383,9 +456,7 @@ function LoginPageInner() {
             </Link>
             <p className="text-sm text-gray-400 mt-2">
               アカウント未作成の方は{' '}
-              <Link href="/register" className="text-purple-400 hover:text-purple-300">
-                新規登録
-              </Link>
+              <Link href="/register" className="text-purple-400 hover:text-purple-300">新規登録</Link>
             </p>
           </div>
         </div>
@@ -395,7 +466,6 @@ function LoginPageInner() {
 }
 
 export default function LoginPage() {
-  // Suspense で useSearchParams を含むクライアントを包む
   return (
     <Suspense fallback={<Fallback />}>
       <LoginPageInner />

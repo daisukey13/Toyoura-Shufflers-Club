@@ -3,6 +3,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
+import AuthAwareLoginButtonClient from '@/components/client/AuthAwareLoginButton.client'
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
@@ -21,6 +22,7 @@ import {
   FaFlagCheckered,
   FaCrown,
 } from 'react-icons/fa';
+
 
 const supabase = createClient();
 
@@ -381,12 +383,8 @@ export default function HomePage() {
             >
               <FaUserPlus className="text-sm" /> 新規登録
             </Link>
-            <Link
-              href="/login"
-              className="px-6 py-2.5 sm:px-8 sm:py-3 rounded-full border border-purple-500 text-purple-400 hover:bg-purple-500/10 transition-colors font-medium text-sm sm:text-base flex items-center justify-center gap-2"
-            >
-              <FaSignInAlt className="text-sm" /> ログイン
-            </Link>
+           {/* ログイン状態に応じて色・文言を切替 */} 
+            <AuthAwareLoginButtonClient />
           </div>
 
           {/* お知らせ */}
