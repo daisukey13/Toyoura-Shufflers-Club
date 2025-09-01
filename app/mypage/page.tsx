@@ -72,7 +72,7 @@ export default function MyPage() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [avatarBucketMissing, setAvatarBucketMissing] = useState(false);
 
-  // Storage ピッカー＋ページャ（自分=avatars/public/users/<uid>/... とプリセット=avatars/preset）
+  // Storage ピッカー＋ページャ
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerItems, setPickerItems] = useState<PickerItem[]>([]);
@@ -124,7 +124,6 @@ export default function MyPage() {
           const initialHandle = (user.email?.split('@')[0] || 'Player') + '-' + user.id.slice(0, 6);
           const { data: created, error: iErr } = await supabase
             .from('players')
-            // 型未生成環境対策：配列 + any
             .insert([{ id: user.id, handle_name: initialHandle }] as any)
             .select('*')
             .single();
@@ -136,7 +135,7 @@ export default function MyPage() {
         setHandle(current.handle_name || '');
         setAvatarUrl(current.avatar_url || null);
 
-        // 参加チーム
+        // 参加チーム（null 安全に）
         try {
           const { data: joined, error: tmErr } = await supabase
             .from('team_members')
@@ -144,7 +143,10 @@ export default function MyPage() {
             .eq('player_id', user.id)
             .maybeSingle();
           if (tmErr && tmErr.code !== 'PGRST116') throw tmErr;
-          setMyTeam(joined?.teams ? { id: joined.teams.id, name: joined.teams.name } : null);
+
+          // ★ joined を直接参照せず、一旦取り出してから判断
+          const t = (joined?.teams as { id: string; name: string } | undefined) ?? null;
+          setMyTeam(t ? { id: t.id, name: t.name } : null);
         } catch {
           setMyTeam(null);
         }
@@ -268,7 +270,7 @@ export default function MyPage() {
     setPickerItems([]);
     setPickerPage(1);
     try {
-      // 自分の画像（avatars/public/users/<uid> 以下）
+      // 自分の画像
       const ownListRes = await supabase.storage.from('avatars').list(`public/users/${userId}`, {
         limit: 200, sortBy: { column: 'created_at', order: 'desc' }
       });
@@ -280,7 +282,7 @@ export default function MyPage() {
           return { fullPath, url: data?.publicUrl || '', source: 'own', created_at: (f as any).created_at ?? null };
         });
 
-      // プリセット（avatars/preset）
+      // プリセット
       const presetRes = await supabase.storage.from('avatars').list(`preset`, {
         limit: 200, sortBy: { column: 'name', order: 'asc' }
       });
