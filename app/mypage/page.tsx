@@ -241,7 +241,7 @@ export default function MyPage() {
     setSavingProfile(true);
     try {
       const payload = { handle_name: handle.trim(), avatar_url: avatarUrl ?? null };
-      // 型推論が never になる環境向けに、この呼び出しだけ any でバイパス
+      // 型が never になる環境向けに、この呼び出しだけ any でバイパス
       const { error } = await (supabase as any)
         .from('players')
         .update(payload)
@@ -470,10 +470,13 @@ export default function MyPage() {
         .single();
       if (mErr) throw mErr;
 
+      const matchId = m?.id as string | undefined;
+      if (!matchId) throw new Error('試合IDの取得に失敗しました。');
+
       // match_players（自分=side 1、相手=side 2）
       const { error: mpErr } = await supabase.from('match_players').insert([
-        { match_id: m.id, player_id: userId, side_no: 1 },
-        { match_id: m.id, player_id: oppo.id, side_no: 2 },
+        { match_id: matchId, player_id: userId, side_no: 1 },
+        { match_id: matchId, player_id: oppo.id, side_no: 2 },
       ] as any);
       if (mpErr) throw mpErr;
 
