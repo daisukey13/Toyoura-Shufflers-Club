@@ -72,7 +72,7 @@ export default function MyPage() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [avatarBucketMissing, setAvatarBucketMissing] = useState(false);
 
-  // Storage ピッカー＋ページャ
+  // Storage ピッカー＋ページャ（自分=avatars/public/users/<uid>/... とプリセット=avatars/preset）
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerItems, setPickerItems] = useState<PickerItem[]>([]);
@@ -135,18 +135,21 @@ export default function MyPage() {
         setHandle(current.handle_name || '');
         setAvatarUrl(current.avatar_url || null);
 
-        // 参加チーム（null 安全に）
+        // 参加チーム（joined を直接使わずガードを分ける）
         try {
-          const { data: joined, error: tmErr } = await supabase
+          const { data: tm, error: tmErr } = await supabase
             .from('team_members')
             .select('team_id, teams:team_id(id, name)')
             .eq('player_id', user.id)
             .maybeSingle();
           if (tmErr && tmErr.code !== 'PGRST116') throw tmErr;
 
-          // ★ joined を直接参照せず、一旦取り出してから判断
-          const t = (joined?.teams as { id: string; name: string } | undefined) ?? null;
-          setMyTeam(t ? { id: t.id, name: t.name } : null);
+          if (tm && (tm as any).teams) {
+            const t = (tm as any).teams as { id: string; name: string };
+            setMyTeam({ id: t.id, name: t.name });
+          } else {
+            setMyTeam(null);
+          }
         } catch {
           setMyTeam(null);
         }
@@ -270,7 +273,7 @@ export default function MyPage() {
     setPickerItems([]);
     setPickerPage(1);
     try {
-      // 自分の画像
+      // 自分の画像（avatars/public/users/<uid> 以下）
       const ownListRes = await supabase.storage.from('avatars').list(`public/users/${userId}`, {
         limit: 200, sortBy: { column: 'created_at', order: 'desc' }
       });
@@ -282,7 +285,7 @@ export default function MyPage() {
           return { fullPath, url: data?.publicUrl || '', source: 'own', created_at: (f as any).created_at ?? null };
         });
 
-      // プリセット
+      // プリセット（avatars/preset）
       const presetRes = await supabase.storage.from('avatars').list(`preset`, {
         limit: 200, sortBy: { column: 'name', order: 'asc' }
       });
