@@ -36,7 +36,7 @@ type MatchRow = {
 type JoinedMatch = {
   match_id: string;
   side_no: number;
-  matches?: MatchRow; // 取得できないケースもあるので UI 側で ! 使用
+  matches?: MatchRow | null;
   opponent?: { id: string; handle_name: string } | null;
 };
 
@@ -50,7 +50,7 @@ type PickerItem = {
   created_at?: string | null;
 };
 
-/** fetchRecentMatches 用の簡易型（型生成なし前提） */
+/** fetchRecentMatches 用の簡易型 */
 type MatchPlayerRowLite = {
   match_id: string;
   side_no: number;
@@ -84,7 +84,7 @@ export default function MyPage() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [avatarBucketMissing, setAvatarBucketMissing] = useState(false);
 
-  // Storage ピッカー＋ページャ（自分=avatars/public/users/<uid>/... とプリセット=avatars/preset）
+  // Storage ピッカー＋ページャ
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerItems, setPickerItems] = useState<PickerItem[]>([]);
@@ -147,7 +147,7 @@ export default function MyPage() {
         setHandle(current.handle_name || '');
         setAvatarUrl(current.avatar_url || null);
 
-        // 参加チーム（tm をローカルでチェックして安全にガード）
+        // 参加チーム
         try {
           const { data: tm, error: tmErr } = await supabase
             .from('team_members')
@@ -188,7 +188,7 @@ export default function MyPage() {
         .limit(30);
       if (error) throw error;
 
-      // ★ data を明示型にして never 推論を回避
+      // 明示型を付与して never 推論を回避
       const rows = (data ?? []) as MatchPlayerRowLite[];
 
       const matchIds = rows.map((r) => r.match_id);
@@ -217,7 +217,7 @@ export default function MyPage() {
         return {
           match_id: r.match_id,
           side_no: r.side_no,
-          matches: (r.matches ?? undefined) as MatchRow | undefined,
+          matches: r.matches ?? null,
           opponent: opp,
         };
       });
@@ -295,7 +295,7 @@ export default function MyPage() {
     setPickerItems([]);
     setPickerPage(1);
     try {
-      // 自分の画像（avatars/public/users/<uid> 以下）
+      // 自分の画像
       const ownListRes = await supabase.storage.from('avatars').list(`public/users/${userId}`, {
         limit: 200, sortBy: { column: 'created_at', order: 'desc' }
       });
@@ -307,7 +307,7 @@ export default function MyPage() {
           return { fullPath, url: data?.publicUrl || '', source: 'own', created_at: (f as any).created_at ?? null };
         });
 
-      // プリセット（avatars/preset）
+      // プリセット
       const presetRes = await supabase.storage.from('avatars').list(`preset`, {
         limit: 200, sortBy: { column: 'name', order: 'asc' }
       });
@@ -474,7 +474,7 @@ export default function MyPage() {
       ] as any);
       if (mpErr) throw mpErr;
 
-      setRegDone('試合を登録しました。BOX を閉じます。');
+      setRegDone('試合を登録しました。');
       setRegOpen(false);
       setRegMy(0); setRegOpp(0); setOppo(null); setOppoQuery('');
       await fetchRecentMatches();
@@ -696,8 +696,7 @@ export default function MyPage() {
           ) : recentMatches && recentMatches.length > 0 ? (
             <div className="space-y-3">
               {recentMatches.map((r) => {
-                const m = r.matches!;
-                const when = m.match_date ? new Date(m.match_date).toLocaleString() : '-';
+                const when = r.matches?.match_date ? new Date(r.matches.match_date).toLocaleString() : '-';
                 return (
                   <div key={r.match_id} className="p-3 rounded-xl border border-purple-500/30 bg-gray-900/40 flex items-center justify-between">
                     <div className="flex items-center gap-3 min-w-0">
@@ -705,13 +704,17 @@ export default function MyPage() {
                         <FaGamepad className="text-purple-200" />
                       </div>
                       <div className="min-w-0">
-                        <div className="font-semibold text-yellow-100 truncate">{m.mode || '試合'} ・ {when}</div>
+                        <div className="font-semibold text-yellow-100 truncate">
+                          {(r.matches?.mode ?? '試合')} ・ {when}
+                        </div>
                         <div className="text-xs text-gray-400 truncate">対 {r.opponent?.handle_name ?? '不明'}</div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-lg font-bold">{m.winner_score ?? '-'} - {m.loser_score ?? '-'}</div>
-                      <div className="text-xs text-gray-400">{m.status || ''}</div>
+                      <div className="text-lg font-bold">
+                        {(r.matches?.winner_score ?? '-')} - {(r.matches?.loser_score ?? '-')}
+                      </div>
+                      <div className="text-xs text-gray-400">{r.matches?.status || ''}</div>
                     </div>
                   </div>
                 );
@@ -746,11 +749,11 @@ export default function MyPage() {
 
       {/* ── アバター・ピッカー（DB一覧＋ページャ） ── */}
       {pickerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 grid place-items-center p-4" role="dialog" aria-modal>
+        <div className="fixed inset-0 z-50 bg-black/50 grid place-items-center p-4" role="dialog" aria-modal="true">
           <div className="w-full max-w-3xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-purple-200"><FaSearch className="inline mr-2" />アバターを選ぶ（自分の画像＋プリセット）</h3>
-              <button onClick={() => setPickerOpen(false)} className="p-2 rounded hover:bg白/10"><FaTimes /></button>
+              <button onClick={() => setPickerOpen(false)} className="p-2 rounded hover:bg-white/10"><FaTimes /></button>
             </div>
 
             {pickerLoading ? (
@@ -765,7 +768,7 @@ export default function MyPage() {
                     <button key={`${item.source}-${item.fullPath}`} onClick={() => chooseFromStorage(item)} className="group relative rounded-xl overflow-hidden border border-purple-500/30 hover:border-purple-400" title={item.fullPath}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={item.url} alt={item.fullPath} className="w-full aspect-square object-cover" />
-                      <div className="absolute左-1 top-1 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-gray-200">
+                      <div className="absolute left-1 top-1 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-gray-200">
                         {item.source === 'own' ? 'My' : 'Preset'}
                       </div>
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20" />
@@ -785,11 +788,11 @@ export default function MyPage() {
 
       {/* ── 試合登録モーダル ── */}
       {regOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4" role="dialog" aria-modal="true">
           <div className="w-full max-w-xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text紫-200"><FaGamepad className="inline mr-2" />試合を登録</h3>
-              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg白/10"><FaTimes/></button>
+              <h3 className="text-lg font-semibold text-purple-200"><FaGamepad className="inline mr-2" />試合を登録</h3>
+              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg-white/10"><FaTimes/></button>
             </div>
 
             {regError && <div className="mb-3 p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-sm">{regError}</div>}
