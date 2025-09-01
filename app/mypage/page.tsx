@@ -36,7 +36,7 @@ type MatchRow = {
 type JoinedMatch = {
   match_id: string;
   side_no: number;
-  matches?: MatchRow | null;
+  matches?: MatchRow | undefined;
   opponent?: { id: string; handle_name: string } | null;
 };
 
@@ -188,7 +188,7 @@ export default function MyPage() {
         .limit(30);
       if (error) throw error;
 
-      // 明示型を付与して never 推論を回避
+      // 明示型で rows を固定
       const rows = (data ?? []) as MatchPlayerRowLite[];
 
       const matchIds = rows.map((r) => r.match_id);
@@ -217,7 +217,7 @@ export default function MyPage() {
         return {
           match_id: r.match_id,
           side_no: r.side_no,
-          matches: r.matches ?? null,
+          matches: (r.matches ?? undefined) as MatchRow | undefined,
           opponent: opp,
         };
       });
@@ -240,13 +240,16 @@ export default function MyPage() {
     setProfileMsg('');
     setSavingProfile(true);
     try {
-      const { error } = await supabase
+      const payload = { handle_name: handle.trim(), avatar_url: avatarUrl ?? null };
+      // 型推論が never になる環境向けに、この呼び出しだけ any でバイパス
+      const { error } = await (supabase as any)
         .from('players')
-        .update({ handle_name: handle.trim(), avatar_url: avatarUrl || null } as any)
+        .update(payload)
         .eq('id', userId);
       if (error) throw error;
+
       setProfileMsg('保存しました。');
-      setMe((m) => (m ? { ...m, handle_name: handle.trim(), avatar_url: avatarUrl || null } : m));
+      setMe((m) => (m ? { ...m, handle_name: payload.handle_name, avatar_url: payload.avatar_url } : m));
       setTimeout(() => setProfileMsg(''), 2500);
     } catch (e: any) {
       setProfileMsg(e?.message || '保存に失敗しました');
@@ -421,7 +424,7 @@ export default function MyPage() {
   const [regAt, setRegAt] = useState<string>(() => {
     const d = new Date();
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0, 16); // yyyy-MM-ddTHH:mm
+    return d.toISOString().slice(0, 16);
   });
   const [regMy, setRegMy] = useState<number>(0);
   const [regOpp, setRegOpp] = useState<number>(0);
@@ -696,7 +699,8 @@ export default function MyPage() {
           ) : recentMatches && recentMatches.length > 0 ? (
             <div className="space-y-3">
               {recentMatches.map((r) => {
-                const when = r.matches?.match_date ? new Date(r.matches.match_date).toLocaleString() : '-';
+                const m = r.matches!;
+                const when = m.match_date ? new Date(m.match_date).toLocaleString() : '-';
                 return (
                   <div key={r.match_id} className="p-3 rounded-xl border border-purple-500/30 bg-gray-900/40 flex items-center justify-between">
                     <div className="flex items-center gap-3 min-w-0">
@@ -704,17 +708,13 @@ export default function MyPage() {
                         <FaGamepad className="text-purple-200" />
                       </div>
                       <div className="min-w-0">
-                        <div className="font-semibold text-yellow-100 truncate">
-                          {(r.matches?.mode ?? '試合')} ・ {when}
-                        </div>
+                        <div className="font-semibold text-yellow-100 truncate">{m.mode || '試合'} ・ {when}</div>
                         <div className="text-xs text-gray-400 truncate">対 {r.opponent?.handle_name ?? '不明'}</div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-lg font-bold">
-                        {(r.matches?.winner_score ?? '-')} - {(r.matches?.loser_score ?? '-')}
-                      </div>
-                      <div className="text-xs text-gray-400">{r.matches?.status || ''}</div>
+                      <div className="text-lg font-bold">{m.winner_score ?? '-'} - {m.loser_score ?? '-'}</div>
+                      <div className="text-xs text-gray-400">{m.status || ''}</div>
                     </div>
                   </div>
                 );
@@ -749,7 +749,7 @@ export default function MyPage() {
 
       {/* ── アバター・ピッカー（DB一覧＋ページャ） ── */}
       {pickerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 grid place-items-center p-4" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-50 bg-black/50 grid place-items-center p-4" role="dialog" aria-modal>
           <div className="w-full max-w-3xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-purple-200"><FaSearch className="inline mr-2" />アバターを選ぶ（自分の画像＋プリセット）</h3>
@@ -788,7 +788,7 @@ export default function MyPage() {
 
       {/* ── 試合登録モーダル ── */}
       {regOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4">
           <div className="w-full max-w-xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-purple-200"><FaGamepad className="inline mr-2" />試合を登録</h3>
