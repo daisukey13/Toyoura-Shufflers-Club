@@ -36,7 +36,7 @@ type MatchRow = {
 type JoinedMatch = {
   match_id: string;
   side_no: number;
-  matches?: MatchRow;
+  matches?: MatchRow; // 取得できないケースもあるので UI 側で ! 使用
   opponent?: { id: string; handle_name: string } | null;
 };
 
@@ -48,6 +48,18 @@ type PickerItem = {
   url: string;
   source: 'own' | 'preset';
   created_at?: string | null;
+};
+
+/** fetchRecentMatches 用の簡易型（型生成なし前提） */
+type MatchPlayerRowLite = {
+  match_id: string;
+  side_no: number;
+  matches?: MatchRow | null;
+};
+type OppRow = {
+  match_id: string;
+  player_id: string;
+  players?: { id: string; handle_name: string } | null;
 };
 
 const supabase = createClient();
@@ -135,7 +147,7 @@ export default function MyPage() {
         setHandle(current.handle_name || '');
         setAvatarUrl(current.avatar_url || null);
 
-        // 参加チーム（joined を直接使わずガードを分ける）
+        // 参加チーム（tm をローカルでチェックして安全にガード）
         try {
           const { data: tm, error: tmErr } = await supabase
             .from('team_members')
@@ -176,7 +188,10 @@ export default function MyPage() {
         .limit(30);
       if (error) throw error;
 
-      const matchIds = (data ?? []).map((r) => r.match_id);
+      // ★ data を明示型にして never 推論を回避
+      const rows = (data ?? []) as MatchPlayerRowLite[];
+
+      const matchIds = rows.map((r) => r.match_id);
       if (matchIds.length === 0) {
         setRecentMatches([]);
         return;
@@ -188,16 +203,23 @@ export default function MyPage() {
         .in('match_id', matchIds);
 
       const byMatch = new Map<string, Array<{ id: string; handle_name: string }>>();
-      (opponents ?? []).forEach((row: any) => {
+      ((opponents ?? []) as OppRow[]).forEach((row) => {
         const arr = byMatch.get(row.match_id) || [];
-        arr.push({ id: row.players?.id, handle_name: row.players?.handle_name });
+        if (row.players?.id) {
+          arr.push({ id: row.players.id, handle_name: row.players.handle_name });
+        }
         byMatch.set(row.match_id, arr);
       });
 
-      const joined: JoinedMatch[] = (data ?? []).map((r: any) => {
+      const joined: JoinedMatch[] = rows.map((r) => {
         const people = byMatch.get(r.match_id) || [];
         const opp = people.find((p) => p.id !== userId) || null;
-        return { match_id: r.match_id, side_no: r.side_no, matches: r.matches, opponent: opp };
+        return {
+          match_id: r.match_id,
+          side_no: r.side_no,
+          matches: (r.matches ?? undefined) as MatchRow | undefined,
+          opponent: opp,
+        };
       });
 
       setRecentMatches(joined);
@@ -452,7 +474,7 @@ export default function MyPage() {
       ] as any);
       if (mpErr) throw mpErr;
 
-      setRegDone('試合を登録しました。');
+      setRegDone('試合を登録しました。BOX を閉じます。');
       setRegOpen(false);
       setRegMy(0); setRegOpp(0); setOppo(null); setOppoQuery('');
       await fetchRecentMatches();
@@ -728,7 +750,7 @@ export default function MyPage() {
           <div className="w-full max-w-3xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-purple-200"><FaSearch className="inline mr-2" />アバターを選ぶ（自分の画像＋プリセット）</h3>
-              <button onClick={() => setPickerOpen(false)} className="p-2 rounded hover:bg-white/10"><FaTimes /></button>
+              <button onClick={() => setPickerOpen(false)} className="p-2 rounded hover:bg白/10"><FaTimes /></button>
             </div>
 
             {pickerLoading ? (
@@ -743,7 +765,7 @@ export default function MyPage() {
                     <button key={`${item.source}-${item.fullPath}`} onClick={() => chooseFromStorage(item)} className="group relative rounded-xl overflow-hidden border border-purple-500/30 hover:border-purple-400" title={item.fullPath}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={item.url} alt={item.fullPath} className="w-full aspect-square object-cover" />
-                      <div className="absolute left-1 top-1 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-gray-200">
+                      <div className="absolute左-1 top-1 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-gray-200">
                         {item.source === 'own' ? 'My' : 'Preset'}
                       </div>
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20" />
@@ -766,8 +788,8 @@ export default function MyPage() {
         <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4">
           <div className="w-full max-w-xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-purple-200"><FaGamepad className="inline mr-2" />試合を登録</h3>
-              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg-white/10"><FaTimes/></button>
+              <h3 className="text-lg font-semibold text紫-200"><FaGamepad className="inline mr-2" />試合を登録</h3>
+              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg白/10"><FaTimes/></button>
             </div>
 
             {regError && <div className="mb-3 p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-sm">{regError}</div>}
