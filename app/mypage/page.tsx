@@ -469,9 +469,11 @@ export default function MyPage() {
         .single();
       if (mErr) throw mErr;
 
-      // まず null を明示チェック → 以降は non-null として扱う
-      if (!m) throw new Error('試合IDの取得に失敗しました。');
-      const matchId = m.id as string;
+      // ★★★ ここを強化：null/型安全に絞り込み → 以降は matchId のみ使用
+      if (!m || typeof (m as any).id !== 'string') {
+        throw new Error('試合IDの取得に失敗しました。');
+      }
+      const matchId: string = (m as any).id;
 
       // match_players（自分=side 1、相手=side 2）
       const { error: mpErr } = await supabase.from('match_players').insert([
@@ -598,7 +600,7 @@ export default function MyPage() {
         <div className="space-y-6">
           {/* 概要カード */}
           <div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
-            <h3 className="text-lg font-semibold text-purple-200 mb-3">概要</h3>
+            <h3 className="text-lg font-semibold text紫-200 mb-3 text-purple-200">概要</h3>
             <div className="grid grid-cols-2 gap-3 text-center">
               <div className="rounded-lg bg-purple-900/30 p-3">
                 <div className="text-2xl font-bold text-yellow-100">{me.ranking_points ?? 0}</div>
@@ -639,8 +641,8 @@ export default function MyPage() {
           </div>
 
           {/* 参加チームカード */}
-          <div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
-            <h3 className="text-lg font-semibold text-purple-200 mb-3 flex items-center gap-2">
+          <div className="glass-card rounded-xl p-5 border border紫-500/30 bg-gray-900/50 text-purple-200 border-purple-500/30">
+            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
               <FaUsers /> 参加チーム
             </h3>
 
@@ -795,7 +797,7 @@ export default function MyPage() {
           <div className="w-full max-w-xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-purple-200"><FaGamepad className="inline mr-2" />試合を登録</h3>
-              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg-white/10"><FaTimes/></button>
+              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg白/10"><FaTimes/></button>
             </div>
 
             {regError && <div className="mb-3 p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-sm">{regError}</div>}
