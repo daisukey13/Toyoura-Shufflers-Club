@@ -188,7 +188,6 @@ export default function MyPage() {
         .limit(30);
       if (error) throw error;
 
-      // 明示型で rows を固定
       const rows = (data ?? []) as MatchPlayerRowLite[];
 
       const matchIds = rows.map((r) => r.match_id);
@@ -470,8 +469,9 @@ export default function MyPage() {
         .single();
       if (mErr) throw mErr;
 
-      const matchId = m?.id as string | undefined;
-      if (!matchId) throw new Error('試合IDの取得に失敗しました。');
+      // まず null を明示チェック → 以降は non-null として扱う
+      if (!m) throw new Error('試合IDの取得に失敗しました。');
+      const matchId = m.id as string;
 
       // match_players（自分=side 1、相手=side 2）
       const { error: mpErr } = await supabase.from('match_players').insert([
