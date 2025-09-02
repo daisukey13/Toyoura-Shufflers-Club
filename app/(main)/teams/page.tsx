@@ -88,8 +88,10 @@ const TeamCard = memo(function TeamCard({
       ? 'from-orange-400/50 to-orange-600/50'
       : 'from-purple-600/20 to-pink-600/20';
 
+  const href = `/teams/${encodeURIComponent(String(team.id))}`;
+
   return (
-    <Link href={`/teams/${team.id}`} prefetch={false} aria-label={`${team.name} のプロフィール`}>
+    <Link href={href} prefetch={false} aria-label={`${team.name} のプロフィール`}>
       <div
         className={`glass-card rounded-xl p-4 sm:p-6 hover:scale-[1.02] transition-all cursor-pointer ${
           isTop3 ? 'border-2' : 'border'
@@ -178,8 +180,7 @@ function TeamsInner() {
     const qs = sp.toString();
     const next = qs ? `${pathname}?${qs}` : `${pathname}`;
     router.replace(next, { scroll: false });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, sortBy, dir]);
+  }, [q, sortBy, dir, router, pathname]);
 
   // 取得（VIEW: team_rankings）
   const { teams, loading, error, retrying, refetch } = useTeamRankings({
@@ -385,8 +386,7 @@ function TeamsInner() {
   );
 }
 
-/* ---------------- Default export: wrap with Suspense ----------------
-   useSearchParams()/usePathname() を使っているためページを Suspense で包みます。 */
+/* ---------------- Default export: wrap with Suspense ---------------- */
 export default function TeamsPage() {
   return (
     <Suspense fallback={<Fallback />}>

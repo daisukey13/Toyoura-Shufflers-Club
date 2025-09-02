@@ -23,7 +23,6 @@ import {
   FaCrown,
 } from 'react-icons/fa';
 
-
 const supabase = createClient();
 
 interface Stats {
@@ -189,7 +188,7 @@ export default function HomePage() {
         .order('date', { ascending: false })
         .limit(3);
 
-    if (error) {
+      if (error) {
         console.error('Error fetching notices:', error);
         return;
       }
@@ -199,11 +198,12 @@ export default function HomePage() {
     }
   };
 
+  // ────────────────────────── ここを修正：ボックスメニュー ──────────────────────────
   const menuItems = [
     { icon: FaChartLine, title: 'ランキング', description: '最新のランキング', href: '/rankings' },
     { icon: FaUsers, title: 'メンバー', description: 'クラブメンバーを見る', href: '/players' },
-    { icon: FaHistory, title: '試合結果', description: '過去の試合をチェック', href: '/matches' },
-    { icon: FaUserPlus, title: '試合登録', description: '新しい試合を登録', href: '/matches/register' },
+    { icon: FaUsers, title: 'チーム', description: 'チーム一覧 & プロフィール', href: '/teams' },
+    { icon: FaHistory, title: '試合結果', description: '過去の試合をチェック', href: '/matches' }, // 右端に配置
   ];
 
   const winRate = (w?: number | null, l?: number | null) => {
@@ -377,13 +377,24 @@ export default function HomePage() {
 
           {/* CTA */}
           <div className="flex flex-col sm:flex-row gap-3 justify-center max-w-xs mx-auto sm:max-w-none">
+            {/* プレーヤー新規登録 */}
             <Link
               href="/register"
               className="gradient-button px-6 py-2.5 sm:px-8 sm:py-3 rounded-full text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
             >
               <FaUserPlus className="text-sm" /> 新規登録
             </Link>
-           {/* ログイン状態に応じて色・文言を切替 */} 
+
+            {/* ✅ 追加：試合を登録（プレーヤー新規登録ボタンの右隣） */}
+            <Link
+              href="/mypage?open=register"
+              className="px-6 py-2.5 sm:px-8 sm:py-3 rounded-full bg-purple-600/80 hover:bg-purple-700 text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
+            >
+              <FaGamepad className="text-sm" />
+              試合を登録
+            </Link>
+
+            {/* ログイン状態に応じて色・文言を切替 */}
             <AuthAwareLoginButtonClient />
           </div>
 
@@ -422,12 +433,18 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* メニューグリッド */}
+      {/* メニューグリッド（試合登録のカードは削除／チームを追加） */}
       <div className="container mx-auto px-4 py-8 sm:py-12">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-8 sm:mb-12">
           {menuItems.map((item, index) => {
             const cardClass =
-              index === 0 ? 'ranking-card' : index === 1 ? 'members-card' : index === 2 ? 'matches-card' : 'register-card';
+              index === 0
+                ? 'ranking-card'
+                : index === 1
+                ? 'members-card'
+                : index === 2
+                ? 'teams-card'
+                : 'matches-card'; // 右端
             return (
               <Link key={index} href={item.href}>
                 <div className={`${cardClass} glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer group h-full`}>

@@ -1,3 +1,4 @@
+// app/(auth)/login/page.tsx
 'use client';
 
 import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
@@ -20,7 +21,7 @@ declare global {
   }
 }
 
-/** 見た目だけ +81 を付ける整形（日本想定、サーバ側で厳密正規化済み） */
+/** 見た目だけ +81 を付ける整形（日本想定） */
 function toE164JapanForView(input: string): string {
   let s = (input || '').trim().normalize('NFKC');
   s = s.replace(/[^\d+]/g, '');
@@ -67,7 +68,7 @@ function LoginPageInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
 
-  // Turnstile
+  // Turnstile（電話番号タブのみ使用）
   const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
   const [scriptReady, setScriptReady] = useState(false);
   const [scriptError, setScriptError] = useState('');
@@ -76,9 +77,9 @@ function LoginPageInner() {
   const widgetHostRef = useRef<HTMLDivElement | null>(null);
   const widgetIdRef = useRef<string | null>(null);
   const tokenTimeRef = useRef<number>(0); // 取得時刻(ms)
-  const TOKEN_TTL_MS = 110 * 1000; // 110秒で期限切れ扱い
+  const TOKEN_TTL_MS = 110 * 1000;       // 110秒で期限切れ扱い
 
-  /** whoami で実セッション確認 */
+  /** whoami で既ログイン判定 */
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
@@ -111,6 +112,7 @@ function LoginPageInner() {
     setCfMsg('');
     setCfToken('');
     tokenTimeRef.current = 0;
+
     if (!SITE_KEY) {
       setCfMsg('電話番号ログインには CAPTCHA の Site key が必要です（NEXT_PUBLIC_TURNSTILE_SITE_KEY）。');
       return;
@@ -118,7 +120,7 @@ function LoginPageInner() {
     const host = widgetHostRef.current;
     if (!host) return;
 
-    // 既存があれば使い回し（reset）
+    // 既存があるなら reset
     if (widgetIdRef.current && window.turnstile) {
       resetCaptcha();
       return;
@@ -186,7 +188,7 @@ function LoginPageInner() {
     return () => clearTimeout(t);
   }, [mounted, mode, scriptReady]);
 
-  const syncServerSession = async (event: 'SIGNED_IN' | 'TOKEN_REFRESHED', session: any) => {
+  const syncServerSession = async (event: 'SIGNED_IN' | 'TOKEN_REFRESHED' | 'SIGNED_OUT', session: any) => {
     try {
       await fetch('/auth/callback', {
         method: 'POST',
@@ -200,20 +202,28 @@ function LoginPageInner() {
     router.replace(redirectSafe);
   };
 
-  /** 直前に常に最新トークンを取得 */
+  /** 直前に常に最新 Turnstile トークンを取得 */
   const getFreshToken = useCallback(() => {
-    // 状態が空でも widget から取得できる場合がある
     const fromWidget =
       (widgetIdRef.current && window.turnstile?.getResponse(widgetIdRef.current)) || '';
     const token = fromWidget || cfToken || '';
     if (!token) return '';
-    // 期限チェック
     const age = Date.now() - tokenTimeRef.current;
     if (!tokenTimeRef.current || age > TOKEN_TTL_MS) {
       return '';
     }
     return token;
   }, [cfToken]);
+
+  /** fetch の JSON 安全パーサ（HTML 404 等での "Unexpected token '<'" を防ぐ） */
+  const safeJson = async (res: Response) => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { __nonjson: true, text };
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -232,39 +242,46 @@ function LoginPageInner() {
           throw new Error('CAPTCHA を完了してください。');
         }
 
+        // 電話番号 → email の解決
         const res = await fetch('/api/login/resolve-email', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ phone, token }),
         });
-        const json = await res.json();
+        const json = await safeJson(res);
 
         if (!res.ok) {
-          if (json?.error === 'not_found') throw new Error('この電話番号のユーザーが見つかりませんでした。');
-          if (json?.error === 'invalid_phone') throw new Error('電話番号の形式が正しくありません。');
-
+          // サーバからの JSON 以外（= ルート間違いなど）を検知
+          if ((json as any)?.__nonjson) {
+            throw new Error('サーバ応答が不正です。エンドポイント /api/login/resolve-email を確認してください。');
+          }
           // Turnstile 失敗の詳細を表示
-          if (json?.error === 'captcha_failed') {
-            const codes: string[] = json?.codes || [];
+          if ((json as any)?.error === 'captcha_failed') {
+            const codes: string[] = (json as any)?.codes || [];
             let msg = '人間確認に失敗しました。もう一度 CAPTCHA を完了してください。';
             if (codes.includes('timeout-or-duplicate')) msg = 'CAPTCHA の有効期限が切れたか、既に使用済みです。もう一度実施してください。';
             if (codes.includes('invalid-input-secret')) msg = 'サーバ側の Turnstile シークレットが正しくありません（管理者設定が必要）。';
             if (codes.includes('missing-input-secret')) msg = 'サーバ側のシークレットが未設定です（管理者設定が必要）。';
             if (codes.includes('invalid-input-response')) msg = 'CAPTCHA 応答が無効です。ページを再読み込みして再度お試しください。';
-
             resetCaptcha(msg);
             throw new Error(msg);
           }
-          throw new Error(json?.message || '照会に失敗しました。');
+          if ((json as any)?.error === 'invalid_phone') throw new Error('電話番号の形式が正しくありません。');
+          if ((json as any)?.error === 'not_found') throw new Error('この電話番号のユーザーが見つかりませんでした。');
+          if ((json as any)?.error === 'rate_limited') throw new Error('リクエストが多すぎます。しばらくしてからお試しください。');
+
+          throw new Error((json as any)?.message || '照会に失敗しました。');
         }
-        loginEmail = json.email;
+
+        loginEmail = (json as any).email;
       }
 
+      // メール/パスワードでログイン（電話番号の時は解決した email を使用）
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password,
       });
-      if (signInError) throw new Error('メールまたはパスワードが正しくありません。');
+      if (signInError) throw new Error('メール（または電話に紐づくメール）かパスワードが正しくありません。');
 
       if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
@@ -285,11 +302,7 @@ function LoginPageInner() {
   const handleSwitchAccount = async () => {
     try {
       await supabase.auth.signOut();
-      await fetch('/auth/callback', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ event: 'SIGNED_OUT', session: null }),
-      });
+      await syncServerSession('SIGNED_OUT', null);
     } catch {}
     setAlreadyAuthed(false);
   };
@@ -317,6 +330,11 @@ function LoginPageInner() {
       </div>
     );
   }
+
+  const primaryButtonText = loading ? 'ログイン中…' : 'ログイン';
+  const primaryDisabled =
+    loading ||
+    (mode === 'phone' && !!SITE_KEY && !cfToken); // 電話番号タブでは CAPTCHA 完了が必須
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
@@ -355,7 +373,7 @@ function LoginPageInner() {
           <div className="grid grid-cols-2 gap-2 mb-6">
             <button
               type="button"
-              onClick={() => setMode('email')}
+              onClick={() => { setMode('email'); setError(''); }}
               className={`px-4 py-2 rounded-lg border flex items-center justify-center gap-2 transition-colors ${
                 mode === 'email' ? 'border-purple-400 text-purple-300 bg-purple-500/10' : 'border-purple-500/30 text-gray-300 hover:bg-purple-500/10'
               }`}
@@ -364,7 +382,7 @@ function LoginPageInner() {
             </button>
             <button
               type="button"
-              onClick={() => setMode('phone')}
+              onClick={() => { setMode('phone'); setError(''); }}
               className={`px-4 py-2 rounded-lg border flex items-center justify-center gap-2 transition-colors ${
                 mode === 'phone' ? 'border-purple-400 text-purple-300 bg-purple-500/10' : 'border-purple-500/30 text-gray-300 hover:bg-purple-500/10'
               }`}
@@ -381,18 +399,33 @@ function LoginPageInner() {
             )}
 
             {mode === 'email' ? (
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">メールアドレス</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
-                  placeholder="example@email.com"
-                  autoComplete="username"
-                  required
-                />
-              </div>
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">メールアドレス</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
+                    placeholder="example@email.com"
+                    autoComplete="username"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">パスワード</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    required
+                  />
+                </div>
+              </>
             ) : (
               <>
                 <div>
@@ -417,7 +450,20 @@ function LoginPageInner() {
                   </p>
                 </div>
 
-                <div className="mt-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">パスワード</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    required
+                  />
+                </div>
+
+                <div className="mt-2">
                   <div ref={widgetHostRef} style={{ minHeight: 80 }} />
                   {!cfToken && (
                     <p className="text-xs text-gray-500 mt-2">
@@ -428,25 +474,12 @@ function LoginPageInner() {
               </>
             )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">パスワード</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
-                placeholder="••••••••"
-                autoComplete="current-password"
-                required
-              />
-            </div>
-
             <button
               type="submit"
-              disabled={loading || (mode === 'phone' && !!SITE_KEY && !cfToken)}
+              disabled={primaryDisabled}
               className="w-full px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
-              {loading ? 'ログイン中...' : 'ログイン'}
+              {primaryButtonText}
             </button>
           </form>
 

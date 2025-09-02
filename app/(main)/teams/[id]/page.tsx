@@ -1,431 +1,564 @@
 // app/(main)/teams/[id]/page.tsx
 'use client';
 
-import React, { useEffect, useMemo, useState, useCallback, Suspense } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import {
+  FaArrowLeft,
   FaUsers,
-  FaChevronLeft,
-  FaTrophy,
   FaMedal,
-  FaCalendarAlt,
-  FaUser,
-  FaArrowRight,
+  FaChartLine,
+  FaTrophy,
 } from 'react-icons/fa';
+import { createClient } from '@/lib/supabase/client';
 
-/* ========= REST ヘルパ ========= */
-const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-async function restGet<T = any>(path: string) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      apikey: ANON,
-      Authorization: `Bearer ${ANON}`,
-      'Content-Type': 'application/json',
-    },
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return (await res.json()) as T;
-}
-
-/* ========= 型 ========= */
-type Team = {
+/* ============================== Types ============================== */
+type TeamBase = {
   id: string;
   name: string;
-  description?: string | null;
-  created_by?: string | null;
-  created_at?: string | null;
   avatar_url?: string | null;
 };
 
-type TeamRank = {
-  id: string;
-  name: string;
-  team_size?: number | null;
+type TeamRankStats = {
   avg_rp?: number | null;
-  avg_hc?: number | null;
-  played?: number | null;
   wins?: number | null;
   losses?: number | null;
-  win_pct?: number | null; // 0..1
-  last_match_at?: string | null;
+  win_pct?: number | null;
+  avg_hc?: number | null;
+  team_size?: number | null;
 };
 
-type TeamMemberRow = {
-  player_id: string;
-  role?: string | null;
-  joined_at?: string | null;
+type Team = TeamBase & {
+  ranking_points?: number | null; // Math.round(avg_rp)
+  wins?: number | null;
+  losses?: number | null;
+  handicap?: number | null; // Math.round(avg_hc)
 };
 
-type Player = {
+type PlayerLite = {
   id: string;
   handle_name: string;
   avatar_url?: string | null;
-  ranking_points?: number | null;
-  handicap?: number | null;
 };
 
-type MatchTeamsRow = { match_id: string; team_id: string; team_no: number };
+type MemberRow = {
+  team_id: string;
+  player_id: string;
+  role?: string | null;
+  players?: PlayerLite | null;
+};
+
 type MatchRow = {
   id: string;
-  mode: 'singles' | 'teams' | string;
+  mode: string | null;
   status?: string | null;
   match_date?: string | null;
-  winner_team_no?: number | null; // 団体戦: 勝者の team_no
   winner_score?: number | null;
   loser_score?: number | null;
 };
 
-/* ========= 小物 ========= */
-const LazyImg = (props: { src?: string | null; alt: string; className?: string }) => (
-  // eslint-disable-next-line @next/next/no-img-element
-  <img
-    src={props.src || '/default-avatar.png'}
-    alt={props.alt}
-    className={props.className}
-    loading="lazy"
-    decoding="async"
-    onError={(e) => {
-      (e.currentTarget as HTMLImageElement).src = '/default-avatar.png';
-    }}
-  />
-);
+type MatchPlayerRow = {
+  match_id: string;
+  player_id: string;
+  side_no: number | null;
+  players?: PlayerLite | null;
+  matches?: MatchRow | null;
+};
 
-/* ========= 本体 ========= */
-function TeamProfileInner() {
-  const router = useRouter();
+type MatchItem = {
+  id: string;
+  match: MatchRow;
+  teammates: PlayerLite[]; // このチームから出場した選手
+  opponents: PlayerLite[]; // 相手側（他チーム/未所属を含む）
+};
+
+/* ============================== Helpers ============================== */
+function safeDateString(iso?: string | null) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '-';
+  try {
+    return d.toLocaleString('ja-JP', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return d.toLocaleString();
+  }
+}
+function gamesOf(t?: Team | null) {
+  if (!t) return 0;
+  return (t.wins ?? 0) + (t.losses ?? 0);
+}
+function winRateOf(t?: Team | null) {
+  if (!t) return 0;
+  const w = t.wins ?? 0;
+  const l = t.losses ?? 0;
+  const g = w + l;
+  return g ? Math.round((w / g) * 100) : 0;
+}
+
+/* ============================== Page ============================== */
+export default function TeamProfilePage() {
   const params = useParams<{ id: string }>();
   const teamId = params?.id;
 
-  const [loading, setLoading] = useState(true);
+  const supabase = createClient();
+
   const [team, setTeam] = useState<Team | null>(null);
-  const [teamRank, setTeamRank] = useState<TeamRank | null>(null);
-  const [members, setMembers] = useState<Array<TeamMemberRow & { player?: Player }>>([]);
-  const [recentMatches, setRecentMatches] = useState<
-    Array<
-      MatchRow & {
-        my_team_no: number;
-        result: 'W' | 'L';
-        opponent_team_id?: string | null;
-        opponent_team_name?: string | null;
-      }
-    >
-  >([]);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingTeam, setLoadingTeam] = useState(true);
+  const [teamError, setTeamError] = useState<string>('');
 
-  const load = useCallback(async () => {
-    if (!teamId) return;
-    setLoading(true);
-    setError(null);
+  const [members, setMembers] = useState<MemberRow[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
 
-    try {
-      /* 1) チーム本体 */
-      const t = await restGet<Team[]>(`/rest/v1/teams?id=eq.${teamId}&select=*`);
-      setTeam(t?.[0] ?? null);
+  const [matches, setMatches] = useState<MatchItem[]>([]);
+  const [loadingMatches, setLoadingMatches] = useState(true);
 
-      /* 2) チーム集計（team_rankings VIEW） */
-      const tr = await restGet<TeamRank[]>(`/rest/v1/team_rankings?id=eq.${teamId}&select=*`);
-      setTeamRank(tr?.[0] ?? null);
+  /* -------- チーム基本情報 + ランキング指標（安全取得） -------- */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!teamId) return;
+      setLoadingTeam(true);
+      setTeamError('');
+      try {
+        // 1) teams から存在確実な列のみ
+        const { data: baseRow, error: baseErr } = await (supabase.from('teams') as any)
+          .select('id, name, avatar_url')
+          .eq('id', teamId)
+          .maybeSingle();
+        if (baseErr) throw baseErr;
+        if (!baseRow) throw new Error('チームが見つかりませんでした。');
 
-      /* 3) メンバー → players 取得 */
-      const tm = await restGet<TeamMemberRow[]>(
-        `/rest/v1/team_members?team_id=eq.${teamId}&select=player_id,role,joined_at&order=joined_at.asc`
-      );
-      if (tm.length) {
-        const ids = tm.map((x) => x.player_id);
-        const inList = ids.map((id) => `"${id}"`).join(',');
-        const ps = await restGet<Player[]>(
-          `/rest/v1/players?id=in.(${inList})&select=id,handle_name,avatar_url,ranking_points,handicap`
-        );
-        const pmap = new Map(ps.map((p) => [p.id, p]));
-        setMembers(tm.map((m) => ({ ...m, player: pmap.get(m.player_id) })));
-      } else {
-        setMembers([]);
-      }
+        const base: TeamBase = baseRow as TeamBase;
 
-      /* 4) 直近の団体戦 */
-      const myMt = await restGet<MatchTeamsRow[]>(
-        `/rest/v1/match_teams?team_id=eq.${teamId}&select=match_id,team_id,team_no&order=match_id.desc&limit=50`
-      );
-      const matchIds = myMt.map((r) => r.match_id);
-      if (matchIds.length === 0) {
-        setRecentMatches([]);
-      } else {
-        const inM = matchIds.map((id) => `"${id}"`).join(',');
-        const matches = await restGet<MatchRow[]>(
-          `/rest/v1/matches?id=in.(${inM})&select=id,mode,status,match_date,winner_team_no,winner_score,loser_score&order=match_date.desc&limit=50`
-        );
-        const byId = new Map<string, number>(myMt.map((r) => [r.match_id, r.team_no]));
-
-        // 対戦相手の team_id を取るために、同じ match の両チーム行を取得
-        const bothSides = await restGet<MatchTeamsRow[]>(
-          `/rest/v1/match_teams?match_id=in.(${inM})&select=match_id,team_id,team_no`
-        );
-        const opponentMap = new Map<
-          string,
-          { opponent_team_id?: string | null; opponent_team_no?: number | null }
-        >();
-        for (const r of bothSides) {
-          const myNo = byId.get(r.match_id);
-          if (!myNo) continue;
-          if (r.team_no !== myNo) {
-            opponentMap.set(r.match_id, {
-              opponent_team_id: r.team_id,
-              opponent_team_no: r.team_no,
-            });
-          }
+        // 2) team_rankings ビュー（あれば）
+        let stats: TeamRankStats | null = null;
+        try {
+          const { data: r, error: rErr } = await (supabase.from('team_rankings') as any)
+            .select('avg_rp, wins, losses, win_pct, avg_hc, team_size')
+            .eq('id', teamId)
+            .maybeSingle();
+          if (!rErr && r) stats = r as TeamRankStats;
+        } catch {
+          stats = null; // ビューが無い環境でも落ちない
         }
 
-        // 相手チーム名を取得
-        const opponentIds = Array.from(
-          new Set(
-            Array.from(opponentMap.values())
-              .map((v) => v.opponent_team_id)
-              .filter(Boolean)
-          )
-        ) as string[];
-        let opponentNameMap = new Map<string, string>();
-        if (opponentIds.length) {
-          const inOpp = opponentIds.map((id) => `"${id}"`).join(',');
-          const oppTeams = await restGet<Team[]>(`/rest/v1/teams?id=in.(${inOpp})&select=id,name`);
-          opponentNameMap = new Map(oppTeams.map((o) => [o.id, o.name]));
+        const combined: Team = {
+          ...base,
+          ranking_points: stats?.avg_rp != null ? Math.round(stats.avg_rp) : null,
+          wins: stats?.wins ?? null,
+          losses: stats?.losses ?? null,
+          handicap: stats?.avg_hc != null ? Math.round(stats.avg_hc) : null,
+        };
+
+        if (!cancelled) setTeam(combined);
+      } catch (e: any) {
+        if (!cancelled) {
+          setTeam(null);
+          setTeamError(e?.message || 'チーム情報の取得に失敗しました。');
+        }
+      } finally {
+        if (!cancelled) setLoadingTeam(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, teamId]);
+
+  /* -------- メンバー一覧 -------- */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!teamId) return;
+      setLoadingMembers(true);
+      try {
+        const { data, error } = await (supabase.from('team_members') as any)
+          .select('team_id, player_id, role, players:player_id(id, handle_name, avatar_url)')
+          .eq('team_id', teamId);
+        if (error) throw error;
+
+        const rows = (data ?? []) as MemberRow[];
+        if (!cancelled) setMembers(rows);
+      } catch {
+        if (!cancelled) setMembers([]);
+      } finally {
+        if (!cancelled) setLoadingMembers(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, teamId]);
+
+  const memberIds = useMemo(
+    () => members.map((m) => m.player_id).filter((v) => typeof v === 'string' && v.length > 0),
+    [members]
+  );
+
+  /* -------- 直近の試合履歴（チーム出場試合） --------
+     1) チームメンバーが参加した match_players を取得（matches join 付）
+     2) その match_id すべてについて、対戦相手側も含めた match_players を再取得
+     3) teammates/opponents に振り分け
+  ----------------------------------------------------------------- */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!teamId) return;
+      setLoadingMatches(true);
+      try {
+        if (memberIds.length === 0) {
+          if (!cancelled) setMatches([]);
+          return;
         }
 
-        // rows の作成
-        const rows = (matches ?? []).map((m) => {
-          const myNo = byId.get(m.id) ?? 1;
-          const opp = opponentMap.get(m.id);
-          const opponent_team_id = opp?.opponent_team_id ?? null;
-          const opponent_team_name = opponent_team_id
-            ? opponentNameMap.get(opponent_team_id) ?? null
-            : null;
-          const result: 'W' | 'L' = m.winner_team_no === myNo ? 'W' : 'L';
-          return {
-            ...m,
-            my_team_no: myNo,
-            result,
-            opponent_team_id,
-            opponent_team_name,
-          };
+        // 1) チームメンバーが出た試合
+        const { data: mp1, error: e1 } = await (supabase.from('match_players') as any)
+          .select('match_id, player_id, side_no, players:player_id(id, handle_name, avatar_url), matches:matches(id, mode, status, match_date, winner_score, loser_score)')
+          .in('player_id', memberIds)
+          .order('match_date', { foreignTable: 'matches', ascending: false })
+          .limit(50);
+        if (e1) throw e1;
+
+        const mpRows1 = (mp1 ?? []) as MatchPlayerRow[];
+        const matchIds = Array.from(new Set(mpRows1.map((r) => r.match_id))).filter(Boolean) as string[];
+        if (matchIds.length === 0) {
+          if (!cancelled) setMatches([]);
+          return;
+        }
+
+        // 2) 同試合の全参加者（相手側も含める）
+        const { data: mp2, error: e2 } = await (supabase.from('match_players') as any)
+          .select('match_id, player_id, side_no, players:player_id(id, handle_name, avatar_url)')
+          .in('match_id', matchIds);
+        if (e2) throw e2;
+        const mpRows2 = (mp2 ?? []) as MatchPlayerRow[];
+
+        // 3) マッチID単位でまとめる
+        const byMatchAll = new Map<string, MatchPlayerRow[]>();
+        mpRows2.forEach((r) => {
+          const arr = byMatchAll.get(r.match_id) || [];
+          arr.push(r);
+          byMatchAll.set(r.match_id, arr);
         });
 
-        setRecentMatches(rows);
+        // mpRows1 から matches 情報を拾い、teammates / opponents を分離
+        const items: MatchItem[] = matchIds.map((mid) => {
+          const rowsAll = byMatchAll.get(mid) ?? [];
+
+          // この試合でチームメンバーが立っていたサイド番号（1/2など）
+          const teamSideSet = new Set<number>();
+          rowsAll.forEach((r) => {
+            if (memberIds.includes(r.player_id) && typeof r.side_no === 'number') {
+              teamSideSet.add(r.side_no);
+            }
+          });
+
+          const teammates: PlayerLite[] = [];
+          const opponents: PlayerLite[] = [];
+          rowsAll.forEach((r) => {
+            const pl = r.players ?? undefined;
+            if (!pl) return;
+            const isTeamMember = memberIds.includes(r.player_id);
+            if (isTeamMember) {
+              teammates.push(pl);
+            } else {
+              // 相手側：サイドが異なる（または判定不能なら相手扱い）
+              const isOtherSide =
+                typeof r.side_no === 'number' ? !teamSideSet.has(r.side_no) : true;
+              if (isOtherSide) opponents.push(pl);
+            }
+          });
+
+          // matches 情報（mpRows1 由来、または rowsAll から補完）
+          const m1 = mpRows1.find((r) => r.match_id === mid && r.matches?.id)?.matches ?? null;
+
+          const match: MatchRow = m1 ?? {
+            id: mid,
+            mode: null,
+            status: null,
+            match_date: null,
+            winner_score: null,
+            loser_score: null,
+          };
+
+          return { id: mid, match, teammates, opponents };
+        });
+
+        if (!cancelled) setMatches(items);
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('[team profile] fetch matches failed:', e);
+          setMatches([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingMatches(false);
       }
-    } catch (e: any) {
-      setError(e?.message || '読み込みに失敗しました');
-    } finally {
-      setLoading(false);
-    }
-  }, [teamId]);
-
-  useEffect(() => {
-    if (!teamId) return;
-    (async () => {
-      await load();
     })();
-  }, [teamId, load]);
 
-  const wins = useMemo(() => recentMatches.filter((m) => m.result === 'W').length, [recentMatches]);
-  const losses = useMemo(() => recentMatches.filter((m) => m.result === 'L').length, [recentMatches]);
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, teamId, memberIds.join('|')]); // memberIds に依存
 
-  /* ========= レンダリング ========= */
+  const wr = winRateOf(team);
+  const games = gamesOf(team);
+
+  /* ============================== UI ============================== */
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 py-6 sm:py-8">
         {/* 戻る */}
-        <div className="mb-6">
-          <button
-            onClick={() => router.back()}
+        <div className="mb-4">
+          <Link
+            href="/teams"
             className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
           >
-            <FaChevronLeft /> 戻る
-          </button>
+            <FaArrowLeft /> チーム一覧へ戻る
+          </Link>
         </div>
 
-        {/* ローディング / エラー / 無 */}
-        {loading ? (
-          <div className="grid gap-6">
-            <div className="h-28 bg-white/10 rounded-xl animate-pulse" />
-            <div className="h-48 bg-white/10 rounded-xl animate-pulse" />
-            <div className="h-48 bg-white/10 rounded-xl animate-pulse" />
+        {/* ローディング / エラー */}
+        {loadingTeam && (
+          <div className="max-w-4xl mx-auto glass-card rounded-2xl p-6 sm:p-8">
+            <div className="h-7 w-60 bg-white/10 rounded mb-6" />
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="h-40 bg-white/10 rounded" />
+              <div className="h-40 bg-white/10 rounded" />
+            </div>
           </div>
-        ) : error ? (
-          <div className="p-4 rounded-xl border border-red-500/40 bg-red-500/10">{error}</div>
-        ) : !team ? (
-          <div className="p-6 rounded-xl border border-purple-500/30 bg-gray-900/50">チームが見つかりませんでした。</div>
-        ) : (
-          <>
-            {/* ヘッダー */}
-            <div className="p-6 rounded-2xl border border-purple-500/30 bg-gray-900/60 mb-6">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                <div className="w-14 h-14 rounded-full bg-purple-600/30 flex items-center justify-center">
-                  <FaUsers className="text-2xl text-purple-200" />
-                </div>
-                <div className="flex-1">
-                  <h1 className="text-2xl md:text-3xl font-bold text-yellow-100">{team.name}</h1>
-                  <p className="text-gray-400 text-sm mt-1">{team.description || '—'}</p>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <StatBox label="メンバー" value={teamRank?.team_size ?? members.length} />
-                  <StatBox label="平均RP" value={Math.round(teamRank?.avg_rp ?? 0)} />
-                  <StatBox label="平均HC" value={Math.round(teamRank?.avg_hc ?? 0)} />
-                </div>
-              </div>
+        )}
+        {teamError && !loadingTeam && (
+          <div className="max-w-4xl mx-auto glass-card rounded-2xl p-6 border border-red-500/40 bg-red-500/10">
+            読み込みに失敗しました: {teamError}
+          </div>
+        )}
 
-              <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <StatBox icon="trophy" label="戦績(直近50)" value={`${wins} 勝 / ${losses} 敗`} />
-                <StatBox
-                  icon="medal"
-                  label="勝率"
-                  value={
-                    teamRank?.win_pct != null
-                      ? `${(teamRank.win_pct * 100).toFixed(1)}%`
-                      : wins + losses > 0
-                      ? `${((wins / (wins + losses)) * 100).toFixed(1)}%`
-                      : '—'
-                  }
+        {!loadingTeam && !teamError && team && (
+          <div className="max-w-5xl mx-auto space-y-6 sm:space-y-8">
+            {/* ── ヒーロー：基本情報 ── */}
+            <div className="glass-card rounded-2xl p-6 sm:p-8 border border-purple-500/30">
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8">
+                {/* アイコン */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={team.avatar_url || '/default-avatar.png'}
+                  alt={team.name}
+                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-2 border-purple-500/40 object-cover"
                 />
-                <StatBox
-                  icon="calendar"
-                  label="最終試合"
-                  value={
-                    teamRank?.last_match_at
-                      ? new Date(teamRank.last_match_at).toLocaleString()
-                      : '—'
-                  }
-                />
-                <StatBox label="試合数" value={teamRank?.played ?? recentMatches.length} />
+
+                <div className="flex-1 w-full">
+                  <h1 className="text-2xl sm:text-3xl font-extrabold text-yellow-100">
+                    {team.name}
+                  </h1>
+
+                  {/* 概要（RP / HC / 勝敗 / 勝率） */}
+                  <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
+                      <div className="flex items-center justify-center gap-2 text-purple-200 mb-1">
+                        <FaMedal className="text-lg sm:text-xl" />
+                        <span className="text-xs sm:text-sm">ランキングポイント</span>
+                      </div>
+                      <div className="text-3xl sm:text-4xl font-black text-yellow-100 tracking-tight">
+                        {team.ranking_points ?? 0}
+                      </div>
+                    </div>
+
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
+                      <div className="flex items-center justify-center gap-2 text-blue-200 mb-1">
+                        <FaChartLine className="text-lg sm:text-xl" />
+                        <span className="text-xs sm:text-sm">ハンディキャップ</span>
+                      </div>
+                      <div className="text-3xl sm:text-4xl font-black text-blue-100 tracking-tight">
+                        {team.handicap ?? 0}
+                      </div>
+                    </div>
+
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
+                      <div className="text-2xl font-extrabold text-green-400">
+                        {team.wins ?? 0}
+                      </div>
+                      <div className="text-xs sm:text-sm text-gray-400">勝利</div>
+                    </div>
+                    <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
+                      <div className="text-2xl font-extrabold text-red-400">
+                        {team.losses ?? 0}
+                      </div>
+                      <div className="text-xs sm:text-sm text-gray-400">敗北</div>
+                    </div>
+                  </div>
+
+                  {/* 勝率バー */}
+                  <div className="mt-3 sm:mt-4">
+                    <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          wr >= 60
+                            ? 'bg-green-500'
+                            : wr >= 40
+                            ? 'bg-yellow-500'
+                            : 'bg-red-500'
+                        }`}
+                        style={{ width: `${wr}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 text-right text-xs text-gray-500">
+                      {games} 試合
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* メンバー */}
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-3 text-purple-200">メンバー</h2>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {members.length ? (
-                  members.map((m) => (
-                    <Link
-                      key={m.player_id}
-                      href={`/players/${m.player_id}`}
-                      className="flex items-center gap-3 p-3 rounded-xl border border-purple-500/30 bg-gray-900/50 hover:border-purple-400/60 transition"
-                    >
-                      <LazyImg
-                        src={m.player?.avatar_url}
-                        alt={m.player?.handle_name || ''}
-                        className="w-12 h-12 rounded-full border-2 border-purple-500 object-cover"
-                      />
-                      <div className="min-w-0">
-                        <p className="font-semibold text-yellow-100 truncate">
-                          {m.player?.handle_name ?? '(不明)'}
-                        </p>
-                        <p className="text-xs text-gray-400">
-                          RP {m.player?.ranking_points ?? '-'} / HC {m.player?.handicap ?? '-'}
-                          {m.role ? ` ・ ${m.role}` : ''}
-                        </p>
-                      </div>
-                    </Link>
-                  ))
-                ) : (
-                  <div className="col-span-full p-4 rounded-xl border border-purple-500/30 bg-gray-900/50 text-gray-300">
-                    メンバー未設定
-                  </div>
-                )}
-              </div>
-            </section>
+            {/* ── 参加メンバー ── */}
+            <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
+              <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5 flex items-center gap-2">
+                <FaUsers className="text-purple-300" />
+                参加メンバー
+              </h2>
 
-            {/* 直近の団体戦 */}
-            <section>
-              <h2 className="text-xl font-semibold mb-3 text-purple-200">直近の団体戦</h2>
-              <div className="grid gap-3">
-                {recentMatches.length ? (
-                  recentMatches.slice(0, 20).map((m) => (
-                    <div
-                      key={m.id}
-                      className={`flex items-center justify-between p-3 rounded-xl border bg-gray-900/50 ${
-                        m.result === 'W' ? 'border-green-500/30' : 'border-red-500/30'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-full bg-purple-600/30 flex items-center justify-center">
-                          <FaTrophy className={m.result === 'W' ? 'text-yellow-300' : 'text-gray-400'} />
-                        </div>
+              {loadingMembers ? (
+                <div className="text-gray-400">読み込み中...</div>
+              ) : members.length === 0 ? (
+                <div className="text-gray-400">メンバーが登録されていません。</div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
+                  {members.map((m) => {
+                    const p = m.players;
+                    return (
+                      <Link
+                        key={m.player_id}
+                        href={`/players/${m.player_id}`}
+                        className="flex items-center gap-3 p-3 rounded-xl border border-purple-500/30 bg-gray-900/50 hover:border-purple-400/60 transition-colors"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={p?.avatar_url || '/default-avatar.png'}
+                          alt={p?.handle_name || 'player'}
+                          className="w-10 h-10 rounded-full border-2 border-purple-500/40 object-cover"
+                        />
                         <div className="min-w-0">
-                          <p className="font-semibold text-yellow-100 truncate">
-                            {m.result === 'W' ? '勝利' : '敗北'}（Team#{m.my_team_no})
-                            <span className="mx-2 text-gray-500">
-                              <FaArrowRight className="inline -mt-1" />
-                            </span>
-                            <Link
-                              href={m.opponent_team_id ? `/teams/${m.opponent_team_id}` : '#'}
-                              className="underline decoration-purple-400/60 hover:text-purple-200"
-                            >
-                              {m.opponent_team_name ?? '対戦相手不明'}
-                            </Link>
-                          </p>
-                          <p className="text-xs text-gray-400">
-                            {m.match_date ? new Date(m.match_date).toLocaleString() : '-'}
-                          </p>
+                          <div className="font-semibold text-yellow-100 truncate">
+                            {p?.handle_name ?? '不明なプレイヤー'}
+                          </div>
+                          {m.role && (
+                            <div className="text-xs text-purple-300 truncate">役割: {m.role}</div>
+                          )}
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ── 直近の試合 ── */}
+            <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
+              <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5">
+                直近の試合
+              </h2>
+
+              {loadingMatches ? (
+                <div className="text-gray-400">読み込み中...</div>
+              ) : matches.length === 0 ? (
+                <div className="text-gray-400">まだ試合がありません。</div>
+              ) : (
+                <div className="space-y-3">
+                  {matches.slice(0, 12).map((item) => {
+                    const m = item.match;
+                    const when = safeDateString(m.match_date);
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-xl p-3 sm:p-4 border border-purple-500/30 bg-gray-900/50"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-xs text-gray-400">{when}</div>
+                            <div className="font-semibold text-yellow-100 truncate">
+                              {m.mode ?? '試合'} / {m.status ?? ''}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-lg sm:text-xl font-extrabold text-white">
+                              {m.winner_score ?? '-'} - {m.loser_score ?? '-'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 出場メンバー / 相手 */}
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <div className="text-xs text-gray-400 mb-1">この試合の自チーム</div>
+                            <div className="flex flex-wrap gap-2">
+                              {item.teammates.length === 0 && (
+                                <div className="text-gray-500 text-sm">—</div>
+                              )}
+                              {item.teammates.map((p) => (
+                                <Link
+                                  key={p.id}
+                                  href={`/players/${p.id}`}
+                                  className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-gray-800/70 border border-purple-500/20 hover:border-purple-400/40"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={p.avatar_url || '/default-avatar.png'}
+                                    alt={p.handle_name}
+                                    className="w-6 h-6 rounded-full object-cover"
+                                  />
+                                  <span className="text-sm">{p.handle_name}</span>
+                                </Link>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-xs text-gray-400 mb-1">相手側</div>
+                            <div className="flex flex-wrap gap-2">
+                              {item.opponents.length === 0 && (
+                                <div className="text-gray-500 text-sm">—</div>
+                              )}
+                              {item.opponents.map((p) => (
+                                <Link
+                                  key={p.id}
+                                  href={`/players/${p.id}`}
+                                  className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-gray-800/70 border border-purple-500/20 hover:border-purple-400/40"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={p.avatar_url || '/default-avatar.png'}
+                                    alt={p.handle_name}
+                                    className="w-6 h-6 rounded-full object-cover"
+                                  />
+                                  <span className="text-sm">{p.handle_name}</span>
+                                </Link>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-lg font-bold">
-                          {m.winner_score ?? 15} - {m.loser_score ?? 0}
-                        </p>
-                        <p className="text-xs text-gray-400">モード: {m.mode}</p>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-4 rounded-xl border border-purple-500/30 bg-gray-900/50 text-gray-300">
-                    チーム戦の試合がまだありません
-                  </div>
-                )}
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="mt-4 text-right">
+                <Link
+                  href="/matches"
+                  className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
+                >
+                  <FaTrophy /> 試合結果一覧へ
+                </Link>
               </div>
-            </section>
-          </>
+            </div>
+          </div>
         )}
       </div>
     </div>
-  );
-}
-
-/* ========= 部品 ========= */
-function StatBox(props: { label: string; value: string | number; icon?: 'trophy' | 'medal' | 'calendar' }) {
-  return (
-    <div className="glass-card rounded-lg p-3 border border-purple-500/30 flex items-center gap-3">
-      <div className="w-9 h-9 rounded-full bg-purple-600/20 border border-purple-500/40 flex items-center justify-center">
-        {props.icon === 'trophy' ? (
-          <FaTrophy />
-        ) : props.icon === 'medal' ? (
-          <FaMedal />
-        ) : props.icon === 'calendar' ? (
-          <FaCalendarAlt />
-        ) : (
-          <FaUser />
-        )}
-      </div>
-      <div>
-        <div className="text-xs text-gray-400">{props.label}</div>
-        <div className="text-base font-semibold text-yellow-100">{props.value}</div>
-      </div>
-    </div>
-  );
-}
-
-/* ========= デフォルトエクスポート（Suspense で包む：CSR bailout系の事前レンダー警告を回避） ========= */
-export default function TeamProfilePage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center p-6">
-          <div className="glass-card rounded-xl p-8 text-center text-gray-300">読み込み中…</div>
-        </div>
-      }
-    >
-      <TeamProfileInner />
-    </Suspense>
   );
 }
