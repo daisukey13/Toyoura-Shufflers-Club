@@ -2,12 +2,12 @@
 'use client';
 
 import { useState } from 'react';
-import Turnstile from 'react-turnstile';
+import Turnstile, { type TurnstileProps } from 'react-turnstile';
 
 type Props = {
   sitekey: string;
-  /** 'auto' | 'light' | 'dark' (react-turnstile のトップレベル prop) */
-  theme?: 'auto' | 'light' | 'dark';
+  /** 'auto' | 'light' | 'dark' */
+  theme?: TurnstileProps['theme'];
   /** 検証成功時のトークン。期限切れ/エラー時は undefined を返す */
   onToken: (token?: string) => void;
   className?: string;
@@ -23,16 +23,19 @@ export default function TurnsstileWidget({
 
   return (
     <div className={className}>
+      {/* react-turnstile は options ではなく、theme をトップレベル prop で渡します */}
       <Turnstile
         sitekey={sitekey}
-        theme={theme}                 {/* ← options ではなく theme を直指定 */}
+        theme={theme}
         onVerify={(token) => onToken(token)}
         onExpire={() => onToken(undefined)}
         onError={() => onToken(undefined)}
         onLoad={() => setReady(true)}
       />
       {!ready && (
-        <div className="text-xs text-gray-400 mt-1">CAPTCHA を読み込み中です…</div>
+        <div className="text-xs text-gray-400 mt-1">
+          CAPTCHA を読み込み中です...
+        </div>
       )}
     </div>
   );
