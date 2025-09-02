@@ -240,7 +240,6 @@ export default function MyPage() {
     setSavingProfile(true);
     try {
       const payload = { handle_name: handle.trim(), avatar_url: avatarUrl ?? null };
-      // 型が never になる環境向けに、この呼び出しだけ any でバイパス
       const { error } = await (supabase as any)
         .from('players')
         .update(payload)
@@ -461,19 +460,19 @@ export default function MyPage() {
       const winner_score = Math.max(regMy, regOpp);
       const loser_score  = Math.min(regMy, regOpp);
 
-      // matches
-      const { data: m, error: mErr } = await supabase
+      // matches を挿入し id を厳密に取得
+      const insertRes = await supabase
         .from('matches')
         .insert([{ mode: regMode, status: 'completed', match_date: dt.toISOString(), winner_score, loser_score }] as any)
         .select('id')
         .single();
-      if (mErr) throw mErr;
 
-      // ★★★ ここを強化：null/型安全に絞り込み → 以降は matchId のみ使用
-      if (!m || typeof (m as any).id !== 'string') {
-        throw new Error('試合IDの取得に失敗しました。');
-      }
-      const matchId: string = (m as any).id;
+      if (insertRes.error) throw insertRes.error;
+
+      const row = insertRes.data as { id: string } | null;
+      if (!row) throw new Error('試合IDの取得に失敗しました。');
+
+      const matchId: string = row.id;
 
       // match_players（自分=side 1、相手=side 2）
       const { error: mpErr } = await supabase.from('match_players').insert([
@@ -600,7 +599,7 @@ export default function MyPage() {
         <div className="space-y-6">
           {/* 概要カード */}
           <div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
-            <h3 className="text-lg font-semibold text紫-200 mb-3 text-purple-200">概要</h3>
+            <h3 className="text-lg font-semibold text-purple-200 mb-3">概要</h3>
             <div className="grid grid-cols-2 gap-3 text-center">
               <div className="rounded-lg bg-purple-900/30 p-3">
                 <div className="text-2xl font-bold text-yellow-100">{me.ranking_points ?? 0}</div>
@@ -624,7 +623,7 @@ export default function MyPage() {
               </div>
             </div>
 
-            <div className="mt-5 flex flex-col gap-2">
+            <div className="mt-5 flex flex列 gap-2 flex-col">
               <button
                 onClick={() => setRegOpen(true)}
                 className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2"
@@ -641,8 +640,8 @@ export default function MyPage() {
           </div>
 
           {/* 参加チームカード */}
-          <div className="glass-card rounded-xl p-5 border border紫-500/30 bg-gray-900/50 text-purple-200 border-purple-500/30">
-            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+          <div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
+            <h3 className="text-lg font-semibold text-purple-200 mb-3 flex items-center gap-2">
               <FaUsers /> 参加チーム
             </h3>
 
@@ -797,7 +796,7 @@ export default function MyPage() {
           <div className="w-full max-w-xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-purple-200"><FaGamepad className="inline mr-2" />試合を登録</h3>
-              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg白/10"><FaTimes/></button>
+              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg-white/10"><FaTimes/></button>
             </div>
 
             {regError && <div className="mb-3 p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-sm">{regError}</div>}
@@ -856,7 +855,7 @@ export default function MyPage() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-300 mb-1">相手のスコア</label>
-                  <input type="number" min={0} value={regOpp} onChange={(e) => setRegOpp(parseInt(e.target.value || '0', 10))} className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"/>
+                  <input type="number" min={0} value={regOpp} onChange={(e) => setRegOpp(parseInt(e.target.value || '0', 10))} className="w-full px-3 py-2 rounded-lg bg紫-900/20 border border紫-500/30 focus:border紫-400 outline-none bg-purple-900/20 border-purple-500/30 focus:border-purple-400"/>
                 </div>
               </div>
 
