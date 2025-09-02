@@ -18,7 +18,7 @@ export default function TurnstileWidget({
         onExpire={() => onToken(undefined)}
         onError={() => onToken(undefined)}
         onLoad={() => setReady(true)}
-        options={{ theme: 'auto' }}
+        theme="auto"
       />
       {!ready && (
         <div className="text-xs text-gray-400 mt-1">
