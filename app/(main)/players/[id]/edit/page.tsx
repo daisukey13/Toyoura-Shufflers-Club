@@ -1,17 +1,24 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 import { SupabaseAPI } from '@/lib/api/supabase-api';
 import type { Player } from '@/types/player';
 import { supabaseConfig, supabaseHeaders } from '@/lib/config/supabase';
+import AvatarUploader from '@/components/AvatarUploader';
 
 export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
+
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+
   const [player, setPlayer] = useState<Player | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [formData, setFormData] = useState({
     full_name: '',
     handle_name: '',
@@ -19,28 +26,40 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     avatar_url: '',
   });
 
+  // 認証ユーザーID取得
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!cancelled) setAuthUserId(data.user?.id ?? null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
   const fetchPlayer = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
+
       const response = await fetch(
         `${supabaseConfig.url}/rest/v1/players?id=eq.${params.id}&select=*`,
-        {
-          headers: supabaseHeaders,
-        }
+        { headers: supabaseHeaders, cache: 'no-store' }
       );
 
       if (!response.ok) {
         throw new Error('Failed to fetch player data');
       }
 
-      const data = await response.json();
+      const data: Player[] = await response.json();
       if (data && data.length > 0) {
         const playerData = data[0];
         setPlayer(playerData);
         setFormData({
           full_name: playerData.full_name || '',
           handle_name: playerData.handle_name || '',
-          email: playerData.email || '',
+          email: (playerData as any).email || '', // 型にない場合は any 経由でフォールバック
           avatar_url: playerData.avatar_url || '',
         });
       } else {
@@ -55,7 +74,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     fetchPlayer();
-  }, [params.id, fetchPlayer]);
+  }, [fetchPlayer]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,16 +85,14 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       const updateData: Partial<Player> = {
         full_name: formData.full_name,
         handle_name: formData.handle_name,
-        email: formData.email,
-        avatar_url: formData.avatar_url,
+        // email を players テーブルに直接持っていない場合は無視されます
+        ...(formData.email ? { email: formData.email } : {}),
+        avatar_url: formData.avatar_url || null,
         updated_at: new Date().toISOString(),
-      };
+      } as any;
 
       const { error: updateError } = await SupabaseAPI.updatePlayer(params.id, updateData);
-      
-      if (updateError) {
-        throw updateError;
-      }
+      if (updateError) throw updateError;
 
       router.push(`/players/${params.id}`);
     } catch (err) {
@@ -87,7 +104,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [name]: value,
     }));
@@ -97,7 +114,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto" />
           <p className="mt-4 text-gray-600">Loading player data...</p>
         </div>
       </div>
@@ -139,8 +156,9 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     <div className="container mx-auto px-4 py-8">
       <div className="max-w-2xl mx-auto">
         <h1 className="text-3xl font-bold mb-8">Edit Player</h1>
-        
+
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Full Name */}
           <div>
             <label htmlFor="full_name" className="block text-sm font-medium text-gray-700 mb-2">
               Full Name
@@ -156,6 +174,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
+          {/* Handle Name */}
           <div>
             <label htmlFor="handle_name" className="block text-sm font-medium text-gray-700 mb-2">
               Handle Name
@@ -171,6 +190,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
+          {/* Email（players に無い場合は無視されます） */}
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
               Email
@@ -185,29 +205,50 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
+          {/* Avatar：本人専用アップローダ + 自分のフォルダのみギャラリー表示 */}
           <div>
-            <label htmlFor="avatar_url" className="block text-sm font-medium text-gray-700 mb-2">
-              Avatar URL
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Avatar
             </label>
-            <input
-              type="url"
-              id="avatar_url"
-              name="avatar_url"
-              value={formData.avatar_url}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            {formData.avatar_url && (
-              <div className="mt-2">
-                <img
-                  src={formData.avatar_url}
-                  alt="Avatar preview"
-                  className="w-20 h-20 rounded-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
+
+            {authUserId ? (
+              <AvatarUploader
+                userId={authUserId}
+                initialUrl={formData.avatar_url || null}
+                onSelected={(publicUrl) => {
+                  setFormData((prev) => ({ ...prev, avatar_url: publicUrl }));
+                }}
+                showGallery={true}
+              />
+            ) : (
+              <>
+                {/* 認証が取れない場合は URL 直入力のフォールバックを残す */}
+                <input
+                  type="url"
+                  id="avatar_url"
+                  name="avatar_url"
+                  value={formData.avatar_url}
+                  onChange={handleChange}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-              </div>
+                {formData.avatar_url && (
+                  <div className="mt-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={formData.avatar_url}
+                      alt="Avatar preview"
+                      className="w-20 h-20 rounded-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                )}
+                <p className="text-xs text-gray-500 mt-1">
+                  ログイン状態ではカメラ撮影／本人用ギャラリーから選べます。
+                </p>
+              </>
             )}
           </div>
 
@@ -222,9 +263,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
               type="submit"
               disabled={saving}
               className={`px-6 py-2 text-white rounded-md ${
-                saving
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-blue-600 hover:bg-blue-700'
+                saving ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
               }`}
             >
               {saving ? 'Saving...' : 'Save Changes'}
