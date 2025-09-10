@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { SupabaseAPI } from '@/lib/api/supabase-api';
 import type { Player } from '@/types/player';
 import { supabaseConfig, supabaseHeaders } from '@/lib/config/supabase';
-import AvatarUploader from '@/components/AvatarUploader';
+import AvatarUploader from '@/components/ui/AvatarUploader';
 
 export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -18,7 +18,6 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const [formData, setFormData] = useState({
     full_name: '',
     handle_name: '',
@@ -26,7 +25,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     avatar_url: '',
   });
 
-  // 認証ユーザーID取得
+  // 認証ユーザー ID
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -43,30 +42,26 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       setLoading(true);
       setError(null);
 
-      const response = await fetch(
+      const res = await fetch(
         `${supabaseConfig.url}/rest/v1/players?id=eq.${params.id}&select=*`,
         { headers: supabaseHeaders, cache: 'no-store' }
       );
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch player data');
-      }
+      if (!res.ok) throw new Error('Failed to fetch player data');
 
-      const data: Player[] = await response.json();
-      if (data && data.length > 0) {
-        const playerData = data[0];
-        setPlayer(playerData);
-        setFormData({
-          full_name: playerData.full_name || '',
-          handle_name: playerData.handle_name || '',
-          email: (playerData as any).email || '', // 型にない場合は any 経由でフォールバック
-          avatar_url: playerData.avatar_url || '',
-        });
-      } else {
-        throw new Error('Player not found');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      const data: Player[] = await res.json();
+      if (!data?.length) throw new Error('Player not found');
+
+      const p = data[0];
+      setPlayer(p);
+      setFormData({
+        full_name: p.full_name ?? '',
+        handle_name: p.handle_name ?? '',
+        email: (p as any).email ?? '',
+        avatar_url: p.avatar_url ?? '',
+      });
+    } catch (e: any) {
+      setError(e?.message || 'An error occurred');
     } finally {
       setLoading(false);
     }
@@ -80,12 +75,10 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     e.preventDefault();
     setSaving(true);
     setError(null);
-
     try {
       const updateData: Partial<Player> = {
         full_name: formData.full_name,
         handle_name: formData.handle_name,
-        // email を players テーブルに直接持っていない場合は無視されます
         ...(formData.email ? { email: formData.email } : {}),
         avatar_url: formData.avatar_url || null,
         updated_at: new Date().toISOString(),
@@ -95,8 +88,8 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       if (updateError) throw updateError;
 
       router.push(`/players/${params.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update player');
+    } catch (e: any) {
+      setError(e?.message || 'Failed to update player');
     } finally {
       setSaving(false);
     }
@@ -104,10 +97,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   if (loading) {
@@ -158,7 +148,6 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
         <h1 className="text-3xl font-bold mb-8">Edit Player</h1>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Full Name */}
           <div>
             <label htmlFor="full_name" className="block text-sm font-medium text-gray-700 mb-2">
               Full Name
@@ -174,7 +163,6 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
-          {/* Handle Name */}
           <div>
             <label htmlFor="handle_name" className="block text-sm font-medium text-gray-700 mb-2">
               Handle Name
@@ -190,7 +178,6 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
-          {/* Email（players に無い場合は無視されます） */}
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
               Email
@@ -205,24 +192,22 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
-          {/* Avatar：本人専用アップローダ + 自分のフォルダのみギャラリー表示 */}
+          {/* Avatar：本人専用フォルダのみ表示 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Avatar
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Avatar</label>
 
             {authUserId ? (
               <AvatarUploader
                 userId={authUserId}
                 initialUrl={formData.avatar_url || null}
-                onSelected={(publicUrl) => {
-                  setFormData((prev) => ({ ...prev, avatar_url: publicUrl }));
-                }}
-                showGallery={true}
+                onSelected={(publicUrl) =>
+                  setFormData((prev) => ({ ...prev, avatar_url: publicUrl }))
+                }
+                showGallery
               />
             ) : (
               <>
-                {/* 認証が取れない場合は URL 直入力のフォールバックを残す */}
+                {/* 認証がまだ取れない場合のフォールバック */}
                 <input
                   type="url"
                   id="avatar_url"
@@ -233,17 +218,13 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 {formData.avatar_url && (
-                  <div className="mt-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={formData.avatar_url}
-                      alt="Avatar preview"
-                      className="w-20 h-20 rounded-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  </div>
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={formData.avatar_url}
+                    alt="Avatar preview"
+                    className="w-20 h-20 rounded-full object-cover mt-2"
+                    onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')}
+                  />
                 )}
                 <p className="text-xs text-gray-500 mt-1">
                   ログイン状態ではカメラ撮影／本人用ギャラリーから選べます。

@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { SupabaseAPI } from '@/lib/api/supabase-api';
 import type { Player } from '@/types/player';
 import { supabaseConfig, supabaseHeaders } from '@/lib/config/supabase';
-import AvatarUploader from '@/components/AvatarUploader';
+import AvatarUploader from '@/components/ui/AvatarUploader';
 
 export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const router = useRouter();
