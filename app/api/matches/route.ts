@@ -7,51 +7,251 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/* =====================
+ * Types
+ * ===================== */
+type SinglesPayload = {
+  mode: 'singles';
+  match_date: string;          // ISO(YYYY-MM-DDTHH:mm) 推奨
+  winner_id: string;
+  loser_id: string;
+  loser_score: number;         // 0〜14
+  venue?: string | null;
+  notes?: string | null;
+  apply_rating?: boolean;      // 省略時 true
+};
+
+type TeamsPayload = {
+  mode: 'teams';
+  match_date: string;
+  winner_team_id: string;
+  loser_team_id: string;
+  loser_score: number;         // 0〜14
+  venue?: string | null;
+  notes?: string | null;
+};
+
+type Body = SinglesPayload | TeamsPayload;
+
+/* =====================
+ * Helpers
+ * ===================== */
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function toInt(v: unknown, fallback = 0) {
+  const n = typeof v === 'number' ? v : parseInt(String(v), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** ELO 風の変動計算（個人戦のみ） */
+function calcDelta(
+  winnerPoints: number,
+  loserPoints: number,
+  winnerHandicap: number,
+  loserHandicap: number,
+  scoreDifference: number // 15 - loser_score
+) {
+  const K = 32;
+  const expectedWinner = 1 / (1 + Math.pow(10, (loserPoints - winnerPoints) / 400));
+  const scoreDiffMultiplier = 1 + scoreDifference / 30;
+  const handicapDiff = winnerHandicap - loserHandicap;
+  const handicapMultiplier = 1 + handicapDiff / 50;
+
+  const baseWinnerChange = K * (1 - expectedWinner) * scoreDiffMultiplier * handicapMultiplier;
+  const baseLoserChange  = -K * expectedWinner * scoreDiffMultiplier;
+
+  const winnerHandicapChange = scoreDifference >= 10 ? -1 : 0;
+  const loserHandicapChange  = scoreDifference >= 10 ?  1 : 0;
+
+  return {
+    winnerPointsChange: Math.round(baseWinnerChange),
+    loserPointsChange : Math.round(baseLoserChange),
+    winnerHandicapChange,
+    loserHandicapChange,
+  };
+}
+
+/* =====================
+ * Handler
+ * ===================== */
 export async function POST(req: NextRequest) {
   try {
-    // セッションから User を取得
-    const cookieStore = cookies();
+    // --- env check
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
+    }
+
+    // --- auth by cookie (SSR client)
     const supa = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get: (name) => cookieStore.get(name)?.value,
-          set: (name, value, options) => cookieStore.set({ name, value, ...options }),
-          remove: (name, options) => cookieStore.set({ name, value: '', ...options }),
-        },
-      }
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      { cookies }
     );
 
-    const { data: auth } = await supa.auth.getUser();
-    const user = auth.user;
-    if (!user) {
-      return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
+    const { data: userData, error: userErr } = await supa.auth.getUser();
+    if (userErr || !userData?.user) {
+      return NextResponse.json({ ok: false, message: '認証が必要です。' }, { status: 401 });
+    }
+    const reporter_id = userData.user.id;
+
+    // --- parse body
+    const body = (await req.json()) as Partial<Body> | undefined;
+    if (!body || !body.mode) {
+      return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
     }
 
-    // クライアントから来たボディをそのまま活かす（元の登録ページのカラム名を担保）
-    const body = await req.json().catch(() => null);
-    if (!body || typeof body !== 'object') {
-      return NextResponse.json({ ok: false, message: 'bad_request' }, { status: 400 });
+    // --- common validations
+    const match_date = String(body.match_date || '').trim();
+    if (!match_date) {
+      return NextResponse.json({ ok: false, message: '試合日時が未指定です。' }, { status: 400 });
     }
 
-    // reporter_id をサーバ側で付与（NOT NULL対策）
-    const record = { ...body, reporter_id: user.id };
+    const loser_score = clamp(toInt((body as any).loser_score, 0), 0, 14);
 
-    // INSERT（Service Role）
-    const { data, error } = await supabaseAdmin
-      .from('matches')
-      .insert(record)
-      .select('id')
-      .single();
+    /* =========================
+     * 個人戦
+     * =======================*/
+    if (body.mode === 'singles') {
+      const winner_id = String((body as SinglesPayload).winner_id || '');
+      const loser_id  = String((body as SinglesPayload).loser_id || '');
 
-    if (error) {
-      return NextResponse.json({ ok: false, message: error.message }, { status: 400 });
+      if (!winner_id || !loser_id) {
+        return NextResponse.json({ ok: false, message: '勝者/敗者を選択してください。' }, { status: 400 });
+      }
+      if (winner_id === loser_id) {
+        return NextResponse.json({ ok: false, message: '同一プレイヤーは選べません。' }, { status: 400 });
+      }
+
+      // 1) players を取得
+      const { data: players, error: pErr } = await supabaseAdmin
+        .from('players')
+        .select('id, ranking_points, handicap, matches_played, wins, losses')
+        .in('id', [winner_id, loser_id]);
+
+      if (pErr) {
+        return NextResponse.json({ ok: false, message: `プレイヤー取得に失敗しました: ${pErr.message}` }, { status: 500 });
+      }
+      const winner = players?.find((p) => p.id === winner_id);
+      const loser  = players?.find((p) => p.id === loser_id);
+      if (!winner || !loser) {
+        return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
+      }
+
+      // 2) matches 挿入
+      const { data: inserted, error: mErr } = await supabaseAdmin
+        .from('matches')
+        .insert({
+          mode: 'singles',
+          status: 'finalized',
+          match_date,
+          reporter_id,
+          winner_id,
+          loser_id,
+          winner_score: 15,
+          loser_score,
+          // 使うなら列に合わせて解放してください
+          // venue: (body as SinglesPayload).venue ?? null,
+          // notes: (body as SinglesPayload).notes ?? null,
+        })
+        .select('id')
+        .single();
+
+      if (mErr) {
+        return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr.message}` }, { status: 500 });
+      }
+
+      // 3) RP/HC 更新（apply_rating が false のときはスキップ）
+      const apply = (body as SinglesPayload).apply_rating ?? true;
+      if (apply) {
+        const diff = 15 - loser_score;
+        const delta = calcDelta(
+          toInt(winner.ranking_points, 0),
+          toInt(loser.ranking_points, 0),
+          toInt(winner.handicap, 0),
+          toInt(loser.handicap, 0),
+          diff
+        );
+
+        const winnerNext = {
+          ranking_points: clamp(toInt(winner.ranking_points, 0) + delta.winnerPointsChange, 0, 99999),
+          handicap: clamp(toInt(winner.handicap, 0) + delta.winnerHandicapChange, 0, 50),
+          matches_played: toInt(winner.matches_played, 0) + 1,
+          wins: toInt(winner.wins, 0) + 1,
+        };
+
+        const loserNext = {
+          ranking_points: clamp(toInt(loser.ranking_points, 0) + delta.loserPointsChange, 0, 99999),
+          handicap: clamp(toInt(loser.handicap, 0) + delta.loserHandicapChange, 0, 50),
+          matches_played: toInt(loser.matches_played, 0) + 1,
+          losses: toInt(loser.losses, 0) + 1,
+        };
+
+        const [uw, ul] = await Promise.all([
+          supabaseAdmin.from('players').update(winnerNext).eq('id', winner_id),
+          supabaseAdmin.from('players').update(loserNext).eq('id', loser_id),
+        ]);
+        if (uw.error) console.warn('[matches API] winner update warning:', uw.error);
+        if (ul.error) console.warn('[matches API] loser  update warning:', ul.error);
+      }
+
+      return NextResponse.json({ ok: true, match_id: inserted?.id }, { status: 200 });
     }
 
-    return NextResponse.json({ ok: true, id: data?.id }, { status: 200 });
+    /* =========================
+     * 団体戦
+     * =======================*/
+    if (body.mode === 'teams') {
+      const winner_team_id = String((body as TeamsPayload).winner_team_id || '');
+      const loser_team_id  = String((body as TeamsPayload).loser_team_id || '');
+
+      if (!winner_team_id || !loser_team_id) {
+        return NextResponse.json({ ok: false, message: '勝利チーム/敗北チームを選択してください。' }, { status: 400 });
+      }
+      if (winner_team_id === loser_team_id) {
+        return NextResponse.json({ ok: false, message: '同一チームは選べません。' }, { status: 400 });
+      }
+
+      // 1) matches 先に作成
+      const { data: mIns, error: mErr } = await supabaseAdmin
+        .from('matches')
+        .insert({
+          mode: 'teams',
+          status: 'finalized',
+          match_date,
+          reporter_id,
+          winner_score: 15,
+          loser_score,
+          // venue: (body as TeamsPayload).venue ?? null,
+          // notes: (body as TeamsPayload).notes ?? null,
+        })
+        .select('id')
+        .single();
+
+      if (mErr || !mIns?.id) {
+        return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr?.message || 'match_id 不明'}` }, { status: 500 });
+      }
+
+      // 2) match_teams に 2 行挿入（1=勝利, 2=敗北）
+      const { error: mtErr } = await supabaseAdmin.from('match_teams').insert([
+        { match_id: mIns.id, team_id: winner_team_id, team_no: 1 },
+        { match_id: mIns.id, team_id: loser_team_id,  team_no: 2 },
+      ]);
+
+      if (mtErr) {
+        // 簡易ロールバック
+        await supabaseAdmin.from('matches').delete().eq('id', mIns.id);
+        return NextResponse.json({ ok: false, message: `チーム割当の登録に失敗しました: ${mtErr.message}` }, { status: 500 });
+      }
+
+      // 団体戦では個人 RP/HC は更新しない
+      return NextResponse.json({ ok: true, match_id: mIns.id }, { status: 200 });
+    }
+
+    return NextResponse.json({ ok: false, message: '未知のモードです。' }, { status: 400 });
   } catch (e: any) {
-    console.error('[api/matches] fatal:', e?.message || e);
-    return NextResponse.json({ ok: false, message: 'server_error' }, { status: 500 });
+    console.error('[api/matches] fatal:', e);
+    return NextResponse.json({ ok: false, message: 'サーバエラーが発生しました。' }, { status: 500 });
   }
 }
