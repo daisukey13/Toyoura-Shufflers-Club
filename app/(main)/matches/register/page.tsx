@@ -196,7 +196,7 @@ export default function MatchRegisterPage() {
     const K = 32;
     const expectedWinner = 1 / (1 + Math.pow(10, (loserPoints - winnerPoints) / 400));
     const scoreDiffMultiplier = 1 + scoreDifference / 30;
-    const handicapDiff = winnerHandicap - loserHandicap;
+    the const handicapDiff = winnerHandicap - loserHandicap;
     const handicapMultiplier = 1 + handicapDiff / 50;
 
     const baseWinnerChange = K * (1 - expectedWinner) * scoreDiffMultiplier * handicapMultiplier;
@@ -227,14 +227,10 @@ export default function MatchRegisterPage() {
     try {
       if (!authed) throw new Error('ログインが必要です');
 
-      // reporter_id (NOT NULL 制約対応)
-      const { data: userData } = await supabase.auth.getUser();
-      const reporter_id = userData.user?.id;
-      if (!reporter_id) throw new Error('セッションが失効しました。ログインし直してください。');
-
+      // （注）reporter_id はサーバ側 /api/matches で自動付与します
       const base = process.env.NEXT_PUBLIC_SUPABASE_URL!;
       const token = (await supabase.auth.getSession()).data.session?.access_token;
-      const headers = {
+      const restHeaders = {
         apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
         Authorization: `Bearer ${token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!}`,
         'Content-Type': 'application/json',
@@ -269,31 +265,27 @@ export default function MatchRegisterPage() {
           scoreDifference
         );
 
-        // matches 挿入（DB 制約：mode ∈ ('singles','teams')、status ∈ ('pending','finalized')、winner_score=15）
-        const matchPayload: any = {
-          mode: 'singles',
-          status: 'finalized',
-          match_date: formData.match_date,
-          reporter_id,
-          winner_id: formData.winner_id,
-          loser_id: formData.loser_id,
-          winner_score: 15,
-          loser_score: loserScore,
-          // venue/notes が DB に存在する場合は以下を有効化
-          // venue: formData.venue || null,
-          // notes: formData.notes || null,
-        };
-
-        const res = await fetch(`${base}/rest/v1/matches`, {
+        // ✅ server route に POST（reporter_id はサーバで付与）
+        const apiRes = await fetch('/api/matches', {
           method: 'POST',
-          headers,
-          body: JSON.stringify(matchPayload),
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'singles',
+            status: 'finalized',
+            match_date: formData.match_date,
+            winner_id: formData.winner_id,
+            loser_id: formData.loser_id,
+            winner_score: 15,
+            loser_score: loserScore,
+            // venue: formData.venue || null,
+            // notes: formData.notes || null,
+          }),
         });
-        if (!res.ok) {
-          throw new Error(`登録に失敗しました: ${await parseRestError(res)}`);
+        const apiJson = await apiRes.json().catch(() => ({}));
+        if (!apiRes.ok || apiJson?.ok === false) {
+          throw new Error(`登録に失敗しました: ${apiJson?.message || 'server error'}`);
         }
-        const inserted = (await res.json()) as Array<{ id: string }>;
-        const matchId = inserted?.[0]?.id;
+        const matchId: string | undefined = apiJson?.id;
         if (!matchId) console.warn('matches inserted but id not returned');
 
         // 個人の RP/HC 更新
@@ -331,48 +323,43 @@ export default function MatchRegisterPage() {
           throw new Error('同一チームは選べません');
         }
 
-        // matches 挿入（teams: team_no=1 が勝利 / 2 が敗北）
-        const mPayload: any = {
-          mode: 'teams',
-          status: 'finalized',
-          match_date: formData.match_date,
-          reporter_id,
-          winner_score: 15,
-          loser_score: loserScore,
-          winner_team_no: 1,
-          loser_team_no: 2,
-          // venue/notes を使う場合は列名に合わせて追加
-          // venue: formData.venue || null,
-          // notes: formData.notes || null,
-        };
-
-        const res = await fetch(`${base}/rest/v1/matches`, {
+        // ✅ server route に POST（reporter_id はサーバで付与）
+        const apiRes = await fetch('/api/matches', {
           method: 'POST',
-          headers,
-          body: JSON.stringify(mPayload),
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'teams',
+            status: 'finalized',
+            match_date: formData.match_date,
+            winner_score: 15,
+            loser_score: loserScore,
+            winner_team_no: 1,
+            loser_team_no: 2,
+            // venue: formData.venue || null,
+            // notes: formData.notes || null,
+          }),
         });
-        if (!res.ok) {
-          throw new Error(`登録に失敗しました: ${await parseRestError(res)}`);
+        const apiJson = await apiRes.json().catch(() => ({}));
+        if (!apiRes.ok || apiJson?.ok === false) {
+          throw new Error(`登録に失敗しました: ${apiJson?.message || 'server error'}`);
         }
-        const inserted = (await res.json()) as Array<{ id: string }>;
-        const matchId = inserted?.[0]?.id;
-        if (!matchId) throw new Error('登録は成功しましたが match_id を取得できませんでした');
+        const matchId: string = apiJson.id;
 
-        // match_teams に 2 行挿入
+        // match_teams に 2 行挿入（REST は従来どおり）
         const mtRows = [
           { match_id: matchId, team_id: formData.winner_team_id, team_no: 1 },
           { match_id: matchId, team_id: formData.loser_team_id, team_no: 2 },
         ];
         const res2 = await fetch(`${base}/rest/v1/match_teams`, {
           method: 'POST',
-          headers,
+          headers: restHeaders,
           body: JSON.stringify(mtRows),
         });
         if (!res2.ok) {
           throw new Error(`チーム割当の登録に失敗しました: ${await parseRestError(res2)}`);
         }
 
-        // 団体戦では個人 RP/HC は変更しない（チームランキングは集計で）
+        // 団体戦では個人 RP/HC は変更しない
         setSuccess(true);
         setTimeout(() => router.push('/matches'), 800);
         return;
