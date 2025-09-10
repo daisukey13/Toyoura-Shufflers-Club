@@ -18,6 +18,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [formData, setFormData] = useState({
     full_name: '',
     handle_name: '',
@@ -25,7 +26,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     avatar_url: '',
   });
 
-  // 認証ユーザー ID
+  // 認証ユーザーID取得（本人用の専用フォルダにアップロードするため）
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -42,26 +43,27 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       setLoading(true);
       setError(null);
 
-      const res = await fetch(
+      const response = await fetch(
         `${supabaseConfig.url}/rest/v1/players?id=eq.${params.id}&select=*`,
         { headers: supabaseHeaders, cache: 'no-store' }
       );
 
-      if (!res.ok) throw new Error('Failed to fetch player data');
+      if (!response.ok) throw new Error('Failed to fetch player data');
 
-      const data: Player[] = await res.json();
+      const data: Player[] = await response.json();
       if (!data?.length) throw new Error('Player not found');
 
       const p = data[0];
       setPlayer(p);
       setFormData({
-        full_name: p.full_name ?? '',
-        handle_name: p.handle_name ?? '',
-        email: (p as any).email ?? '',
-        avatar_url: p.avatar_url ?? '',
+        full_name: p.full_name || '',
+        handle_name: p.handle_name || '',
+        // players に email フィールドが無ければ無視されます
+        email: (p as any).email || '',
+        avatar_url: p.avatar_url || '',
       });
-    } catch (e: any) {
-      setError(e?.message || 'An error occurred');
+    } catch (err: any) {
+      setError(err?.message || 'An error occurred');
     } finally {
       setLoading(false);
     }
@@ -75,10 +77,12 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     e.preventDefault();
     setSaving(true);
     setError(null);
+
     try {
       const updateData: Partial<Player> = {
         full_name: formData.full_name,
         handle_name: formData.handle_name,
+        // players に email が無い場合は Supabase 側で無視されます
         ...(formData.email ? { email: formData.email } : {}),
         avatar_url: formData.avatar_url || null,
         updated_at: new Date().toISOString(),
@@ -88,8 +92,8 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       if (updateError) throw updateError;
 
       router.push(`/players/${params.id}`);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to update player');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to update player');
     } finally {
       setSaving(false);
     }
@@ -97,7 +101,10 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   };
 
   if (loading) {
@@ -148,6 +155,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
         <h1 className="text-3xl font-bold mb-8">Edit Player</h1>
 
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Full Name */}
           <div>
             <label htmlFor="full_name" className="block text-sm font-medium text-gray-700 mb-2">
               Full Name
@@ -163,6 +171,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
+          {/* Handle Name */}
           <div>
             <label htmlFor="handle_name" className="block text-sm font-medium text-gray-700 mb-2">
               Handle Name
@@ -178,6 +187,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
+          {/* Email（players に無い場合は無視） */}
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
               Email
@@ -192,7 +202,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
-          {/* Avatar：本人専用フォルダのみ表示 */}
+          {/* Avatar：本人専用アップロード + 自分のフォルダのみギャラリー表示 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Avatar</label>
 
@@ -203,11 +213,11 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
                 onSelected={(publicUrl) =>
                   setFormData((prev) => ({ ...prev, avatar_url: publicUrl }))
                 }
-                showGallery
+                showGallery={true}
               />
             ) : (
               <>
-                {/* 認証がまだ取れない場合のフォールバック */}
+                {/* 認証が取れない場合は URL 入力のフォールバック */}
                 <input
                   type="url"
                   id="avatar_url"

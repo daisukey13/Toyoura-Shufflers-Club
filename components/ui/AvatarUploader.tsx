@@ -43,8 +43,9 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       setLoading(true);
       setError(null);
 
+      const id = encodeURIComponent(params.id);
       const response = await fetch(
-        `${supabaseConfig.url}/rest/v1/players?id=eq.${params.id}&select=*`,
+        `${supabaseConfig.url}/rest/v1/players?id=eq.${id}&select=*`,
         { headers: supabaseHeaders, cache: 'no-store' }
       );
 
@@ -59,7 +60,8 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
         setFormData({
           full_name: playerData.full_name || '',
           handle_name: playerData.handle_name || '',
-          email: (playerData as any).email || '', // 型にない場合は any 経由でフォールバック
+          // players テーブルに email が無い場合は空文字（無視されます）
+          email: (playerData as any).email || '',
           avatar_url: playerData.avatar_url || '',
         });
       } else {
@@ -85,7 +87,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       const updateData: Partial<Player> = {
         full_name: formData.full_name,
         handle_name: formData.handle_name,
-        // email を players テーブルに直接持っていない場合は無視されます
+        // players に email カラムがなければ無視されます
         ...(formData.email ? { email: formData.email } : {}),
         avatar_url: formData.avatar_url || null,
         updated_at: new Date().toISOString(),
@@ -215,7 +217,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
               <AvatarUploader
                 userId={authUserId}
                 initialUrl={formData.avatar_url || null}
-                onSelected={(publicUrl) => {
+                onSelected={(publicUrl: string) => {
                   setFormData((prev) => ({ ...prev, avatar_url: publicUrl }));
                 }}
                 showGallery={true}
