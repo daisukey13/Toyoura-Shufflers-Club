@@ -1,12 +1,22 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, type ComponentType } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { SupabaseAPI } from '@/lib/api/supabase-api';
 import type { Player } from '@/types/player';
 import { supabaseConfig, supabaseHeaders } from '@/lib/config/supabase';
-import AvatarUploader from '@/components/ui/AvatarUploader';
+import AvatarUploaderRaw from '@/components/ui/AvatarUploader';
+
+// --- ここが重要（AvatarUploader の想定 Props を明示してキャスト） ---
+type AvatarUploaderProps = {
+  userId: string;
+  initialUrl: string | null;
+  onSelected: (publicUrl: string) => void;
+  showGallery?: boolean;
+};
+const AvatarUploader = AvatarUploaderRaw as unknown as ComponentType<AvatarUploaderProps>;
+// --------------------------------------------------------------------
 
 export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -60,7 +70,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
         setFormData({
           full_name: playerData.full_name || '',
           handle_name: playerData.handle_name || '',
-          // players テーブルに email が無い場合は空文字（無視されます）
+          // players に email カラムが無い構成でも落ちないよう any 経由で取得
           email: (playerData as any).email || '',
           avatar_url: playerData.avatar_url || '',
         });
@@ -209,15 +219,13 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
           {/* Avatar：本人専用アップローダ + 自分のフォルダのみギャラリー表示 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Avatar
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Avatar</label>
 
             {authUserId ? (
               <AvatarUploader
                 userId={authUserId}
                 initialUrl={formData.avatar_url || null}
-                onSelected={(publicUrl: string) => {
+                onSelected={(publicUrl) => {
                   setFormData((prev) => ({ ...prev, avatar_url: publicUrl }));
                 }}
                 showGallery={true}
