@@ -196,7 +196,7 @@ export default function MatchRegisterPage() {
     const K = 32;
     const expectedWinner = 1 / (1 + Math.pow(10, (loserPoints - winnerPoints) / 400));
     const scoreDiffMultiplier = 1 + scoreDifference / 30;
-    the const handicapDiff = winnerHandicap - loserHandicap;
+    const handicapDiff = winnerHandicap - loserHandicap; // ← ここを修正（`the` を削除）
     const handicapMultiplier = 1 + handicapDiff / 50;
 
     const baseWinnerChange = K * (1 - expectedWinner) * scoreDiffMultiplier * handicapMultiplier;
@@ -399,7 +399,7 @@ export default function MatchRegisterPage() {
   // 未ログイン（自動リダイレクトせず案内）
   if (authed === false) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-8">
+      <div className="min-h-screen flex items中心 justify-center p-8">
         <div className="text-center">
           <p className="mb-4">試合結果の登録にはログインが必要です。</p>
           <Link href="/login?redirect=/matches/register" className="underline text-purple-300">
@@ -418,7 +418,7 @@ export default function MatchRegisterPage() {
         <div className="inline-block p-4 mb-4 rounded-full bg-gradient-to-br from-purple-400/20 to-pink-600/20">
           <FaGamepad className="text-5xl text-purple-400" />
         </div>
-        <h1 className="text-4xl font-bold mb-2 text-yellow-100">試合結果登録</h1>
+        <h1 className="text-4xl font-bold mb-2 text黄色-100">試合結果登録</h1>
         <p className="text-gray-400">個人戦 / 団体戦を選び、必要事項を入力して登録します。</p>
         <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-green-500/20 rounded-full">
           <FaLock className="text-green-400 text-sm" />
@@ -510,7 +510,7 @@ export default function MatchRegisterPage() {
             required
             value={formData.match_date}
             onChange={(e) => setFormData({ ...formData, match_date: e.target.value })}
-            className="w-full px-4 py-3 bg-purple-900/30 border border-purple-500/30 rounded-lg text-yellow-100 focus:outline-none focus:border-purple-400"
+            className="w-full px-4 py-3 bg紫-900/30 border border-purple-500/30 rounded-lg text-yellow-100 focus:outline-none focus:border-purple-400"
           />
         </div>
 
