@@ -1,12 +1,22 @@
+// app/(main)/players/[id]/edit/page.tsx
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, type ComponentType } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { SupabaseAPI } from '@/lib/api/supabase-api';
 import type { Player } from '@/types/player';
 import { supabaseConfig, supabaseHeaders } from '@/lib/config/supabase';
-import AvatarUploader from '@/components/ui/AvatarUploader';
+import AvatarUploaderRaw from '@/components/ui/AvatarUploader';
+
+// AvatarUploader の想定 Props をこのページで定義し、型キャストして使用する
+type AvatarUploaderProps = {
+  userId: string;
+  initialUrl: string | null;
+  onSelected: (publicUrl: string) => void;
+  showGallery?: boolean;
+};
+const AvatarUploader = AvatarUploaderRaw as unknown as ComponentType<AvatarUploaderProps>;
 
 export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -26,7 +36,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
     avatar_url: '',
   });
 
-  // 認証ユーザーID取得（本人用の専用フォルダにアップロードするため）
+  // 認証ユーザーID取得
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -43,27 +53,30 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       setLoading(true);
       setError(null);
 
+      const id = encodeURIComponent(params.id);
       const response = await fetch(
-        `${supabaseConfig.url}/rest/v1/players?id=eq.${params.id}&select=*`,
+        `${supabaseConfig.url}/rest/v1/players?id=eq.${id}&select=*`,
         { headers: supabaseHeaders, cache: 'no-store' }
       );
 
       if (!response.ok) throw new Error('Failed to fetch player data');
 
       const data: Player[] = await response.json();
-      if (!data?.length) throw new Error('Player not found');
-
-      const p = data[0];
-      setPlayer(p);
-      setFormData({
-        full_name: p.full_name || '',
-        handle_name: p.handle_name || '',
-        // players に email フィールドが無ければ無視されます
-        email: (p as any).email || '',
-        avatar_url: p.avatar_url || '',
-      });
-    } catch (err: any) {
-      setError(err?.message || 'An error occurred');
+      if (data?.length) {
+        const playerData = data[0];
+        setPlayer(playerData);
+        setFormData({
+          full_name: playerData.full_name || '',
+          handle_name: playerData.handle_name || '',
+          // players に email カラムが無い構成でも落ちないよう any 経由で取得
+          email: (playerData as any).email || '',
+          avatar_url: playerData.avatar_url || '',
+        });
+      } else {
+        throw new Error('Player not found');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
     }
@@ -82,7 +95,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       const updateData: Partial<Player> = {
         full_name: formData.full_name,
         handle_name: formData.handle_name,
-        // players に email が無い場合は Supabase 側で無視されます
+        // players に email カラムがなければ無視されます
         ...(formData.email ? { email: formData.email } : {}),
         avatar_url: formData.avatar_url || null,
         updated_at: new Date().toISOString(),
@@ -92,8 +105,8 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       if (updateError) throw updateError;
 
       router.push(`/players/${params.id}`);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to update player');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update player');
     } finally {
       setSaving(false);
     }
@@ -101,10 +114,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   if (loading) {
@@ -202,7 +212,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
             />
           </div>
 
-          {/* Avatar：本人専用アップロード + 自分のフォルダのみギャラリー表示 */}
+          {/* Avatar：本人専用アップローダ + 自分のフォルダのみギャラリー表示 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Avatar</label>
 
@@ -210,14 +220,13 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
               <AvatarUploader
                 userId={authUserId}
                 initialUrl={formData.avatar_url || null}
-                onSelected={(publicUrl) =>
-                  setFormData((prev) => ({ ...prev, avatar_url: publicUrl }))
-                }
+                onSelected={(publicUrl) => {
+                  setFormData((prev) => ({ ...prev, avatar_url: publicUrl }));
+                }}
                 showGallery={true}
               />
             ) : (
               <>
-                {/* 認証が取れない場合は URL 入力のフォールバック */}
                 <input
                   type="url"
                   id="avatar_url"
@@ -228,13 +237,17 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 {formData.avatar_url && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={formData.avatar_url}
-                    alt="Avatar preview"
-                    className="w-20 h-20 rounded-full object-cover mt-2"
-                    onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')}
-                  />
+                  <div className="mt-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={formData.avatar_url}
+                      alt="Avatar preview"
+                      className="w-20 h-20 rounded-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
                 )}
                 <p className="text-xs text-gray-500 mt-1">
                   ログイン状態ではカメラ撮影／本人用ギャラリーから選べます。
