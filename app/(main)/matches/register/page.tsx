@@ -145,7 +145,7 @@ export default function MatchRegisterPage() {
     return () => {
       cancelled = true;
     };
-  }, [authed, supabase]);
+  }, [authed]);
 
   // 4) UI 状態
   const [mode, setMode] = useState<MatchMode>('singles');
