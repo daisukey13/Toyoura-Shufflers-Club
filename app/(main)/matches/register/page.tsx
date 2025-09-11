@@ -16,7 +16,7 @@ import {
 } from 'react-icons/fa';
 
 import { createClient } from '@/lib/supabase/client';
-import { useFetchPlayersData, updatePlayer } from '@/lib/hooks/useFetchSupabaseData';
+import { useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData'; // ← updatePlayer は不要に
 
 /* ========================================================================
  * Types
@@ -54,7 +54,7 @@ type FormState = {
  * Helpers
  * ===================================================================== */
 
-/** PostgREST のエラーテキストを人間向けに整形 */
+/** PostgREST のエラーテキストを人間向けに整形（APIエラー表示にも流用） */
 async function parseRestError(res: Response) {
   let msg = `HTTP ${res.status}`;
   try {
@@ -91,7 +91,7 @@ export default function MatchRegisterPage() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch('/auth/whoami', { cache: 'no-store' });
+        const r = await fetch('/auth/whoami', { cache: 'no-store', credentials: 'include' });
         const j = r.ok ? await r.json() : { authenticated: false };
         if (!cancelled) setAuthed(!!j?.authenticated);
       } catch {
@@ -124,12 +124,10 @@ export default function MatchRegisterPage() {
       setTeamsLoading(true);
       setTeamsError(null);
       try {
-        const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token;
+        // 認証有無に関係なく一覧は公開 API でもよいが、将来 RLS で絞る場合に備え cookie を同送
         const base = process.env.NEXT_PUBLIC_SUPABASE_URL!;
         const headers = {
           apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-          Authorization: `Bearer ${token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!}`,
           'Content-Type': 'application/json',
         };
         const url = `${base}/rest/v1/teams?select=id,name&order=name.asc`;
@@ -184,7 +182,7 @@ export default function MatchRegisterPage() {
   const getSelectedTeam = (teamId: string) => teams.find((t) => t.id === teamId);
 
   /* ---------------------------------------------------------------------
-   * ELO ライク計算（個人戦のみ使用。団体戦は個人 RP/HC を変更しない）
+   * ELO ライク計算（プレビュー用。登録時の更新は API 側で実施）
    * ------------------------------------------------------------------- */
   const calculatePointsAndHandicapChange = (
     winnerPoints: number,
@@ -196,7 +194,7 @@ export default function MatchRegisterPage() {
     const K = 32;
     const expectedWinner = 1 / (1 + Math.pow(10, (loserPoints - winnerPoints) / 400));
     const scoreDiffMultiplier = 1 + scoreDifference / 30;
-    const handicapDiff = winnerHandicap - loserHandicap; // ← ここを修正（`the` を削除）
+    const handicapDiff = winnerHandicap - loserHandicap;
     const handicapMultiplier = 1 + handicapDiff / 50;
 
     const baseWinnerChange = K * (1 - expectedWinner) * scoreDiffMultiplier * handicapMultiplier;
@@ -214,7 +212,7 @@ export default function MatchRegisterPage() {
   };
 
   /* ---------------------------------------------------------------------
-   * 送信
+   * 送信（← ここを /api/matches に一本化）
    * ------------------------------------------------------------------- */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -227,23 +225,13 @@ export default function MatchRegisterPage() {
     try {
       if (!authed) throw new Error('ログインが必要です');
 
-      // （注）reporter_id はサーバ側 /api/matches で自動付与します
-      const base = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-      const token = (await supabase.auth.getSession()).data.session?.access_token;
-      const restHeaders = {
-        apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        Authorization: `Bearer ${token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=representation',
-      };
-
-      // 共通バリデーション（DB 側の check と足並み）
       const loserScore = toInt(formData.loser_score, 0);
       if (loserScore < 0 || loserScore >= 15) {
         throw new Error('敗者スコアは 0〜14 点です');
       }
 
-      /* --------------------- 個人戦 --------------------- */
+      // 送信ペイロードをモード別に作成
+      let payload: any;
       if (mode === 'singles') {
         if (!formData.winner_id || !formData.loser_id) {
           throw new Error('勝者と敗者を選択してください');
@@ -251,121 +239,55 @@ export default function MatchRegisterPage() {
         if (formData.winner_id === formData.loser_id) {
           throw new Error('同一プレイヤーは選べません');
         }
-
-        const winner = getSelectedPlayer(formData.winner_id);
-        const loser = getSelectedPlayer(formData.loser_id);
-        if (!winner || !loser) throw new Error('プレイヤー情報の取得に失敗しました');
-
-        const scoreDifference = 15 - loserScore;
-        const changes = calculatePointsAndHandicapChange(
-          winner.ranking_points,
-          loser.ranking_points,
-          winner.handicap,
-          loser.handicap,
-          scoreDifference
-        );
-
-        // ✅ server route に POST（reporter_id はサーバで付与）
-        const apiRes = await fetch('/api/matches', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            mode: 'singles',
-            status: 'finalized',
-            match_date: formData.match_date,
-            winner_id: formData.winner_id,
-            loser_id: formData.loser_id,
-            winner_score: 15,
-            loser_score: loserScore,
-            // venue: formData.venue || null,
-            // notes: formData.notes || null,
-          }),
-        });
-        const apiJson = await apiRes.json().catch(() => ({}));
-        if (!apiRes.ok || apiJson?.ok === false) {
-          throw new Error(`登録に失敗しました: ${apiJson?.message || 'server error'}`);
-        }
-        const matchId: string | undefined = apiJson?.id;
-        if (!matchId) console.warn('matches inserted but id not returned');
-
-        // 個人の RP/HC 更新
-        const winnerNext = {
-          ranking_points: winner.ranking_points + changes.winnerPointsChange,
-          handicap: Math.max(0, winner.handicap + changes.winnerHandicapChange),
-          matches_played: (winner.matches_played ?? 0) + 1,
-          wins: (winner.wins ?? 0) + 1,
+        payload = {
+          mode: 'singles',
+          match_date: formData.match_date,
+          winner_id: formData.winner_id,
+          loser_id: formData.loser_id,
+          loser_score: loserScore,
+          // venue: formData.venue || null,
+          // notes: formData.notes || null,
+          // apply_rating: true, // 省略可（API側で true デフォルト）
         };
-        const loserNext = {
-          ranking_points: Math.max(0, loser.ranking_points + changes.loserPointsChange),
-          handicap: Math.min(50, loser.handicap + changes.loserHandicapChange),
-          matches_played: (loser.matches_played ?? 0) + 1,
-          losses: (loser.losses ?? 0) + 1,
-        };
-
-        const [uw, ul] = await Promise.all([
-          updatePlayer(formData.winner_id, winnerNext),
-          updatePlayer(formData.loser_id, loserNext),
-        ]);
-        if (uw.error) console.warn('Winner update warning:', uw.error);
-        if (ul.error) console.warn('Loser update warning:', ul.error);
-
-        setSuccess(true);
-        setTimeout(() => router.push('/matches'), 800);
-        return;
-      }
-
-      /* --------------------- 団体戦 --------------------- */
-      if (mode === 'teams') {
+      } else {
         if (!formData.winner_team_id || !formData.loser_team_id) {
           throw new Error('勝利チームと敗北チームを選択してください');
         }
         if (formData.winner_team_id === formData.loser_team_id) {
           throw new Error('同一チームは選べません');
         }
-
-        // ✅ server route に POST（reporter_id はサーバで付与）
-        const apiRes = await fetch('/api/matches', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            mode: 'teams',
-            status: 'finalized',
-            match_date: formData.match_date,
-            winner_score: 15,
-            loser_score: loserScore,
-            winner_team_no: 1,
-            loser_team_no: 2,
-            // venue: formData.venue || null,
-            // notes: formData.notes || null,
-          }),
-        });
-        const apiJson = await apiRes.json().catch(() => ({}));
-        if (!apiRes.ok || apiJson?.ok === false) {
-          throw new Error(`登録に失敗しました: ${apiJson?.message || 'server error'}`);
-        }
-        const matchId: string = apiJson.id;
-
-        // match_teams に 2 行挿入（REST は従来どおり）
-        const mtRows = [
-          { match_id: matchId, team_id: formData.winner_team_id, team_no: 1 },
-          { match_id: matchId, team_id: formData.loser_team_id, team_no: 2 },
-        ];
-        const res2 = await fetch(`${base}/rest/v1/match_teams`, {
-          method: 'POST',
-          headers: restHeaders,
-          body: JSON.stringify(mtRows),
-        });
-        if (!res2.ok) {
-          throw new Error(`チーム割当の登録に失敗しました: ${await parseRestError(res2)}`);
-        }
-
-        // 団体戦では個人 RP/HC は変更しない
-        setSuccess(true);
-        setTimeout(() => router.push('/matches'), 800);
-        return;
+        payload = {
+          mode: 'teams',
+          match_date: formData.match_date,
+          winner_team_id: formData.winner_team_id,
+          loser_team_id: formData.loser_team_id,
+          loser_score: loserScore,
+          // venue: formData.venue || null,
+          // notes: formData.notes || null,
+        };
       }
 
-      throw new Error('不明なモードです');
+      // 自作 API に送信（Cookie を必ず同送）
+      const res = await fetch('/api/matches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        // API からのメッセージを優先表示
+        try {
+          const j = await res.json();
+          throw new Error(j?.message || `登録に失敗しました (HTTP ${res.status})`);
+        } catch {
+          throw new Error(await parseRestError(res));
+        }
+      }
+
+      setSuccess(true);
+      setTimeout(() => router.push('/matches'), 800);
+      return;
     } catch (err: any) {
       setError(err?.message || '登録に失敗しました');
     } finally {
@@ -399,7 +321,7 @@ export default function MatchRegisterPage() {
   // 未ログイン（自動リダイレクトせず案内）
   if (authed === false) {
     return (
-      <div className="min-h-screen flex items中心 justify-center p-8">
+      <div className="min-h-screen flex items-center justify-center p-8">
         <div className="text-center">
           <p className="mb-4">試合結果の登録にはログインが必要です。</p>
           <Link href="/login?redirect=/matches/register" className="underline text-purple-300">
@@ -418,7 +340,7 @@ export default function MatchRegisterPage() {
         <div className="inline-block p-4 mb-4 rounded-full bg-gradient-to-br from-purple-400/20 to-pink-600/20">
           <FaGamepad className="text-5xl text-purple-400" />
         </div>
-        <h1 className="text-4xl font-bold mb-2 text黄色-100">試合結果登録</h1>
+        <h1 className="text-4xl font-bold mb-2 text-yellow-100">試合結果登録</h1>
         <p className="text-gray-400">個人戦 / 団体戦を選び、必要事項を入力して登録します。</p>
         <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-green-500/20 rounded-full">
           <FaLock className="text-green-400 text-sm" />
@@ -510,7 +432,7 @@ export default function MatchRegisterPage() {
             required
             value={formData.match_date}
             onChange={(e) => setFormData({ ...formData, match_date: e.target.value })}
-            className="w-full px-4 py-3 bg紫-900/30 border border-purple-500/30 rounded-lg text-yellow-100 focus:outline-none focus:border-purple-400"
+            className="w-full px-4 py-3 bg-purple-900/30 border border-purple-500/30 rounded-lg text-yellow-100 focus:outline-none focus:border-purple-400"
           />
         </div>
 
