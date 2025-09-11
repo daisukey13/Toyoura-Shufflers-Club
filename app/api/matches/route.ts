@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 
 /* ===================== Types ===================== */
 type SinglesPayload = {
-  mode: 'singles';
+  mode: 'singles' | 'single';
   match_date: string;
   winner_id: string;
   loser_id: string;
@@ -20,7 +20,7 @@ type SinglesPayload = {
 };
 
 type TeamsPayload = {
-  mode: 'teams';
+  mode: 'teams' | 'team';
   match_date: string;
   winner_team_id: string;
   loser_team_id: string;
@@ -67,6 +67,36 @@ function calcDelta(
   };
 }
 
+/**
+ * DB のチェック制約に合わせて mode/status をフォールバックさせながら挿入する
+ * - 例: 'singles' が NG なら 'single' を試す / 'teams' が NG なら 'team' を試す
+ * - status も 'finalized' が NG なら 'finished' を試す
+ */
+async function insertMatchWithFallback(baseRow: Record<string, any>) {
+  const mode = String(baseRow.mode);
+  const isSingles = mode.startsWith('single');
+  const modeCandidates = isSingles ? ['singles', 'single'] : ['teams', 'team'];
+  const statusCandidates = baseRow.status ? [baseRow.status, 'finished'] : ['finalized', 'finished'];
+
+  let lastErr: any = null;
+  for (const m of modeCandidates) {
+    for (const s of statusCandidates) {
+      const { data, error } = await supabaseAdmin
+        .from('matches')
+        .insert({ ...baseRow, mode: m, status: s })
+        .select('id')
+        .single();
+
+      if (!error) return { data, error: null };
+      lastErr = error;
+
+      // mode のチェック違反以外なら、他候補を試す前に一応続行（最終的に lastErr を返す）
+      // ここでは特に break しないで全候補を試す
+    }
+  }
+  return { data: null, error: lastErr };
+}
+
 /* ===================== Handler ===================== */
 export async function POST(req: NextRequest) {
   try {
@@ -99,7 +129,7 @@ export async function POST(req: NextRequest) {
     if (userErr || !userData?.user) {
       return NextResponse.json({ ok: false, message: '認証が必要です。' }, { status: 401 });
     }
-    const reporter_id = userData.user.id; // ← ここで確定
+    const reporter_id = userData.user.id; // ← ここで確定（NOT NULL 対策の主軸）
 
     // 2) 入力取り出し & バリデーション
     const body = (await req.json().catch(() => null)) as Partial<Body> | null;
@@ -114,7 +144,7 @@ export async function POST(req: NextRequest) {
     const loser_score = clamp(toInt((body as any).loser_score, 0), 0, 14);
 
     /* -------------------- 個人戦 -------------------- */
-    if (body.mode === 'singles') {
+    if (body.mode === 'singles' || body.mode === 'single') {
       const winner_id = String((body as SinglesPayload).winner_id || '');
       const loser_id = String((body as SinglesPayload).loser_id || '');
 
@@ -125,7 +155,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一プレイヤーは選べません。' }, { status: 400 });
       }
 
-      // 現在値取得（順位更新用）— service_role で安全に取得
+      // 現在値取得（順位更新用）
       const { data: players, error: pErr } = await supabaseAdmin
         .from('players')
         .select('id, ranking_points, handicap, matches_played, wins, losses')
@@ -140,26 +170,21 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
       }
 
-      // 重要: matches 挿入も service_role で確実に実行し、reporter_id を明示セット
-      const { data: inserted, error: mErr } = await supabaseAdmin
-        .from('matches')
-        .insert({
-          mode: 'singles',
-          status: 'finalized',
-          match_date,
-          reporter_id, // ← 明示的にセット
-          winner_id,
-          loser_id,
-          winner_score: 15,
-          loser_score,
-          // venue: (body as SinglesPayload).venue ?? null,
-          // notes: (body as SinglesPayload).notes ?? null,
-        })
-        .select('id')
-        .single();
+      // matches 挿入（mode/status をフォールバックで試す）
+      const { data: inserted, error: mErr } = await insertMatchWithFallback({
+        mode: body.mode, // 'singles' or 'single'（中で候補を試す）
+        status: 'finalized',
+        match_date,
+        reporter_id,
+        winner_id,
+        loser_id,
+        winner_score: 15,
+        loser_score,
+        // venue: (body as SinglesPayload).venue ?? null,
+        // notes: (body as SinglesPayload).notes ?? null,
+      });
 
       if (mErr) {
-        // NOT NULL などのエラーはここで表面化
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr.message}` }, { status: 500 });
       }
 
@@ -200,7 +225,7 @@ export async function POST(req: NextRequest) {
     }
 
     /* -------------------- 団体戦 -------------------- */
-    if (body.mode === 'teams') {
+    if (body.mode === 'teams' || body.mode === 'team') {
       const winner_team_id = String((body as TeamsPayload).winner_team_id || '');
       const loser_team_id = String((body as TeamsPayload).loser_team_id || '');
 
@@ -211,27 +236,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一チームは選べません。' }, { status: 400 });
       }
 
-      // matches 挿入（service_role）— reporter_id を明示セット
-      const { data: mIns, error: mErr } = await supabaseAdmin
-        .from('matches')
-        .insert({
-          mode: 'teams',
-          status: 'finalized',
-          match_date,
-          reporter_id, // ← 明示的にセット
-          winner_score: 15,
-          loser_score,
-          // venue: (body as TeamsPayload).venue ?? null,
-          // notes: (body as TeamsPayload).notes ?? null,
-        })
-        .select('id')
-        .single();
+      // matches 挿入（mode/status フォールバック）
+      const { data: mIns, error: mErr } = await insertMatchWithFallback({
+        mode: body.mode, // 'teams' or 'team'
+        status: 'finalized',
+        match_date,
+        reporter_id,
+        winner_score: 15,
+        loser_score,
+        // venue: (body as TeamsPayload).venue ?? null,
+        // notes: (body as TeamsPayload).notes ?? null,
+      });
 
       if (mErr || !mIns?.id) {
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr?.message || 'match_id 不明'}` }, { status: 500 });
       }
 
-      // チーム割当（service_role）
+      // チーム割当
       const { error: mtErr } = await supabaseAdmin.from('match_teams').insert([
         { match_id: mIns.id, team_id: winner_team_id, team_no: 1 },
         { match_id: mIns.id, team_id: loser_team_id, team_no: 2 },
