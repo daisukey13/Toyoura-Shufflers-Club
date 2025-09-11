@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    // ユーザーの Cookie/JWT を使う Supabase（auth.uid() が効く）
+    // ユーザーの Cookie/JWT を使う Supabase クライアント
     const cookieStore = cookies();
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
     if (userErr || !userData?.user) {
       return NextResponse.json({ ok: false, message: '認証が必要です。' }, { status: 401 });
     }
+    const reporter_id = userData.user.id;
 
     // Body
     const body = (await req.json().catch(() => null)) as Partial<Body> | null;
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一プレイヤーは選べません。' }, { status: 400 });
       }
 
-      // 先にプレイヤー情報（RP/HC）を取得（順位更新用）
+      // 順位更新用に現在値を取得（管理キーでOK）
       const { data: players, error: pErr } = await supabaseAdmin
         .from('players')
         .select('id, ranking_points, handicap, matches_played, wins, losses')
@@ -139,14 +140,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
       }
 
-      // ★ 重要：試合の挿入は「ユーザーセッション(supa)」で行う
-      // reporter_id は送らず、DB 側の DEFAULT/トリガ(auth.uid()) に任せる
+      // 重要：ユーザーセッションで挿入し、reporter_id を「明示的に」セット
       const { data: inserted, error: mErr } = await supa
         .from('matches')
         .insert({
           mode: 'singles',
           status: 'finalized',
           match_date,
+          reporter_id, // ← ここがポイント
           winner_id,
           loser_id,
           winner_score: 15,
@@ -209,13 +210,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一チームは選べません。' }, { status: 400 });
       }
 
-      // ★ 重要：試合の挿入は「ユーザーセッション(supa)」
+      // 重要：ユーザーセッションで挿入し、reporter_id を明示的にセット
       const { data: mIns, error: mErr } = await supa
         .from('matches')
         .insert({
           mode: 'teams',
           status: 'finalized',
           match_date,
+          reporter_id, // ← ここがポイント
           winner_score: 15,
           loser_score,
           // venue: (body as TeamsPayload).venue ?? null,
@@ -228,7 +230,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr?.message || 'match_id 不明'}` }, { status: 500 });
       }
 
-      // チーム割当は service_role で実施（RLS を気にせずに済む）
+      // チーム割当は service_role で実施（RLS に左右されない）
       const { error: mtErr } = await supabaseAdmin.from('match_teams').insert([
         { match_id: mIns.id, team_id: winner_team_id, team_no: 1 },
         { match_id: mIns.id, team_id: loser_team_id, team_no: 2 },
