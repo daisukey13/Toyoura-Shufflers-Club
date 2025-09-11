@@ -80,11 +80,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    // ★ ここが修正ポイント：cookies をそのまま渡す（型エラー回避）
+    // ★ 修正点：cookies() から取得したストアに get/set/remove を実装して渡す（第3引数は as any）
+    const cookieStore = cookies();
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-      { cookies }
+      {
+        cookies: {
+          get(name: string) {
+            return cookieStore.get(name)?.value;
+          },
+          set(name: string, value: string, options?: any) {
+            // Next 14+ 署名に合わせる
+            cookieStore.set(name, value, options as any);
+          },
+          remove(name: string, options?: any) {
+            cookieStore.set(name, '', options as any);
+          },
+        },
+      } as any
     );
 
     const { data: userData, error: userErr } = await supa.auth.getUser();
