@@ -1,7 +1,7 @@
 // app/api/matches/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
@@ -80,34 +80,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    // ★ 修正点：cookies() から取得したストアに get/set/remove を実装して渡す（第3引数は as any）
+    // cookies() をラップして createServerClient へ（型は CookieOptions を使用）
     const cookieStore = cookies();
     const supa = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
           get(name: string) {
             return cookieStore.get(name)?.value;
           },
-          set(name: string, value: string, options?: any) {
-            // Next 14+ 署名に合わせる
-            cookieStore.set(name, value, options as any);
+          set(name: string, value: string, options?: CookieOptions) {
+            cookieStore.set({ name, value, ...options });
           },
-          remove(name: string, options?: any) {
-            cookieStore.set(name, '', options as any);
+          remove(name: string, options?: CookieOptions) {
+            cookieStore.set({ name, value: '', ...options });
           },
         },
-      } as any
+      }
     );
 
+    // 認証ユーザー取得（未認証なら 401）
     const { data: userData, error: userErr } = await supa.auth.getUser();
     if (userErr || !userData?.user) {
       return NextResponse.json({ ok: false, message: '認証が必要です。' }, { status: 401 });
     }
     const reporter_id = userData.user.id;
 
-    const body = (await req.json()) as Partial<Body> | undefined;
+    // リクエストボディ
+    const body = (await req.json().catch(() => null)) as Partial<Body> | null;
     if (!body || !body.mode) {
       return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
     }
@@ -130,6 +131,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一プレイヤーは選べません。' }, { status: 400 });
       }
 
+      // 先にプレイヤー情報（RP/HC）を取得
       const { data: players, error: pErr } = await supabaseAdmin
         .from('players')
         .select('id, ranking_points, handicap, matches_played, wins, losses')
@@ -144,6 +146,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
       }
 
+      // 試合登録（reporter_id を必ず付ける）
       const { data: inserted, error: mErr } = await supabaseAdmin
         .from('matches')
         .insert({
@@ -165,6 +168,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr.message}` }, { status: 500 });
       }
 
+      // レーティング反映（デフォルト true）
       const apply = (body as SinglesPayload).apply_rating ?? true;
       if (apply) {
         const diff = 15 - loser_score;
@@ -197,7 +201,7 @@ export async function POST(req: NextRequest) {
         if (ul.error) console.warn('[matches API] loser  update warning:', ul.error);
       }
 
-      return NextResponse.json({ ok: true, match_id: inserted?.id }, { status: 200 });
+      return NextResponse.json({ ok: true, match_id: inserted?.id }, { status: 201 });
     }
 
     /* -------------------- 団体戦 -------------------- */
@@ -212,6 +216,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一チームは選べません。' }, { status: 400 });
       }
 
+      // 試合登録（reporter_id を必ず付ける）
       const { data: mIns, error: mErr } = await supabaseAdmin
         .from('matches')
         .insert({
@@ -231,6 +236,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr?.message || 'match_id 不明'}` }, { status: 500 });
       }
 
+      // チーム割当 2 行
       const { error: mtErr } = await supabaseAdmin.from('match_teams').insert([
         { match_id: mIns.id, team_id: winner_team_id, team_no: 1 },
         { match_id: mIns.id, team_id: loser_team_id, team_no: 2 },
@@ -242,7 +248,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: `チーム割当の登録に失敗しました: ${mtErr.message}` }, { status: 500 });
       }
 
-      return NextResponse.json({ ok: true, match_id: mIns.id }, { status: 200 });
+      return NextResponse.json({ ok: true, match_id: mIns.id }, { status: 201 });
     }
 
     return NextResponse.json({ ok: false, message: '未知のモードです。' }, { status: 400 });
