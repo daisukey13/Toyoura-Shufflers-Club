@@ -3,7 +3,7 @@ import { cookies as nextCookies } from 'next/headers';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
-  // ── Supabase SSR: レイアウト内では Cookie を書き換えない（dev のクラッシュ回避）
+  // ── Supabase SSR: レイアウト（RSC）では Cookie を書き換えない（dev のクラッシュ回避）
   const cookieStore = nextCookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -13,7 +13,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
-        // レイアウト（RSC）では set/remove を no-op にする
+        // RSC では set/remove を no-op にする
         set(_name: string, _value: string, _options: CookieOptions) {
           /* no-op in RSC */
         },
@@ -25,11 +25,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   );
   void supabase; // 未使用警告の抑止
 
-  return (
-    <>
-      <Header />
-      <main className="min-h-[calc(100vh-64px)]">{children}</main>
-      <Footer />
-    </>
-  );
+  // Header / Footer は app/layout.tsx 側で描画しているため、ここでは children のみ
+  return <div className="min-h-[calc(100vh-64px)]">{children}</div>;
 }
