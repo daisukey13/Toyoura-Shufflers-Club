@@ -9,7 +9,7 @@ import {
   FaHome,
   FaTrophy,
   FaUsers,
-  FaFlagCheckered, // ← 変更：試合結果アイコン
+  FaFlagCheckered,
   FaIdBadge,
   FaUserCircle,
 } from 'react-icons/fa';
@@ -31,7 +31,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // サーバで認証状態チェック
+  // サーバで認証状態チェック（Server Component では cookie の set/remove が禁止のため try/catch で握り潰す）
   let authed = false;
   try {
     const cookieStore = cookies();
@@ -43,11 +43,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           get(name: string) {
             return cookieStore.get(name)?.value;
           },
+          // Server Component の render 中は cookie を変更できないため、ここは失敗しても無視
           set(name: string, value: string, options: CookieOptions) {
-            cookieStore.set({ name, value, ...options });
+            try {
+              cookieStore.set({ name, value, ...options });
+            } catch {
+              /* no-op on server component render */
+            }
           },
           remove(name: string, options: CookieOptions) {
-            cookieStore.set({ name, value: '', ...options });
+            try {
+              cookieStore.set({ name, value: '', ...options });
+            } catch {
+              /* no-op on server component render */
+            }
           },
         },
       }
@@ -70,6 +79,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="ja" suppressHydrationWarning>
       <body className="min-h-screen bg-[#2a2a3e] text-gray-100 antialiased">
+        {/* クライアント側での Supabase セッション→Cookie 同期 */}
         <AuthCookieSync />
 
         {/* ヘッダー（アイコンのみ） */}
@@ -115,7 +125,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 aria-label="試合結果"
                 title="試合結果"
               >
-                {/* ← ここを FaFlagCheckered に変更 */}
                 <FaFlagCheckered className="text-3xl sm:text-4xl" />
               </Link>
             </div>
@@ -146,8 +155,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </nav>
         </header>
 
+        {/* 本文 */}
         <main className="pt-20 sm:pt-24">{children}</main>
 
+        {/* Portals */}
         <div id="modal-root" />
         <div id="mobile-menu-portal" />
       </body>
