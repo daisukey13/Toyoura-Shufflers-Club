@@ -67,25 +67,37 @@ function calcDelta(
   };
 }
 
-function normMode(m: string): 'singles' | 'teams' {
-  return m.startsWith('team') ? 'teams' : 'singles';
+function isModeCheckViolation(err: any) {
+  const msg = (err?.message || '').toLowerCase();
+  const details = (err?.details || '').toLowerCase();
+  const hint = (err?.hint || '').toLowerCase();
+  return (
+    msg.includes('matches_mode_check') ||
+    details.includes('matches_mode_check') ||
+    hint.includes('matches_mode_check') ||
+    err?.code === '23514' // check_violation
+  );
 }
-const STATUS_CANDIDATES = ['finalized', 'finished'] as const;
 
-async function tryInsert(rows: Record<string, any>[]) {
+const STATUS_CANDIDATES = ['finalized', 'finished', 'completed'] as const;
+
+/** mode 候補 × status 候補で順に insert を試す */
+async function tryInsertFlexible(rowBase: Record<string, any>, modeCandidates: string[]) {
   let lastErr: any = null;
-  for (const row of rows) {
+  for (const mode of modeCandidates) {
     for (const status of STATUS_CANDIDATES) {
       const { data, error } = await supabaseAdmin
         .from('matches')
-        .insert({ ...row, status })
+        .insert({ ...rowBase, mode, status })
         .select('id')
         .single();
-      if (!error) return { data, error: null };
+      if (!error) {
+        return { data, error: null, used: { mode, status } };
+      }
       lastErr = error;
     }
   }
-  return { data: null, error: lastErr };
+  return { data: null, error: lastErr, used: null as any };
 }
 
 /* ===================== Handler ===================== */
@@ -127,7 +139,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
     }
 
-    const mode = normMode(String(body.mode));
+    const rawMode = String(body.mode).toLowerCase().trim(); // 来た値を尊重
     const match_date = String(body.match_date || '').trim();
     if (!match_date) {
       return NextResponse.json({ ok: false, message: '試合日時が未指定です。' }, { status: 400 });
@@ -135,7 +147,9 @@ export async function POST(req: NextRequest) {
     const loser_score = clamp(toInt((body as any).loser_score, 0), 0, 14);
 
     /* -------------------- 個人戦 -------------------- */
-    if (mode === 'singles') {
+    if (rawMode.startsWith('sing') || rawMode === 'single') {
+      const modeCandidates = ['singles', 'single']; // どちらのスキーマでも通るよう順に試す
+
       const winner_id = String((body as SinglesPayload).winner_id || '');
       const loser_id = String((body as SinglesPayload).loser_id || '');
       if (!winner_id || !loser_id) {
@@ -160,9 +174,8 @@ export async function POST(req: NextRequest) {
       }
 
       // singles: チーム系は NULL 明示
-      const { data: inserted, error: mErr } = await tryInsert([
+      const { data: inserted, error: mErr } = await tryInsertFlexible(
         {
-          mode: 'singles',
           match_date,
           reporter_id,
           winner_id,
@@ -176,7 +189,8 @@ export async function POST(req: NextRequest) {
           // venue: (body as SinglesPayload).venue ?? null,
           // notes: (body as SinglesPayload).notes ?? null,
         },
-      ]);
+        modeCandidates
+      );
       if (mErr) {
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr.message}` }, { status: 500 });
       }
@@ -219,6 +233,7 @@ export async function POST(req: NextRequest) {
 
     /* -------------------- 団体戦 -------------------- */
     {
+      const modeCandidates = ['teams', 'team']; // どちらでも試す
       const winner_team_id = String((body as TeamsPayload).winner_team_id || '');
       const loser_team_id = String((body as TeamsPayload).loser_team_id || '');
       if (!winner_team_id || !loser_team_id) {
@@ -228,10 +243,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一チームは選べません。' }, { status: 400 });
       }
 
-      // まず「matches に team_id を直接持つ」想定で挿入（最近のスキーマ変更に対応）
-      const tryTeamIdFirst = [
+      // まず「matches に team_id を直接持つ」想定で挿入
+      let tryResult = await tryInsertFlexible(
         {
-          mode: 'teams',
           match_date,
           reporter_id,
           winner_score: 15,
@@ -245,15 +259,13 @@ export async function POST(req: NextRequest) {
           // venue: (body as TeamsPayload).venue ?? null,
           // notes: (body as TeamsPayload).notes ?? null,
         },
-      ];
+        modeCandidates
+      );
 
-      let { data: inserted, error: mErr } = await tryInsert(tryTeamIdFirst);
-
-      // 列が存在しない/別の CHECK にかかった場合は、従来方式（team_no + match_teams）にフォールバック
-      if (mErr) {
-        const { data, error } = await tryInsert([
+      // 失敗したら、従来方式（team_no + match_teams）にフォールバック
+      if (tryResult.error) {
+        const fallback = await tryInsertFlexible(
           {
-            mode: 'teams',
             match_date,
             reporter_id,
             winner_score: 15,
@@ -265,33 +277,35 @@ export async function POST(req: NextRequest) {
             winner_team_id: null,
             loser_team_id: null,
           },
-        ]);
-        inserted = data;
-        mErr = error;
-
-        if (!mErr && inserted?.id) {
-          const { error: mtErr } = await supabaseAdmin.from('match_teams').insert([
-            { match_id: inserted.id, team_id: winner_team_id, team_no: 1 },
-            { match_id: inserted.id, team_id: loser_team_id, team_no: 2 },
-          ]);
-          if (mtErr) {
-            await supabaseAdmin.from('matches').delete().eq('id', inserted.id);
-            return NextResponse.json(
-              { ok: false, message: `チーム割当の登録に失敗しました: ${mtErr.message}` },
-              { status: 500 }
-            );
-          }
-        }
-      }
-
-      if (mErr || !inserted?.id) {
-        return NextResponse.json(
-          { ok: false, message: `登録に失敗しました: ${mErr?.message || 'match_id 不明'}` },
-          { status: 500 }
+          modeCandidates
         );
+
+        if (fallback.error || !fallback.data?.id) {
+          return NextResponse.json(
+            { ok: false, message: `登録に失敗しました: ${fallback.error?.message || tryResult.error?.message}` },
+            { status: 500 }
+          );
+        }
+
+        // match_teams へ 2 行
+        const { error: mtErr } = await supabaseAdmin.from('match_teams').insert([
+          { match_id: fallback.data.id, team_id: winner_team_id, team_no: 1 },
+          { match_id: fallback.data.id, team_id: loser_team_id, team_no: 2 },
+        ]);
+        if (mtErr) {
+          // 簡易ロールバック
+          await supabaseAdmin.from('matches').delete().eq('id', fallback.data.id);
+          return NextResponse.json(
+            { ok: false, message: `チーム割当の登録に失敗しました: ${mtErr.message}` },
+            { status: 500 }
+          );
+        }
+
+        return NextResponse.json({ ok: true, match_id: fallback.data.id }, { status: 201 });
       }
 
-      return NextResponse.json({ ok: true, match_id: inserted.id }, { status: 201 });
+      // team_id 直持ちで成功
+      return NextResponse.json({ ok: true, match_id: tryResult.data?.id }, { status: 201 });
     }
   } catch (e: any) {
     console.error('[api/matches] fatal:', e);
