@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 
 /* ===================== Types ===================== */
 type SinglesPayload = {
-  mode: 'singles' | 'single';
+  mode: 'singles' | 'single' | string;
   match_date: string;
   winner_id: string;
   loser_id: string;
@@ -20,7 +20,7 @@ type SinglesPayload = {
 };
 
 type TeamsPayload = {
-  mode: 'teams' | 'team';
+  mode: 'teams' | 'team' | string;
   match_date: string;
   winner_team_id: string;
   loser_team_id: string;
@@ -32,6 +32,8 @@ type TeamsPayload = {
 type Body = SinglesPayload | TeamsPayload;
 
 /* ===================== Helpers ===================== */
+const uniq = <T,>(arr: T[]) => Array.from(new Set(arr));
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -67,25 +69,51 @@ function calcDelta(
   };
 }
 
-function isModeCheckViolation(err: any) {
-  const msg = (err?.message || '').toLowerCase();
-  const details = (err?.details || '').toLowerCase();
-  const hint = (err?.hint || '').toLowerCase();
-  return (
-    msg.includes('matches_mode_check') ||
-    details.includes('matches_mode_check') ||
-    hint.includes('matches_mode_check') ||
-    err?.code === '23514' // check_violation
-  );
+async function detectSinglesModeLabels() {
+  // winner_id が入っている既存行の mode を見る（最大 10 件）
+  const { data } = await supabaseAdmin
+    .from('matches')
+    .select('mode')
+    .not('winner_id', 'is', null)
+    .limit(10);
+
+  const labels = uniq((data ?? []).map((r: any) => String(r.mode)).filter(Boolean));
+  if (labels.length) return labels;
+
+  // 既存が無い場合のフォールバック候補
+  return ['singles', 'single', 'SINGLES', 'SINGLE'];
 }
 
-const STATUS_CANDIDATES = ['finalized', 'finished', 'completed'] as const;
+async function detectTeamsModeLabels() {
+  // チーム系（team_id 直持ち or team_no）らしき既存行の mode を見る
+  const { data } = await supabaseAdmin
+    .from('matches')
+    .select('mode')
+    .or('winner_team_id.not.is.null,winner_team_no.not.is.null')
+    .limit(10);
+
+  const labels = uniq((data ?? []).map((r: any) => String(r.mode)).filter(Boolean));
+  if (labels.length) return labels;
+
+  // 既存が無い場合のフォールバック候補
+  return ['teams', 'team', 'TEAMS', 'TEAM', 'doubles', 'DOUBLES'];
+}
+
+async function detectStatusLabels() {
+  // 既存行の status 値を収集（最大 10 件）
+  const { data } = await supabaseAdmin.from('matches').select('status').limit(10);
+  const labels = uniq((data ?? []).map((r: any) => String(r.status)).filter(Boolean));
+  if (labels.length) return labels;
+
+  // 空なら一般的な候補を用意
+  return ['finalized', 'finished', 'completed', 'FINALIZED', 'FINISHED', 'COMPLETED'];
+}
 
 /** mode 候補 × status 候補で順に insert を試す */
-async function tryInsertFlexible(rowBase: Record<string, any>, modeCandidates: string[]) {
+async function tryInsertFlexible(rowBase: Record<string, any>, modeCandidates: string[], statusCandidates: string[]) {
   let lastErr: any = null;
   for (const mode of modeCandidates) {
-    for (const status of STATUS_CANDIDATES) {
+    for (const status of statusCandidates) {
       const { data, error } = await supabaseAdmin
         .from('matches')
         .insert({ ...rowBase, mode, status })
@@ -95,6 +123,7 @@ async function tryInsertFlexible(rowBase: Record<string, any>, modeCandidates: s
         return { data, error: null, used: { mode, status } };
       }
       lastErr = error;
+      // matches_mode_check などに当たった場合は次候補へ
     }
   }
   return { data: null, error: lastErr, used: null as any };
@@ -139,16 +168,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
     }
 
-    const rawMode = String(body.mode).toLowerCase().trim(); // 来た値を尊重
+    const rawMode = String(body.mode).trim();
     const match_date = String(body.match_date || '').trim();
     if (!match_date) {
       return NextResponse.json({ ok: false, message: '試合日時が未指定です。' }, { status: 400 });
     }
     const loser_score = clamp(toInt((body as any).loser_score, 0), 0, 14);
 
+    // 既存の status ラベルを先に検出
+    const statusCandidates = await detectStatusLabels();
+
     /* -------------------- 個人戦 -------------------- */
-    if (rawMode.startsWith('sing') || rawMode === 'single') {
-      const modeCandidates = ['singles', 'single']; // どちらのスキーマでも通るよう順に試す
+    if (/^sing/i.test(rawMode) || /^single$/i.test(rawMode)) {
+      const modeCandidates = await detectSinglesModeLabels();
 
       const winner_id = String((body as SinglesPayload).winner_id || '');
       const loser_id = String((body as SinglesPayload).loser_id || '');
@@ -189,7 +221,8 @@ export async function POST(req: NextRequest) {
           // venue: (body as SinglesPayload).venue ?? null,
           // notes: (body as SinglesPayload).notes ?? null,
         },
-        modeCandidates
+        modeCandidates,
+        statusCandidates
       );
       if (mErr) {
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr.message}` }, { status: 500 });
@@ -233,7 +266,8 @@ export async function POST(req: NextRequest) {
 
     /* -------------------- 団体戦 -------------------- */
     {
-      const modeCandidates = ['teams', 'team']; // どちらでも試す
+      const modeCandidates = await detectTeamsModeLabels();
+
       const winner_team_id = String((body as TeamsPayload).winner_team_id || '');
       const loser_team_id = String((body as TeamsPayload).loser_team_id || '');
       if (!winner_team_id || !loser_team_id) {
@@ -259,11 +293,12 @@ export async function POST(req: NextRequest) {
           // venue: (body as TeamsPayload).venue ?? null,
           // notes: (body as TeamsPayload).notes ?? null,
         },
-        modeCandidates
+        modeCandidates,
+        statusCandidates
       );
 
       // 失敗したら、従来方式（team_no + match_teams）にフォールバック
-      if (tryResult.error) {
+      if (tryResult.error || !tryResult.data?.id) {
         const fallback = await tryInsertFlexible(
           {
             match_date,
@@ -277,7 +312,8 @@ export async function POST(req: NextRequest) {
             winner_team_id: null,
             loser_team_id: null,
           },
-          modeCandidates
+          modeCandidates,
+          statusCandidates
         );
 
         if (fallback.error || !fallback.data?.id) {
