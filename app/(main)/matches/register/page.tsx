@@ -1,5 +1,10 @@
 'use client';
+import { redirect } from 'next/navigation';
 
+export default function LegacyRegisterRedirect() {
+  // 旧: /matches/register → 新: /matches/register/singles に統一
+  redirect('/matches/register/singles');
+}
 import Link from 'next/link';
 import { FaUserCheck, FaUsers, FaChevronRight } from 'react-icons/fa';
 

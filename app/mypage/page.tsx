@@ -1,5 +1,12 @@
 // app/mypage/page.tsx
 'use client';
+import RegisterButtons from '@/components/RegisterButtons';
+
+// 既存の「試合登録」ボタンを丸ごと置き換え
+<section className="mt-6">
+  <h2 className="text-xl font-semibold mb-3">試合登録</h2>
+  <RegisterButtons />
+</section>
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
