@@ -1,3 +1,4 @@
+// app/(main)/matches/register/singles/page.tsx
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -16,6 +17,11 @@ type Player = {
   ranking_points: number;
   handicap: number;
   avatar_url?: string | null;
+};
+
+type PlayerAdminRow = {
+  id: string;
+  is_admin: boolean | null;
 };
 
 async function parseRestError(res: Response) {
@@ -62,15 +68,23 @@ export default function SinglesRegisterPage() {
     if (authed !== true) return;
     let alive = true;
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setMe(null); return; }
-      // players(id == auth.user.id) に is_admin がある前提（なければ false 扱い）
-      const { data } = await supabase
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData?.user;
+      if (!user) { if (alive) setMe(null); return; }
+
+      const { data: row, error: rowErr } = await supabase
         .from('players')
         .select('id,is_admin')
         .eq('id', user.id)
-        .single();
-      if (alive) setMe({ id: user.id, is_admin: !!data?.is_admin });
+        .single<PlayerAdminRow>();
+
+      if (rowErr) {
+        // 取得失敗時は is_admin=false 扱いで継続
+        if (alive) setMe({ id: user.id, is_admin: false });
+        return;
+      }
+
+      if (alive) setMe({ id: user.id, is_admin: Boolean(row?.is_admin) });
     })();
     return () => { alive = false; };
   }, [authed, supabase]);
