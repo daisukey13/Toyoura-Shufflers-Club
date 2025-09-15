@@ -1,6 +1,7 @@
+// next.config.js
 /** @type {import('next').NextConfig} */
 
-// ---- Security Headers (CSP tuned for Supabase + Cloudflare Turnstile) ----
+// ---- Security Headers (CSP tuned for Supabase + Cloudflare Turnstile + fonts) ----
 const securityHeaders = [
   {
     key: 'Content-Security-Policy',
@@ -10,24 +11,26 @@ const securityHeaders = [
       "base-uri 'self'",
       "object-src 'none'",
       "form-action 'self'",
+      "frame-ancestors 'self'",
 
-      // Scripts (Turnstile)
+      // Scripts (Cloudflare Turnstile)
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
 
       // Frames (Turnstile widget)
-      "frame-src https://challenges.cloudflare.com",
+      "frame-src 'self' https://challenges.cloudflare.com",
 
       // Network calls (Supabase APIs/Realtime/Storage + Turnstile)
-      "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.net https://challenges.cloudflare.com",
+      // Realtime は wss を許可
+      "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.net https://challenges.cloudflare.com wss://*.supabase.co wss://*.supabase.in wss://*.supabase.net",
 
       // Images (Supabase public objects, data/blob, Turnstile assets)
-      "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://challenges.cloudflare.com",
+      "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://*.supabase.net https://challenges.cloudflare.com",
 
-      // Styles (allow inline for Tailwind/Next style tags)
-      "style-src 'self' 'unsafe-inline'",
+      // Styles (allow inline for Tailwind/Next style tags + optional providers)
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://maxcdn.bootstrapcdn.com",
 
-      // Fonts (avoid console warnings when using data: fonts)
-      "font-src 'self' data:",
+      // Fonts (allow data: and CDN fonts to avoid CSP errors)
+      "font-src 'self' data: https://fonts.gstatic.com https://maxcdn.bootstrapcdn.com",
 
       // Workers (Next dev / client features)
       "worker-src 'self' blob:",
@@ -55,6 +58,11 @@ const nextConfig = {
         hostname: '*.supabase.in',
         pathname: '/storage/v1/object/public/**',
       },
+      {
+        protocol: 'https',
+        hostname: '*.supabase.net',
+        pathname: '/storage/v1/object/public/**',
+      },
     ],
   },
 
@@ -64,6 +72,14 @@ const nextConfig = {
         source: '/(.*)',
         headers: securityHeaders,
       },
+    ];
+  },
+
+  // 旧: /matches/register -> 新: /matches/register/singles に統一
+  async redirects() {
+    return [
+      { source: '/matches/register', destination: '/matches/register/singles', permanent: true },
+      { source: '/matches/register/', destination: '/matches/register/singles', permanent: true },
     ];
   },
 };
