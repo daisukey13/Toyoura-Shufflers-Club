@@ -393,7 +393,7 @@ export default function HomePage() {
 
             {/* ✅ 追加：試合を登録（プレーヤー新規登録ボタンの右隣） */}
             <Link
-              href="/mypage?open=register"
+              href="/matches/register/singles"
               className="px-6 py-2.5 sm:px-8 sm:py-3 rounded-full bg-purple-600/80 hover:bg-purple-700 text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
             >
               <FaGamepad className="text-sm" />
