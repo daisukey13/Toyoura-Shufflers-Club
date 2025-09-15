@@ -1,35 +1,31 @@
 // app/mypage/page.tsx
 'use client';
-import RegisterButtons from '@/components/RegisterButtons';
 
-// 既存の「試合登録」ボタンを丸ごと置き換え
-<section className="mt-6">
-  <h2 className="text-xl font-semibold mb-3">試合登録</h2>
-  <RegisterButtons />
-</section>
-
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import {
-  FaUserEdit, FaSignOutAlt, FaSave, FaSpinner, FaTrophy, FaUpload, FaTimes, FaPlus,
-  FaGamepad, FaCheckCircle, FaExclamationTriangle, FaUsers, FaSearch, FaDoorOpen,
-  FaAngleLeft, FaAngleRight, FaAngleDoubleLeft, FaAngleDoubleRight
-} from 'react-icons/fa';
-import { createClient } from '@/lib/supabase/client';
-
 import dynamic from 'next/dynamic';
-const TeamRegisterTile = dynamic(() => import('./TeamRegisterTile'), { ssr: false });
+import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
+import {
+  FaAngleDoubleLeft,
+  FaAngleLeft,
+  FaAngleRight,
+  FaAngleDoubleRight,
+  FaSpinner,
+  FaUserEdit,
+  FaExclamationTriangle,
+  FaUpload,
+  FaSearch,
+  FaTimes,
+  FaSave,
+  FaGamepad,
+  FaTrophy,
+  FaSignOutAlt,
+  FaDoorOpen,
+  FaPlus,
+} from 'react-icons/fa';
 
-export default function MyPage() {
-  return (
-    <div className="container mx-auto px-4 py-8 grid gap-6">
-      {/* 既存：個人試合登録タイル … */}
-      {/* 新規：チーム試合登録タイル */}
-      <TeamRegisterTile />
-    </div>
-  );
-}
+const TeamRegisterTile = dynamic(() => import('./TeamRegisterTile'), { ssr: false });
 
 /* ================================ 型 ================================ */
 type Player = {
@@ -111,7 +107,10 @@ export default function MyPage() {
   const [pickerMsg, setPickerMsg] = useState<string>('');
   const PAGE_SIZE = 20;
   const [pickerPage, setPickerPage] = useState(1);
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(pickerItems.length / PAGE_SIZE)), [pickerItems.length]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(pickerItems.length / PAGE_SIZE)),
+    [pickerItems.length]
+  );
   const pageSlice = useMemo(() => {
     const s = (pickerPage - 1) * PAGE_SIZE;
     return pickerItems.slice(s, s + PAGE_SIZE);
@@ -135,7 +134,9 @@ export default function MyPage() {
     (async () => {
       setLoading(true);
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         if (!user) {
           router.replace('/login?redirect=/mypage');
           return;
@@ -146,14 +147,17 @@ export default function MyPage() {
         // players
         const { data: player, error } = await supabase
           .from('players')
-          .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses, matches_played, created_at')
+          .select(
+            'id, handle_name, avatar_url, ranking_points, handicap, wins, losses, matches_played, created_at'
+          )
           .eq('id', user.id)
           .maybeSingle();
         if (error && error.code !== 'PGRST116') throw error;
 
         let current = player as Player | null;
         if (!current) {
-          const initialHandle = (user.email?.split('@')[0] || 'Player') + '-' + user.id.slice(0, 6);
+          const initialHandle =
+            (user.email?.split('@')[0] || 'Player') + '-' + user.id.slice(0, 6);
           const { data: created, error: iErr } = await supabase
             .from('players')
             .insert([{ id: user.id, handle_name: initialHandle }] as any)
@@ -202,7 +206,9 @@ export default function MyPage() {
     try {
       const { data, error } = await supabase
         .from('match_players')
-        .select('match_id, side_no, matches:matches ( id, mode, status, match_date, winner_score, loser_score )')
+        .select(
+          'match_id, side_no, matches:matches ( id, mode, status, match_date, winner_score, loser_score )'
+        )
         .eq('player_id', userId)
         .order('match_date', { foreignTable: 'matches', ascending: false })
         .limit(30);
@@ -251,7 +257,9 @@ export default function MyPage() {
     }
   }, [userId]);
 
-  useEffect(() => { fetchRecentMatches(); }, [fetchRecentMatches]);
+  useEffect(() => {
+    fetchRecentMatches();
+  }, [fetchRecentMatches]);
 
   /* ===== プロフィール保存 ===== */
   const saveProfile = async () => {
@@ -267,7 +275,9 @@ export default function MyPage() {
       if (error) throw error;
 
       setProfileMsg('保存しました。');
-      setMe((m) => (m ? { ...m, handle_name: payload.handle_name, avatar_url: payload.avatar_url } : m));
+      setMe((m) =>
+        m ? { ...m, handle_name: payload.handle_name, avatar_url: payload.avatar_url } : m
+      );
       setTimeout(() => setProfileMsg(''), 2500);
     } catch (e: any) {
       setProfileMsg(e?.message || '保存に失敗しました');
@@ -293,7 +303,8 @@ export default function MyPage() {
         upsert: true,
       });
       if (up.error) {
-        if (String(up.error.message || '').toLowerCase().includes('bucket')) setAvatarBucketMissing(true);
+        if (String(up.error.message || '').toLowerCase().includes('bucket'))
+          setAvatarBucketMissing(true);
         throw up.error;
       }
       const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
@@ -317,31 +328,48 @@ export default function MyPage() {
     setPickerPage(1);
     try {
       // 自分の画像
-      const ownListRes = await supabase.storage.from('avatars').list(`public/users/${userId}`, {
-        limit: 200, sortBy: { column: 'created_at', order: 'desc' }
-      });
+      const ownListRes = await supabase.storage
+        .from('avatars')
+        .list(`public/users/${userId}`, {
+          limit: 200,
+          sortBy: { column: 'created_at', order: 'desc' },
+        });
       const ownItems: PickerItem[] = (ownListRes.data || [])
         .filter((f) => !f.name.endsWith('/'))
         .map((f) => {
           const fullPath = `public/users/${userId}/${f.name}`;
           const { data } = supabase.storage.from('avatars').getPublicUrl(fullPath);
-          return { fullPath, url: data?.publicUrl || '', source: 'own', created_at: (f as any).created_at ?? null };
+          return {
+            fullPath,
+            url: data?.publicUrl || '',
+            source: 'own',
+            created_at: (f as any).created_at ?? null,
+          };
         });
 
       // プリセット
       const presetRes = await supabase.storage.from('avatars').list(`preset`, {
-        limit: 200, sortBy: { column: 'name', order: 'asc' }
+        limit: 200,
+        sortBy: { column: 'name', order: 'asc' },
       });
       const presetItems: PickerItem[] = (presetRes.data || [])
         .filter((f) => !f.name.endsWith('/'))
         .map((f) => {
           const fullPath = `preset/${f.name}`;
           const { data } = supabase.storage.from('avatars').getPublicUrl(fullPath);
-          return { fullPath, url: data?.publicUrl || '', source: 'preset', created_at: (f as any).created_at ?? null };
+          return {
+            fullPath,
+            url: data?.publicUrl || '',
+            source: 'preset',
+            created_at: (f as any).created_at ?? null,
+          };
         });
 
       const all = [...ownItems, ...presetItems].filter((x) => !!x.url);
-      if (all.length === 0) setPickerMsg('候補がありません（自分でアップロードするか、管理者にプリセットの追加を依頼してください）。');
+      if (all.length === 0)
+        setPickerMsg(
+          '候補がありません（自分でアップロードするか、管理者にプリセットの追加を依頼してください）。'
+        );
       setPickerItems(all);
     } catch (e: any) {
       setPickerItems([]);
@@ -357,7 +385,8 @@ export default function MyPage() {
     setPickerOpen(false);
   };
 
-  const gotoPage = (p: number) => setPickerPage((t) => Math.max(1, Math.min(totalPages, p)));
+  const gotoPage = (p: number) =>
+    setPickerPage((t) => Math.max(1, Math.min(totalPages, p)));
   const Pager = () => {
     if (pickerItems.length === 0) return null;
     return (
@@ -370,11 +399,41 @@ export default function MyPage() {
           件を表示
         </div>
         <div className="inline-flex items-center gap-1">
-          <button onClick={() => gotoPage(1)} disabled={pickerPage === 1} className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40" title="最初"><FaAngleDoubleLeft/></button>
-          <button onClick={() => gotoPage(pickerPage - 1)} disabled={pickerPage === 1} className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40" title="前"><FaAngleLeft/></button>
-          <span className="px-2">{pickerPage} / {totalPages}</span>
-          <button onClick={() => gotoPage(pickerPage + 1)} disabled={pickerPage === totalPages} className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40" title="次"><FaAngleRight/></button>
-          <button onClick={() => gotoPage(totalPages)} disabled={pickerPage === totalPages} className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40" title="最後"><FaAngleDoubleRight/></button>
+          <button
+            onClick={() => gotoPage(1)}
+            disabled={pickerPage === 1}
+            className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
+            title="最初"
+          >
+            <FaAngleDoubleLeft />
+          </button>
+          <button
+            onClick={() => gotoPage(pickerPage - 1)}
+            disabled={pickerPage === 1}
+            className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
+            title="前"
+          >
+            <FaAngleLeft />
+          </button>
+          <span className="px-2">
+            {pickerPage} / {totalPages}
+          </span>
+          <button
+            onClick={() => gotoPage(pickerPage + 1)}
+            disabled={pickerPage === totalPages}
+            className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
+            title="次"
+          >
+            <FaAngleRight />
+          </button>
+          <button
+            onClick={() => gotoPage(totalPages)}
+            disabled={pickerPage === totalPages}
+            className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
+            title="最後"
+          >
+            <FaAngleDoubleRight />
+          </button>
         </div>
       </div>
     );
@@ -382,9 +441,16 @@ export default function MyPage() {
 
   /* ===== 参加チーム ===== */
   useEffect(() => {
-    if (!teamSearch.trim()) { setTeamCandidates([]); return; }
+    if (!teamSearch.trim()) {
+      setTeamCandidates([]);
+      return;
+    }
     const t = setTimeout(async () => {
-      const { data, error } = await supabase.from('teams').select('id, name').ilike('name', `%${teamSearch.trim()}%`).limit(10);
+      const { data, error } = await supabase
+        .from('teams')
+        .select('id, name')
+        .ilike('name', `%${teamSearch.trim()}%`)
+        .limit(10);
       if (!error) setTeamCandidates((data || []) as TeamLite[]);
     }, 250);
     return () => clearTimeout(t);
@@ -393,18 +459,37 @@ export default function MyPage() {
   const joinTeam = async (team: TeamLite) => {
     if (!userId) return;
     setJoinMsg('');
-    if (myTeam) { setJoinMsg(`すでに「${myTeam.name}」に参加中です。複数チームへの参加はできません。`); return; }
+    if (myTeam) {
+      setJoinMsg(`すでに「${myTeam.name}」に参加中です。複数チームへの参加はできません。`);
+      return;
+    }
     setJoinBusy(true);
     try {
-      const { count } = await supabase.from('team_members').select('player_id', { count: 'exact', head: true }).eq('team_id', team.id);
-      if ((count ?? 0) >= TEAM_CAP) { setJoinMsg('定員オーバーのため参加できません（各チーム最大4名）。'); return; }
-      const { data: already } = await supabase.from('team_members').select('team_id').eq('player_id', userId).limit(1);
-      if ((already || []).length > 0) { setJoinMsg('すでにチームに参加済みです。'); return; }
-      const { error: jErr } = await supabase.from('team_members').insert([{ team_id: team.id, player_id: userId }] as any);
+      const { count } = await supabase
+        .from('team_members')
+        .select('player_id', { count: 'exact', head: true })
+        .eq('team_id', team.id);
+      if ((count ?? 0) >= TEAM_CAP) {
+        setJoinMsg('定員オーバーのため参加できません（各チーム最大4名）。');
+        return;
+      }
+      const { data: already } = await supabase
+        .from('team_members')
+        .select('team_id')
+        .eq('player_id', userId)
+        .limit(1);
+      if ((already || []).length > 0) {
+        setJoinMsg('すでにチームに参加済みです。');
+        return;
+      }
+      const { error: jErr } = await supabase
+        .from('team_members')
+        .insert([{ team_id: team.id, player_id: userId }] as any);
       if (jErr) throw jErr;
       setMyTeam({ id: team.id, name: team.name });
       setJoinMsg(`「${team.name}」に参加しました！`);
-      setTeamSearch(''); setTeamCandidates([]);
+      setTeamSearch('');
+      setTeamCandidates([]);
     } catch (e: any) {
       setJoinMsg(e?.message || '参加に失敗しました。');
     } finally {
@@ -414,26 +499,38 @@ export default function MyPage() {
 
   const leaveTeam = async () => {
     if (!userId || !myTeam) return;
-    setJoinBusy(true); setJoinMsg('');
+    setJoinBusy(true);
+    setJoinMsg('');
     try {
-      const { error } = await supabase.from('team_members').delete().eq('player_id', userId).eq('team_id', myTeam.id);
+      const { error } = await supabase
+        .from('team_members')
+        .delete()
+        .eq('player_id', userId)
+        .eq('team_id', myTeam.id);
       if (error) throw error;
-      setMyTeam(null); setJoinMsg('チームを脱退しました。');
+      setMyTeam(null);
+      setJoinMsg('チームを脱退しました。');
     } catch (e: any) {
       setJoinMsg(e?.message || '脱退に失敗しました。');
-    } finally { setJoinBusy(false); }
+    } finally {
+      setJoinBusy(false);
+    }
   };
 
   /* ===== ログアウト ===== */
   const signOut = async () => {
     await supabase.auth.signOut();
     try {
-      await fetch('/auth/callback', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: 'SIGNED_OUT', session: null }) });
+      await fetch('/auth/callback', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event: 'SIGNED_OUT', session: null }),
+      });
     } catch {}
     router.replace('/');
   };
 
-  /* ============================ 試合登録 UI/処理 ============================ */
+  /* ============================ 試合登録 UI/処理（個人） ============================ */
   const [regOpen, setRegOpen] = useState(false);
   const [regSaving, setRegSaving] = useState(false);
   const [regError, setRegError] = useState<string>('');
@@ -448,14 +545,19 @@ export default function MyPage() {
   const [regOpp, setRegOpp] = useState<number>(0);
 
   const [oppoQuery, setOppoQuery] = useState('');
-  const [oppoOptions, setOppoOptions] = useState<Array<{ id: string; handle_name: string; avatar_url?: string | null }>>([]);
+  const [oppoOptions, setOppoOptions] = useState<
+    Array<{ id: string; handle_name: string; avatar_url?: string | null }>
+  >([]);
   const [oppo, setOppo] = useState<{ id: string; handle_name: string } | null>(null);
 
   // 相手検索
   useEffect(() => {
     if (!regOpen) return;
     const t = setTimeout(async () => {
-      if (!oppoQuery.trim()) { setOppoOptions([]); return; }
+      if (!oppoQuery.trim()) {
+        setOppoOptions([]);
+        return;
+      }
       const { data } = await supabase
         .from('players')
         .select('id, handle_name, avatar_url')
@@ -469,21 +571,41 @@ export default function MyPage() {
 
   const submitRegister = async () => {
     if (!userId) return;
-    setRegError(''); setRegDone('');
-    if (!oppo) { setRegError('対戦相手を選択してください。'); return; }
-    if (regMy === regOpp) { setRegError('同点は登録できません。どちらかが勝利するようにスコアを入力してください。'); return; }
+    setRegError('');
+    setRegDone('');
+    if (!oppo) {
+      setRegError('対戦相手を選択してください。');
+      return;
+    }
+    if (regMy === regOpp) {
+      setRegError('同点は登録できません。どちらかが勝利するようにスコアを入力してください。');
+      return;
+    }
     const dt = new Date(regAt);
-    if (Number.isNaN(dt.getTime())) { setRegError('試合日時の形式が正しくありません。'); return; }
+    if (Number.isNaN(dt.getTime())) {
+      setRegError('試合日時の形式が正しくありません。');
+      return;
+    }
 
     setRegSaving(true);
     try {
       const winner_score = Math.max(regMy, regOpp);
-      const loser_score  = Math.min(regMy, regOpp);
+      const loser_score = Math.min(regMy, regOpp);
 
       // matches を挿入し id を厳密に取得
       const insertRes = await supabase
         .from('matches')
-        .insert([{ mode: regMode, status: 'completed', match_date: dt.toISOString(), winner_score, loser_score }] as any)
+        .insert(
+          [
+            {
+              mode: regMode,
+              status: 'completed',
+              match_date: dt.toISOString(),
+              winner_score,
+              loser_score,
+            },
+          ] as any
+        )
         .select('id')
         .single();
 
@@ -495,18 +617,27 @@ export default function MyPage() {
       const matchId: string = row.id;
 
       // match_players（自分=side 1、相手=side 2）
-      const { error: mpErr } = await supabase.from('match_players').insert([
-        { match_id: matchId, player_id: userId, side_no: 1 },
-        { match_id: matchId, player_id: oppo.id, side_no: 2 },
-      ] as any);
+      const { error: mpErr } = await supabase
+        .from('match_players')
+        .insert(
+          [
+            { match_id: matchId, player_id: userId, side_no: 1 },
+            { match_id: matchId, player_id: oppo.id, side_no: 2 },
+          ] as any
+        );
       if (mpErr) throw mpErr;
 
       setRegDone('試合を登録しました。');
       setRegOpen(false);
-      setRegMy(0); setRegOpp(0); setOppo(null); setOppoQuery('');
+      setRegMy(0);
+      setRegOpp(0);
+      setOppo(null);
+      setOppoQuery('');
       await fetchRecentMatches();
     } catch (e: any) {
-      setRegError(e?.message || '登録に失敗しました。スキーマとRLSをご確認ください。');
+      setRegError(
+        e?.message || '登録に失敗しました。スキーマとRLSをご確認ください。'
+      );
     } finally {
       setRegSaving(false);
     }
@@ -537,7 +668,15 @@ export default function MyPage() {
         <h1 className="text-2xl sm:text-3xl font-bold text-yellow-100 flex items-center gap-3">
           <FaUserEdit /> マイページ
         </h1>
-        <p className="text-gray-400 mt-1">{email ? <>ログイン中: <span className="text-purple-300">{email}</span></> : 'ログイン中'}</p>
+        <p className="text-gray-400 mt-1">
+          {email ? (
+            <>
+              ログイン中: <span className="text-purple-300">{email}</span>
+            </>
+          ) : (
+            'ログイン中'
+          )}
+        </p>
       </div>
 
       {/* プロフィール編集 */}
@@ -556,21 +695,81 @@ export default function MyPage() {
             {/* Avatar */}
             <div className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={avatarUrl || '/default-avatar.png'} alt="avatar" className="w-24 h-24 rounded-full border-2 border-purple-500 object-cover" />
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFile} />
+              <img
+                src={avatarUrl || '/default-avatar.png'}
+                alt="avatar"
+                className="w-24 h-24 rounded-full border-2 border-purple-500 object-cover"
+              />
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={onAvatarFile}
+              />
               <div className="flex gap-2 mt-3 flex-wrap">
-                <button type="button" onClick={onPickAvatar} disabled={uploadBusy} className={cls('px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2','bg-purple-600 hover:bg-purple-700 disabled:opacity-60')}>
+                <button
+                  type="button"
+                  onClick={onPickAvatar}
+                  disabled={uploadBusy}
+                  className={cls(
+                    'px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2',
+                    'bg-purple-600 hover:bg-purple-700 disabled:opacity-60'
+                  )}
+                >
                   <FaUpload /> 画像をアップロード
                 </button>
-                <button type="button" onClick={openPicker} className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600">
+                <button
+                  type="button"
+                  onClick={openPicker}
+                  className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600"
+                >
                   <FaSearch /> 候補から選ぶ
                 </button>
                 {avatarUrl && (
-                  <button type="button" onClick={() => setAvatarUrl(null)} className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600">
+                  <button
+                    type="button"
+                    onClick={() => setAvatarUrl(null)}
+                    className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600"
+                  >
                     <FaTimes /> クリア
                   </button>
                 )}
               </div>
+
+              {/* 画像ピッカー */}
+              {pickerOpen && (
+                <div className="mt-3 p-3 rounded-lg border border-purple-500/30 bg-gray-900/80 w-[22rem] max-w-full">
+                  <div className="mb-2 text-sm text-gray-300">画像を選択</div>
+                  {pickerLoading ? (
+                    <div className="py-6 text-center text-gray-400">
+                      <FaSpinner className="animate-spin inline mr-2" />
+                      読み込み中…
+                    </div>
+                  ) : pickerItems.length === 0 ? (
+                    <div className="text-sm text-gray-400">{pickerMsg || '候補なし'}</div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-4 gap-2 max-h-64 overflow-auto pr-1">
+                        {pageSlice.map((it) => (
+                          <button
+                            key={it.fullPath}
+                            onClick={() => chooseFromStorage(it)}
+                            className="rounded-lg overflow-hidden border border-purple-500/20 hover:border-purple-400/60"
+                            title={it.fullPath}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={it.url} alt="" className="w-full h-16 object-cover" />
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-2">
+                        <Pager />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Fields */}
@@ -584,7 +783,15 @@ export default function MyPage() {
               />
 
               <div className="mt-4 flex gap-3">
-                <button type="button" onClick={saveProfile} disabled={savingProfile} className={cls('px-4 py-2 rounded-lg inline-flex items-center gap-2','bg-green-600 hover:bg-green-700 disabled:opacity-60')}>
+                <button
+                  type="button"
+                  onClick={saveProfile}
+                  disabled={savingProfile}
+                  className={cls(
+                    'px-4 py-2 rounded-lg inline-flex items-center gap-2',
+                    'bg-green-600 hover:bg-green-700 disabled:opacity-60'
+                  )}
+                >
                   {savingProfile ? <FaSpinner className="animate-spin" /> : <FaSave />} 保存
                 </button>
 
@@ -593,15 +800,30 @@ export default function MyPage() {
                   onClick={async () => {
                     if (!userId) return;
                     const payload: any = {};
-                    const { data: p } = await supabase.from('players').select('*').eq('id', userId).single();
+                    const { data: p } = await supabase
+                      .from('players')
+                      .select('*')
+                      .eq('id', userId)
+                      .single();
                     payload.player = p || null;
                     try {
-                      const { data: mp } = await supabase.from('match_players').select('*, matches:matches(*)').eq('player_id', userId).limit(200);
+                      const { data: mp } = await supabase
+                        .from('match_players')
+                        .select('*, matches:matches(*)')
+                        .eq('player_id', userId)
+                        .limit(200);
                       payload.matches = mp || [];
-                    } catch { payload.matches = []; }
-                    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                    } catch {
+                      payload.matches = [];
+                    }
+                    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+                      type: 'application/json',
+                    });
                     const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a'); a.href = url; a.download = `mydata-${userId.slice(0, 8)}.json`; a.click();
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `mydata-${userId.slice(0, 8)}.json`;
+                    a.click();
                     URL.revokeObjectURL(url);
                   }}
                   className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"
@@ -622,7 +844,9 @@ export default function MyPage() {
             <h3 className="text-lg font-semibold text-purple-200 mb-3">概要</h3>
             <div className="grid grid-cols-2 gap-3 text-center">
               <div className="rounded-lg bg-purple-900/30 p-3">
-                <div className="text-2xl font-bold text-yellow-100">{me.ranking_points ?? 0}</div>
+                <div className="text-2xl font-bold text-yellow-100">
+                  {me.ranking_points ?? 0}
+                </div>
                 <div className="text-xs text-gray-400">ポイント</div>
               </div>
               <div className="rounded-lg bg-purple-900/30 p-3">
@@ -638,22 +862,30 @@ export default function MyPage() {
                 <div className="text-xs text-gray-400">敗</div>
               </div>
               <div className="col-span-2 rounded-lg bg-purple-900/30 p-3">
-                <div className="text-2xl font-bold text-blue-400">{games > 0 ? `${winRate}%` : '—'}</div>
+                <div className="text-2xl font-bold text-blue-400">
+                  {games > 0 ? `${winRate}%` : '—'}
+                </div>
                 <div className="text-xs text-gray-400">勝率</div>
               </div>
             </div>
 
-            <div className="mt-5 flex flex列 gap-2 flex-col">
+            <div className="mt-5 flex gap-2 flex-col">
               <button
                 onClick={() => setRegOpen(true)}
                 className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2"
               >
-                <FaGamepad /> 試合を登録
+                <FaGamepad /> 個人戦を登録
               </button>
-              <Link href="/teams" className="px-4 py-2 rounded-lg bg-purple-600/30 hover:bg-purple-600/40 inline-flex items-center gap-2">
+              <Link
+                href="/teams"
+                className="px-4 py-2 rounded-lg bg-purple-600/30 hover:bg-purple-600/40 inline-flex items-center gap-2"
+              >
                 <FaTrophy /> チームを探す
               </Link>
-              <button onClick={signOut} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 inline-flex items-center gap-2">
+              <button
+                onClick={signOut}
+                className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 inline-flex items-center gap-2"
+              >
                 <FaSignOutAlt /> ログアウト
               </button>
             </div>
@@ -662,7 +894,7 @@ export default function MyPage() {
           {/* 参加チームカード */}
           <div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
             <h3 className="text-lg font-semibold text-purple-200 mb-3 flex items-center gap-2">
-              <FaUsers /> 参加チーム
+              <FaTrophy /> 参加チーム
             </h3>
 
             {myTeam ? (
@@ -672,7 +904,12 @@ export default function MyPage() {
                     <div className="text-yellow-100 font-semibold">{myTeam.name}</div>
                     <div className="text-xs text-gray-400">参加中</div>
                   </div>
-                  <button onClick={leaveTeam} disabled={joinBusy} className="px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 inline-flex items-center gap-2 text-sm" title="チームを脱退する">
+                  <button
+                    onClick={leaveTeam}
+                    disabled={joinBusy}
+                    className="px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 inline-flex items-center gap-2 text-sm"
+                    title="チームを脱退する"
+                  >
                     <FaDoorOpen /> 脱退
                   </button>
                 </div>
@@ -680,7 +917,9 @@ export default function MyPage() {
               </div>
             ) : (
               <>
-                <p className="text-sm text-gray-400 mb-3">参加するチームを検索して選択してください（各チーム最大4名／複数チーム参加不可）。</p>
+                <p className="text-sm text-gray-400 mb-3">
+                  参加するチームを検索して選択してください（各チーム最大4名／複数チーム参加不可）。
+                </p>
                 <div className="relative">
                   <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
@@ -693,10 +932,18 @@ export default function MyPage() {
                 {teamCandidates.length > 0 && (
                   <div className="mt-3 rounded-lg border border-purple-500/30 overflow-hidden">
                     {teamCandidates.map((t) => (
-                      <div key={t.id} className="flex items-center justify-between px-3 py-2 bg-gray-900/60">
+                      <div
+                        key={t.id}
+                        className="flex items-center justify-between px-3 py-2 bg-gray-900/60"
+                      >
                         <div className="truncate">{t.name}</div>
-                        <button disabled={joinBusy} onClick={() => joinTeam(t)} className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 inline-flex items-center gap-2 text-sm">
-                          {joinBusy ? <FaSpinner className="animate-spin" /> : <FaPlus />} 参加する
+                        <button
+                          disabled={joinBusy}
+                          onClick={() => joinTeam(t)}
+                          className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 inline-flex items-center gap-2 text-sm"
+                        >
+                          {joinBusy ? <FaSpinner className="animate-spin" /> : <FaPlus />}{' '}
+                          参加する
                         </button>
                       </div>
                     ))}
@@ -707,6 +954,9 @@ export default function MyPage() {
               </>
             )}
           </div>
+
+          {/* チーム試合登録タイル（SSG不可のため dynamic import） */}
+          <TeamRegisterTile />
         </div>
       </div>
 
@@ -715,174 +965,152 @@ export default function MyPage() {
         <div className="lg:col-span-2 glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-purple-200">最近の試合</h2>
-            <Link href="/rankings" className="px-3 py-2 rounded-lg bg-purple-700/70 hover:bg-purple-700 inline-flex items-center gap-2">ランキングへ</Link>
+            <Link
+              href="/rankings"
+              className="px-3 py-2 rounded-lg bg-purple-700/70 hover:bg-purple-700 inline-flex items-center gap-2"
+            >
+              ランキングへ
+            </Link>
           </div>
 
           {matchesLoading ? (
-            <div className="p-6 text-center text-gray-400"><FaSpinner className="animate-spin inline mr-2" />取得中…</div>
+            <div className="p-6 text-center text-gray-400">
+              <FaSpinner className="animate-spin inline mr-2" />
+              取得中…
+            </div>
           ) : recentMatches && recentMatches.length > 0 ? (
             <div className="space-y-3">
               {recentMatches.map((r) => {
                 const m = r.matches!;
                 const when = m.match_date ? new Date(m.match_date).toLocaleString() : '-';
                 return (
-                  <div key={r.match_id} className="p-3 rounded-xl border border-purple-500/30 bg-gray-900/40 flex items-center justify-between">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-full bg-purple-600/20 border border-purple-500 flex items-center justify-center">
-                        <FaGamepad className="text-purple-200" />
+                  <div
+                    key={r.match_id}
+                    className="p-3 rounded-xl border border-purple-500/30 bg-gray-900/40 flex items-center justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs text-gray-400">{when}</div>
+                      <div className="text-sm text-yellow-100 truncate">
+                        {m.mode} / {m.status || '-'}
                       </div>
-                      <div className="min-w-0">
-                        <div className="font-semibold text-yellow-100 truncate">{m.mode || '試合'} ・ {when}</div>
-                        <div className="text-xs text-gray-400 truncate">対 {r.opponent?.handle_name ?? '不明'}</div>
-                      </div>
+                      {r.opponent && (
+                        <div className="text-xs text-gray-400 truncate">
+                          vs {r.opponent.handle_name}
+                        </div>
+                      )}
                     </div>
                     <div className="text-right">
-                      <div className="text-lg font-bold">{m.winner_score ?? '-'} - {m.loser_score ?? '-'}</div>
-                      <div className="text-xs text-gray-400">{m.status || ''}</div>
+                      <div className="text-lg font-bold text-white">
+                        {m.winner_score ?? '-'} - {m.loser_score ?? '-'}
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
           ) : (
-            <div className="p-6 text-center text-gray-400">
-              {matchFetchNote ? (
-                <div className="inline-flex items-start gap-2 text-left max-w-lg">
-                  <FaExclamationTriangle className="mt-1 text-yellow-400 flex-shrink-0" />
-                  <div>{matchFetchNote}</div>
-                </div>
-              ) : 'まだ試合がありません'}
-            </div>
+            <div className="p-6 text-center text-gray-400">試合がありません。</div>
+          )}
+
+          {matchFetchNote && (
+            <div className="mt-3 text-xs text-gray-400">{matchFetchNote}</div>
           )}
         </div>
 
-        {/* 便利リンク */}
+        {/* 予備スペース／お知らせ等 */}
         <div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
-          <h3 className="text-lg font-semibold text-purple-200 mb-3">便利リンク</h3>
-          <ul className="space-y-2 text-sm">
-            <li><Link href="/rankings" className="text-purple-300 hover:text-purple-200">ランキングを見る</Link></li>
-            <li><Link href="/teams" className="text-purple-300 hover:text-purple-200">チーム一覧</Link></li>
-            <li><Link href="/forgot-password" className="text-purple-300 hover:text-purple-200">パスワード変更（メール再設定）</Link></li>
-          </ul>
-          <div className="mt-6 p-3 rounded-lg border border-green-500/30 bg-green-500/10 text-green-300 text-sm">
-            <FaCheckCircle className="inline mr-2" />
-            拡張アイデア：チーム招待承認フロー、チームチャット、通知（招待/試合結果）など。
-          </div>
+          <h2 className="text-lg font-semibold text-purple-200 mb-3">お知らせ</h2>
+          <p className="text-sm text-gray-300">
+            チーム戦の登録は右側「チーム試合登録」タイルから行えます。所属していない場合は、まず参加チームを設定してください。
+          </p>
         </div>
       </div>
 
-      {/* ── アバター・ピッカー（DB一覧＋ページャ） ── */}
-      {pickerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 grid place-items-center p-4" role="dialog" aria-modal>
-          <div className="w-full max-w-3xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-purple-200"><FaSearch className="inline mr-2" />アバターを選ぶ（自分の画像＋プリセット）</h3>
-              <button onClick={() => setPickerOpen(false)} className="p-2 rounded hover:bg-white/10"><FaTimes /></button>
+      {/* 個人戦 登録モーダル（簡易） */}
+      {regOpen && (
+        <div className="fixed inset-0 bg-black/60 grid place-items-center p-4 z-50">
+          <div className="w-full max-w-lg rounded-xl border border-purple-500/30 bg-gray-900/95 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold text-purple-200">個人戦の登録</h3>
+              <button
+                onClick={() => setRegOpen(false)}
+                className="px-2 py-1 rounded-md bg-gray-700 hover:bg-gray-600"
+              >
+                <FaTimes />
+              </button>
             </div>
 
-            {pickerLoading ? (
-              <div className="p-8 text-center text-gray-400"><FaSpinner className="animate-spin inline mr-2" />読み込み中…</div>
-            ) : pickerItems.length === 0 ? (
-              <div className="p-6 text-center text-gray-400">{pickerMsg || '候補がありません。'}</div>
-            ) : (
-              <>
-                <div className="mb-3"><Pager /></div>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                  {pageSlice.map((item) => (
-                    <button key={`${item.source}-${item.fullPath}`} onClick={() => chooseFromStorage(item)} className="group relative rounded-xl overflow-hidden border border-purple-500/30 hover:border-purple-400" title={item.fullPath}>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={item.url} alt={item.fullPath} className="w-full aspect-square object-cover" />
-                      <div className="absolute left-1 top-1 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-gray-200">
-                        {item.source === 'own' ? 'My' : 'Preset'}
-                      </div>
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20" />
+            <div className="grid gap-3">
+              <label className="text-sm text-gray-300">日時</label>
+              <input
+                type="datetime-local"
+                value={regAt}
+                onChange={(e) => setRegAt(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"
+              />
+
+              <label className="mt-3 text-sm text-gray-300">相手を検索</label>
+              <input
+                value={oppoQuery}
+                onChange={(e) => setOppoQuery(e.target.value)}
+                placeholder="ハンドルネーム"
+                className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"
+              />
+              {oppoOptions.length > 0 && (
+                <div className="rounded-lg border border-purple-500/30 max-h-40 overflow-auto">
+                  {oppoOptions.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setOppo({ id: p.id, handle_name: p.handle_name });
+                        setOppoOptions([]);
+                        setOppoQuery(p.handle_name);
+                      }}
+                      className="w-full px-3 py-2 text-left hover:bg-gray-800/70"
+                    >
+                      {p.handle_name}
                     </button>
                   ))}
                 </div>
-                <div className="mt-4"><Pager /></div>
-              </>
-            )}
+              )}
 
-            <div className="mt-4 text-right">
-              <button onClick={() => setPickerOpen(false)} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">閉じる</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── 試合登録モーダル ── */}
-      {regOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4">
-          <div className="w-full max-w-xl glass-card rounded-xl p-5 border border-purple-500/40 bg-gray-900">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-purple-200"><FaGamepad className="inline mr-2" />試合を登録</h3>
-              <button onClick={() => setRegOpen(false)} className="p-2 rounded hover:bg-white/10"><FaTimes/></button>
-            </div>
-
-            {regError && <div className="mb-3 p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-sm">{regError}</div>}
-            {regDone &&  <div className="mb-3 p-3 rounded-lg border border-green-500/30 bg-green-500/10 text-green-300 text-sm"><FaCheckCircle className="inline mr-2" />{regDone}</div>}
-
-            <div className="space-y-4">
-              {/* 相手検索 */}
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">対戦相手</label>
-                {oppo ? (
-                  <div className="flex items-center justify-between rounded-lg bg-purple-900/30 border border-purple-500/30 px-3 py-2">
-                    <span>{oppo.handle_name}</span>
-                    <button onClick={() => setOppo(null)} className="text-sm px-2 py-1 rounded bg-gray-700 hover:bg-gray-600"><FaTimes/> 変更</button>
-                  </div>
-                ) : (
-                  <>
-                    <input
-                      value={oppoQuery}
-                      onChange={(e) => setOppoQuery(e.target.value)}
-                      placeholder="ハンドルネームで検索"
-                      className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"
-                    />
-                    {oppoOptions.length > 0 && (
-                      <div className="mt-2 rounded-lg border border-purple-500/30 overflow-hidden">
-                        {oppoOptions.map((p) => (
-                          <button key={p.id} onClick={() => setOppo({ id: p.id, handle_name: p.handle_name })} className="w-full text-left px-3 py-2 bg-gray-900/60 hover:bg-gray-800">
-                            {p.handle_name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {/* 日時・モード */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="mt-3 grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">試合日時</label>
-                  <input type="datetime-local" value={regAt} onChange={(e) => setRegAt(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"/>
+                  <label className="block text-sm text-gray-300 mb-1">自分の得点</label>
+                  <input
+                    type="number"
+                    value={regMy}
+                    onChange={(e) => setRegMy(parseInt(e.target.value || '0', 10))}
+                    className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">モード</label>
-                  <select value={regMode} onChange={(e) => setRegMode(e.target.value as any)} className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none">
-                    <option value="SINGLES">SINGLES</option>
-                    <option value="DOUBLES">DOUBLES</option>
-                  </select>
+                  <label className="block text-sm text-gray-300 mb-1">相手の得点</label>
+                  <input
+                    type="number"
+                    value={regOpp}
+                    onChange={(e) => setRegOpp(parseInt(e.target.value || '0', 10))}
+                    className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"
+                  />
                 </div>
               </div>
 
-              {/* スコア */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">自分のスコア</label>
-                  <input type="number" min={0} value={regMy} onChange={(e) => setRegMy(parseInt(e.target.value || '0', 10))} className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"/>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">相手のスコア</label>
-                  <input type="number" min={0} value={regOpp} onChange={(e) => setRegOpp(parseInt(e.target.value || '0', 10))} className="w-full px-3 py-2 rounded-lg bg紫-900/20 border border紫-500/30 focus:border紫-400 outline-none bg-purple-900/20 border-purple-500/30 focus:border-purple-400"/>
-                </div>
-              </div>
+              {regError && <p className="text-sm text-red-300">{regError}</p>}
+              {regDone && <p className="text-sm text-green-300">{regDone}</p>}
 
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <button onClick={() => setRegOpen(false)} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">閉じる</button>
-                <button onClick={submitRegister} disabled={regSaving || !oppo} className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-60 inline-flex items-center gap-2">
-                  {regSaving ? <FaSpinner className="animate-spin" /> : <FaGamepad />} 登録
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setRegOpen(false)}
+                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={submitRegister}
+                  disabled={regSaving}
+                  className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 inline-flex items-center gap-2 disabled:opacity-60"
+                >
+                  {regSaving ? <FaSpinner className="animate-spin" /> : <FaSave />} 登録
                 </button>
               </div>
             </div>
