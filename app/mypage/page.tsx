@@ -18,6 +18,19 @@ import {
 } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
+import dynamic from 'next/dynamic';
+const TeamRegisterTile = dynamic(() => import('./TeamRegisterTile'), { ssr: false });
+
+export default function MyPage() {
+  return (
+    <div className="container mx-auto px-4 py-8 grid gap-6">
+      {/* 既存：個人試合登録タイル … */}
+      {/* 新規：チーム試合登録タイル */}
+      <TeamRegisterTile />
+    </div>
+  );
+}
+
 /* ================================ 型 ================================ */
 type Player = {
   id: string;

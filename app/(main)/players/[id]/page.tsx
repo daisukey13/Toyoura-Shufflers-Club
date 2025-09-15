@@ -99,7 +99,8 @@ export default function PlayerProfilePage() {
   // 全プレイヤーから順位算出（RP降順）
   const { players: allPlayers } = useFetchPlayersData({ requireAuth: false });
   const { rank, totalActive } = useMemo(() => {
-    const arr = [...allPlayers].sort(
+    const src = Array.isArray(allPlayers) ? allPlayers : [];
+    const arr = [...src].sort(
       (a: any, b: any) => (b.ranking_points ?? 0) - (a.ranking_points ?? 0)
     );
     const idx = arr.findIndex((p: any) => p.id === playerId);
@@ -109,7 +110,7 @@ export default function PlayerProfilePage() {
   const wr = winRateOf(player);
   const games = gamesOf(player);
 
-  /* ───────── 所属チームを取得（team_members → teams） ───────── */
+  /* ───────── 所属チームを取得（スキーマ差異に強いフォールバック版） ───────── */
   const [teams, setTeams] = useState<TeamWithRole[]>([]);
   const [teamsLoading, setTeamsLoading] = useState<boolean>(true);
 
@@ -121,28 +122,50 @@ export default function PlayerProfilePage() {
       if (!playerId) return;
       setTeamsLoading(true);
       try {
-        // 1) team_members から所属チームID+役割を取得（I/O境界を any で緩める）
-        const { data: memberRows, error: mErr } = await (supabase.from('team_members') as any)
-          .select('team_id, role')
-          .eq('player_id', playerId);
-        if (mErr) throw mErr;
+        // よくある中間テーブル候補（存在するものを使う）
+        const membershipCandidates = [
+          { table: 'team_members', playerCol: 'player_id', teamCol: 'team_id', roleCol: 'role' },
+          { table: 'players_teams', playerCol: 'player_id', teamCol: 'team_id', roleCol: null },
+          { table: 'team_players', playerCol: 'player_id', teamCol: 'team_id', roleCol: null },
+          { table: 'memberships',  playerCol: 'player_id', teamCol: 'team_id', roleCol: 'role' },
+        ] as const;
 
-        const members = (memberRows ?? []) as TeamMemberRow[];
+        let memberRows: TeamMemberRow[] = [];
+        let lastErr: any = null;
 
-        // null を除外しつつ ID 配列に
-        const ids: string[] = members
+        for (const c of membershipCandidates) {
+          // role が無ければ team_id のみ選択
+          const sel = c.roleCol ? `${c.teamCol}, ${c.roleCol}` : `${c.teamCol}`;
+          const { data, error } = await (supabase.from(c.table) as any)
+            .select(sel)
+            .eq(c.playerCol, playerId);
+
+          if (!error && data) {
+            memberRows = (data as any[]).map((r) => ({
+              team_id: r[c.teamCol] ?? null,
+              role: c.roleCol ? r[c.roleCol] ?? null : null,
+            }));
+            break;
+          } else {
+            lastErr = error;
+          }
+        }
+
+        // 候補すべてダメでも、UIは「所属なし」で続行
+        const ids: string[] = (memberRows ?? [])
           .map((r) => r.team_id)
           .filter((v): v is string => typeof v === 'string' && v.length > 0);
 
         if (ids.length === 0) {
           if (!cancelled) {
+            if (lastErr) console.warn('[player profile] membership lookup fallback last error:', lastErr);
             setTeams([]);
             setTeamsLoading(false);
           }
           return;
         }
 
-        // 2) teams 情報をまとめて取得
+        // teams 情報を取得
         const { data: teamRows, error: tErr } = await (supabase.from('teams') as any)
           .select('id, name, avatar_url')
           .in('id', ids);
@@ -150,9 +173,9 @@ export default function PlayerProfilePage() {
 
         const teamsRaw = (teamRows ?? []) as Team[];
 
-        // 3) role を結合
+        // role を結合
         const roleMap = new Map<string, string | null>();
-        members.forEach((r) => {
+        (memberRows ?? []).forEach((r) => {
           if (r.team_id) roleMap.set(r.team_id, r.role ?? null);
         });
 
@@ -350,7 +373,7 @@ export default function PlayerProfilePage() {
                 <div className="text-gray-400">まだ試合がありません。</div>
               )}
 
-              {matches && matches.length > 0 && (
+              {Array.isArray(matches) && matches.length > 0 && (
                 <div className="space-y-3">
                   {matches.slice(0, 8).map((m: any) => {
                     const isWin = m.winner_id === playerId;
