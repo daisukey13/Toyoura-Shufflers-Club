@@ -10,13 +10,12 @@ function carryCookies(from: NextResponse, to: NextResponse) {
 }
 
 export async function middleware(req: NextRequest) {
-  const url = req.nextUrl;
-  const { pathname } = url;
+  const { pathname, searchParams } = req.nextUrl;
 
-  // ここで一度だけレスポンスを作成（以降この res に Cookie を積む）
+  // ここで1度だけレスポンスを作り、この res に Cookie を蓄積
   const res = NextResponse.next({ request: { headers: new Headers(req.headers) } });
 
-  // Supabase SSR（認証の有無だけ判定）
+  // Supabase SSR クライアント（Middleware 用）— 認証の有無だけ判定する
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -34,53 +33,50 @@ export async function middleware(req: NextRequest) {
       },
     }
   );
+
+  // 現在のユーザーを Cookie ベースで確認（DB は触らない）
   const { data: { user } } = await supabase.auth.getUser();
 
-  // --- 正規化 ---
-  // /admin → /admin/dashboard
+  // /admin → /admin/dashboard に正規化
   if (pathname === '/admin' || pathname === '/admin/') {
-    return carryCookies(res, NextResponse.redirect(new URL('/admin/dashboard' + url.search, req.url)));
+    return carryCookies(res, NextResponse.redirect(new URL('/admin/dashboard', req.url)));
   }
 
-  // /matches/register → /matches/register/singles
-  if (pathname === '/matches/register' || pathname === '/matches/register/') {
-    return carryCookies(res, NextResponse.redirect(new URL('/matches/register/singles' + url.search, req.url)));
-  }
-
-  // ★ 追加：/matches/register/singles → /matches/register/singles
-  if (pathname === '/mypage' || pathname === '/mypage/') {
-    const open = url.searchParams.get('open');
-    if (open === 'register') {
-      // 他のクエリは温存（open だけ除去）
-      const next = new URL('/matches/register/singles', req.url);
-      const sp = new URLSearchParams(url.searchParams);
-      sp.delete('open');
-      const rest = sp.toString();
-      if (rest) next.search = '?' + rest;
-      return carryCookies(res, NextResponse.redirect(next));
+  // /admin/* はログイン必須（管理者判定はページ側で実施）
+  if (pathname.startsWith('/admin')) {
+    if (!user) {
+      const dest = '/login?redirect=' + encodeURIComponent(req.nextUrl.pathname + req.nextUrl.search);
+      return carryCookies(res, NextResponse.redirect(new URL(dest, req.url)));
     }
   }
 
-  // --- 認可（ログイン必須ページ） ---
-  const requiresAuth =
-    pathname.startsWith('/admin') ||
-    pathname.startsWith('/matches/register/singles') ||
-    pathname.startsWith('/matches/register/teams');
+  // 旧：/matches/register は新：/matches/register/singles へ統一
+  if (pathname === '/matches/register') {
+    return carryCookies(res, NextResponse.redirect(new URL('/matches/register/singles', req.url)));
+  }
 
-  if (requiresAuth && !user) {
-    const dest = '/login?redirect=' + encodeURIComponent(url.pathname + url.search);
-    return carryCookies(res, NextResponse.redirect(new URL(dest, req.url)));
+  // ✅ 旧：/mypage?open=register は必ず新ページへリダイレクト
+  if (pathname === '/mypage' && searchParams.get('open') === 'register') {
+    return carryCookies(res, NextResponse.redirect(new URL('/matches/register/singles', req.url)));
+  }
+
+  // ✅ 試合登録ページはログイン必須（新URLも含めてチェック）
+  if (pathname.startsWith('/matches/register')) {
+    if (!user) {
+      const dest = '/login?redirect=' + encodeURIComponent('/matches/register/singles');
+      return carryCookies(res, NextResponse.redirect(new URL(dest, req.url)));
+    }
   }
 
   return res;
 }
 
 export const config = {
-  // /login は対象外
+  // `/login` は対象外（意図しないリダイレクトを防止）
   matcher: [
     '/admin/:path*',
-    '/matches/register',          // 旧URLの正規化
-    '/matches/register/:path*',   // singles / teams の保護
-    '/mypage',                    // ★ /matches/register/singles の正規化
+    '/matches/register',
+    '/matches/register/:path*',
+    '/mypage',
   ],
 };
