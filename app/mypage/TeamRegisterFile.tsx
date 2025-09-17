@@ -14,8 +14,8 @@ export default function TeamRegisterFile() {
   const [loading, setLoading] = useState(true);
   const [teams, setTeams] = useState<Team[]>([]);
   const [admin, setAdmin] = useState(false);
-  const [sel, setSel] = useState<string>('');
-  const [err, setErr] = useState<string>('');
+  const [sel, setSel] = useState('');
+  const [err, setErr] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -26,29 +26,21 @@ export default function TeamRegisterFile() {
         const res = await fetch('/api/my/teams', {
           credentials: 'include',
           cache: 'no-store',
-          headers: { 'Accept': 'application/json' },
+          headers: { Accept: 'application/json' },
         });
-
-        // JSON化前にステータスを把握（JSON化で失敗するケースもあるため）
         const text = await res.text();
         const json: TeamsResponse = (() => {
           try { return JSON.parse(text); } catch { return { ok: false, message: 'Invalid JSON' }; }
         })();
-
-        if (!res.ok || !json.ok) {
-          const msg = !res.ok ? `HTTP ${res.status}` : (json as any)?.message || 'unknown error';
-          throw new Error(msg);
-        }
+        if (!res.ok || !json.ok) throw new Error(!res.ok ? `HTTP ${res.status}` : (json as any)?.message || 'unknown error');
 
         if (!alive) return;
         const list = Array.isArray(json.teams) ? json.teams : [];
         setTeams(list);
         setAdmin(Boolean(json.admin));
         if (list.length === 1) setSel(list[0].id);
-      } catch (e: unknown) {
-        if (!alive) return;
-        const message = e instanceof Error ? e.message : '所属チームの取得に失敗しました';
-        setErr(message);
+      } catch (e: any) {
+        if (alive) setErr(e?.message || '所属チームの取得に失敗しました');
       } finally {
         if (alive) setLoading(false);
       }
@@ -107,7 +99,7 @@ export default function TeamRegisterFile() {
 
   // 管理者 or 複数所属 → セレクトして遷移
   const canGo = Boolean(sel);
-  const actionClasses = canGo
+  const btnCls = canGo
     ? 'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90'
     : 'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-gray-600/50 cursor-not-allowed';
 
@@ -133,15 +125,12 @@ export default function TeamRegisterFile() {
         </select>
 
         {canGo ? (
-          <Link
-            href={`/matches/register/teams?team_id=${encodeURIComponent(sel)}`}
-            className={actionClasses}
-          >
+          <Link href={`/matches/register/teams?team_id=${encodeURIComponent(sel)}`} className={btnCls}>
             <FaUsers />
             登録画面へ進む
           </Link>
         ) : (
-          <button type="button" disabled className={actionClasses} aria-disabled="true">
+          <button type="button" disabled className={btnCls} aria-disabled="true">
             <FaUsers />
             登録画面へ進む
           </button>
