@@ -1,101 +1,124 @@
 // app/api/my/teams/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { supabaseAdmin } from '@/lib/supabase/admin';
+import { createServerClient } from '@supabase/ssr';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type Team = { id: string; name: string };
+type TeamMemberRow = { team_id: string | null };
+
+// --- ES5互換で動くユーティリティ（Set/for-of/スプレッド不使用） ---
+function uniqStrings(input: string[]): string[] {
+  const seen: { [k: string]: 1 } = Object.create(null);
+  const out: string[] = [];
+  for (let i = 0; i < input.length; i++) {
+    const v = input[i];
+    if (!v) continue;
+    if (seen[v]) continue;
+    seen[v] = 1;
+    out[out.length] = v;
+  }
+  return out;
+}
+
+function readCookie(name: string) {
+  const store = cookies();
+  const c = store.get(name);
+  return c ? c.value : undefined;
+}
 
 export async function GET(_req: NextRequest) {
-  try {
-    // 認証ユーザーを確定
-    const cookieStore = cookies();
-    const supa = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get: (name) => cookieStore.get(name)?.value,
-          set: (name, value, options?: CookieOptions) => cookieStore.set({ name, value, ...options }),
-          remove: (name, options?: CookieOptions) => cookieStore.set({ name, value: '', ...options }),
-        },
-      } as any
+  // Supabase SSR クライアント（Cookie連携）
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const supabase = createServerClient(supabaseUrl, supabaseAnon, {
+    cookies: {
+      get: readCookie,
+      set: (name, value, options) => {
+        // App RouterのRoute内ではレスポンス側でSet-Cookieするのが推奨ですが、
+        // 今回は読み取り専用用途なので set/remove はno-opで問題ありません。
+      },
+      remove: () => {},
+    },
+  });
+
+  // 認証
+  const { data: userRes } = await supabase.auth.getUser();
+  const user = userRes?.user;
+  if (!user) {
+    return NextResponse.json(
+      { ok: false, message: 'Unauthorized' },
+      { status: 401 }
     );
+  }
 
-    const { data: { user }, error: uerr } = await supa.auth.getUser();
-    if (uerr || !user) {
-      return NextResponse.json({ ok: false, message: '認証が必要です。' }, { status: 401 });
-    }
-
-    // 管理者判定（players.is_admin を想定。別名ならここを変える）
-    const { data: me } = await supabaseAdmin
-      .from('players')
-      .select('id, is_admin')
+  // 管理者フラグ（存在しない場合は false にフォールバック）
+  let admin = false;
+  try {
+    const { data: priv, error: privErr } = await supabase
+      .from('players_private')
+      .select('is_admin')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
+    if (!privErr && priv) admin = !!(priv as any).is_admin;
+  } catch {
+    admin = false;
+  }
 
-    const isAdmin = !!me?.is_admin;
+  // まずはユーザーの所属チームIDを取得
+  let teamIds: string[] = [];
+  try {
+    const { data, error } = await supabase
+      .from('team_members')
+      .select('team_id')
+      .eq('player_id', user.id);
 
-    // 管理者は全チーム
-    if (isAdmin) {
-      const { data: allTeams, error: tErr } = await supabaseAdmin
+    if (error) throw error;
+
+    const rawIds: string[] = [];
+    const rows = (data || []) as TeamMemberRow[];
+    for (let i = 0; i < rows.length; i++) {
+      const id = rows[i].team_id ? String(rows[i].team_id) : '';
+      if (id) rawIds[rawIds.length] = id;
+    }
+    teamIds = uniqStrings(rawIds);
+  } catch (e) {
+    // 所属取得に失敗した場合は空のまま続行
+    teamIds = [];
+  }
+
+  // 返すチーム一覧
+  let teams: Team[] = [];
+
+  // 管理者なら全チームを取得（失敗したら所属チームのみにフォールバック）
+  if (admin) {
+    try {
+      const { data, error } = await supabase
         .from('teams')
         .select('id, name')
         .order('name', { ascending: true });
-      if (tErr) {
-        return NextResponse.json({ ok: false, message: `チーム取得に失敗: ${tErr.message}` }, { status: 500 });
-      }
-      return NextResponse.json({ ok: true, admin: true, teams: (allTeams ?? []) as Team[] });
+      if (error) throw error;
+      teams = (data || []) as Team[];
+    } catch {
+      // fall back to membership
     }
-
-    // 一般ユーザー: 所属チームのみ
-    // スキーマ差異に対応するため、よくあるテーブル名を順に試す
-    const candidates = [
-      { table: 'team_members', playerCol: 'player_id', teamCol: 'team_id' },
-      { table: 'players_teams', playerCol: 'player_id', teamCol: 'team_id' },
-      { table: 'team_players', playerCol: 'player_id', teamCol: 'team_id' },
-      { table: 'memberships', playerCol: 'player_id', teamCol: 'team_id' },
-    ] as const;
-
-    let teamIds: string[] = [];
-    let lastError: string | null = null;
-
-    for (const c of candidates) {
-      const { data, error } = await supabaseAdmin
-        .from(c.table)
-        .select(`${c.teamCol}`)
-        .eq(c.playerCol, user.id);
-
-      if (!error && data) {
-        teamIds = [...new Set(data.map((r: any) => String(r[c.teamCol])))]
-          .filter(Boolean);
-        break;
-      } else {
-        lastError = error?.message ?? lastError;
-      }
-    }
-
-    if (teamIds.length === 0) {
-      // 所属なし（or 上記テーブル名が合っていない）
-      // それでも0件として返す（UI側で「所属なし」と表示）
-      return NextResponse.json({ ok: true, admin: false, teams: [] as Team[], note: lastError ?? undefined });
-    }
-
-    const { data: teams, error: tErr } = await supabaseAdmin
-      .from('teams')
-      .select('id, name')
-      .in('id', teamIds)
-      .order('name');
-    if (tErr) {
-      return NextResponse.json({ ok: false, message: `チーム取得に失敗: ${tErr.message}` }, { status: 500 });
-    }
-
-    return NextResponse.json({ ok: true, admin: false, teams: (teams ?? []) as Team[] });
-  } catch (e: any) {
-    console.error('[api/my/teams] fatal:', e);
-    return NextResponse.json({ ok: false, message: 'サーバエラーが発生しました。' }, { status: 500 });
   }
+
+  // 非管理者 or 管理者の全件取得が失敗 → 所属チームのみ返す
+  if (teams.length === 0 && teamIds.length > 0) {
+    try {
+      const { data, error } = await supabase
+        .from('teams')
+        .select('id, name')
+        .in('id', teamIds);
+      if (error) throw error;
+      teams = (data || []) as Team[];
+    } catch {
+      teams = [];
+    }
+  }
+
+  return NextResponse.json({ ok: true, admin, teams });
 }
