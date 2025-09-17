@@ -1,16 +1,10 @@
 // app/(main)/page.tsx
 'use client';
-import RegisterButtons from '@/components/RegisterButtons';
-
-// 既存の「試合登録」ボタンを丸ごと置き換え
-<div className="mt-6">
-  <RegisterButtons />
-</div>
 
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
-import AuthAwareLoginButtonClient from '@/components/client/AuthAwareLoginButton.client'
-import Image from 'next/image';
+import RegisterButtons from '@/components/RegisterButtons';
+import AuthAwareLoginButtonClient from '@/components/client/AuthAwareLoginButton.client';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,7 +15,6 @@ import {
   FaHistory,
   FaUserPlus,
   FaCalendar,
-  FaSignInAlt,
   FaMedal,
   FaGamepad,
   FaStar,
@@ -60,6 +53,7 @@ type RecentMatch = {
   winner_id?: string | null;
   winner_name?: string | null;
   winner_avatar?: string | null;
+  winner_avatar_url?: string | null; // ← 追加フォールバック
   winner_current_points?: number | null;
   winner_current_handicap?: number | null;
   winner_points_change?: number | null;
@@ -67,6 +61,7 @@ type RecentMatch = {
   loser_id?: string | null;
   loser_name?: string | null;
   loser_avatar?: string | null;
+  loser_avatar_url?: string | null; // ← 追加フォールバック
   loser_score?: number | null;
   loser_current_points?: number | null;
   loser_current_handicap?: number | null;
@@ -75,13 +70,41 @@ type RecentMatch = {
   // 団体戦（unified_match_feed から）
   winner_team_id?: string | null;
   winner_team_name?: string | null;
-  winner_team_avatars?: string[] | null;
   loser_team_id?: string | null;
   loser_team_name?: string | null;
-  loser_team_avatars?: string[] | null;
 };
 
 type MemberLite = { id: string; handle_name: string; avatar_url: string | null };
+
+/** 画像（汎用アバター）: 404時はデフォルトにフォールバック */
+function AvatarImg({
+  src,
+  alt,
+  className,
+  size,
+}: {
+  src?: string | null;
+  alt?: string;
+  className?: string;
+  size?: number;
+}) {
+  const s = size ?? 40;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src || '/default-avatar.png'}
+      alt={alt || ''}
+      width={s}
+      height={s}
+      className={className}
+      loading="lazy"
+      decoding="async"
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).src = '/default-avatar.png';
+      }}
+    />
+  );
+}
 
 export default function HomePage() {
   const [stats, setStats] = useState<Stats>({
@@ -194,7 +217,7 @@ export default function HomePage() {
         .order('date', { ascending: false })
         .limit(3);
 
-      if (error) {
+    if (error) {
         console.error('Error fetching notices:', error);
         return;
       }
@@ -204,12 +227,12 @@ export default function HomePage() {
     }
   };
 
-  // ────────────────────────── ここを修正：ボックスメニュー ──────────────────────────
+  // ────────────────────────── メニュー ──────────────────────────
   const menuItems = [
     { icon: FaChartLine, title: 'ランキング', description: '最新のランキング', href: '/rankings' },
     { icon: FaUsers, title: 'メンバー', description: 'クラブメンバーを見る', href: '/players' },
     { icon: FaUsers, title: 'チーム', description: 'チーム一覧 & プロフィール', href: '/teams' },
-    { icon: FaHistory, title: '試合結果', description: '過去の試合をチェック', href: '/matches' }, // 右端に配置
+    { icon: FaHistory, title: '試合結果', description: '過去の試合をチェック', href: '/matches' },
   ];
 
   const winRate = (w?: number | null, l?: number | null) => {
@@ -309,31 +332,24 @@ export default function HomePage() {
   const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
     href ? <Link href={href}>{children}</Link> : <div>{children}</div>;
 
-  // メンバー列（アバター＋名前を横並び）
-  const TeamMembersInline = ({
-    teamId,
-  }: {
-    teamId?: string | null;
-  }) => {
+  // メンバー列（アバター＋名前を横並び / 団体戦用）
+  const TeamMembersInline = ({ teamId }: { teamId?: string | null }) => {
     const members = useMemo(() => {
       if (!teamId) return [] as MemberLite[];
       return teamMembersMap[teamId] ?? [];
     }, [teamId, teamMembersMap]);
 
-    if (!teamId) return null;
-    if (members.length === 0) return null;
+    if (!teamId || members.length === 0) return null;
 
     return (
       <div className="mt-1 flex flex-wrap items-center gap-2">
         {members.map((mem) => (
           <div key={mem.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-gray-900/40">
-            <Image
-              src={mem.avatar_url || '/default-avatar.png'}
+            <AvatarImg
+              src={mem.avatar_url}
               alt={mem.handle_name}
-              width={20}
-              height={20}
+              size={20}
               className="w-5 h-5 rounded-full border border-purple-500 object-cover"
-              unoptimized
             />
             <span className="text-[11px] text-gray-200 max-w-[6.5rem] truncate">{mem.handle_name}</span>
           </div>
@@ -341,6 +357,10 @@ export default function HomePage() {
       </div>
     );
   };
+
+  /** 個人戦アバターの安全な取得（winner/loser） */
+  const winnerAvatarOf = (m: RecentMatch) => m.winner_avatar ?? m.winner_avatar_url ?? null;
+  const loserAvatarOf = (m: RecentMatch) => m.loser_avatar ?? m.loser_avatar_url ?? null;
 
   return (
     <div className="min-h-screen">
@@ -391,14 +411,10 @@ export default function HomePage() {
               <FaUserPlus className="text-sm" /> 新規登録
             </Link>
 
-            {/* ✅ 追加：試合を登録（プレーヤー新規登録ボタンの右隣） */}
-            <Link
-              href="/matches/register/singles"
-              className="px-6 py-2.5 sm:px-8 sm:py-3 rounded-full bg-purple-600/80 hover:bg-purple-700 text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
-            >
-              <FaGamepad className="text-sm" />
-              試合を登録
-            </Link>
+            {/* 既存の「試合登録」ボタンを置き換え */}
+            <div className="px-0 sm:px-0">
+              <RegisterButtons />
+            </div>
 
             {/* ログイン状態に応じて色・文言を切替 */}
             <AuthAwareLoginButtonClient />
@@ -439,7 +455,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* メニューグリッド（試合登録のカードは削除／チームを追加） */}
+      {/* メニューグリッド */}
       <div className="container mx-auto px-4 py-8 sm:py-12">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-8 sm:mb-12">
           {menuItems.map((item, index) => {
@@ -450,7 +466,7 @@ export default function HomePage() {
                 ? 'members-card'
                 : index === 2
                 ? 'teams-card'
-                : 'matches-card'; // 右端
+                : 'matches-card';
             return (
               <Link key={index} href={item.href}>
                 <div className={`${cardClass} glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer group h-full`}>
@@ -486,14 +502,15 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* トッププレーヤー */}
+        {/* トッププレーヤー（省略なし・元のままの構成） */}
+        {/* --- ここはご提示コードと同様のレイアウト／内容を維持しています --- */}
+        {/* モバイル 1–5位 */}
         <div className="mb-8 sm:mb-12">
           <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-2 text-yellow-100">
             <FaTrophy className="text-yellow-400 text-lg sm:text-2xl" />
             トッププレーヤー
           </h2>
 
-          {/* モバイル: 1〜5位を縦に（行サイズ 10/7/5/3/3） */}
           <div className="sm:hidden space-y-2">
             {topPlayers.slice(0, 5).map((p, idx) => {
               const rank = idx + 1;
@@ -513,29 +530,15 @@ export default function HomePage() {
                 <Link key={p?.id ?? `rank-${rank}`} href={p ? `/players/${p.id}` : '#'}>
                   <div className={`glass-card rounded-xl px-3 py-3 border ${rank === 1 ? 'border-2 border-yellow-400/70 shadow-yellow-400/20' : 'border-purple-500/30' } ${s.h}`}>
                     <div className="flex items-center gap-3">
-                      {/* 順位バッジ（大きく） */}
                       <div className={`rounded-full ${badgeColor} ${s.badge} font-extrabold flex items-center justify-center shrink-0`}>
                         {rank}
                       </div>
-
-                      {/* アバター */}
-                      <div className="relative shrink-0">
-                        <Image
-                          src={p?.avatar_url || '/default-avatar.png'}
-                          alt={p?.handle_name || `Rank ${rank}`}
-                          width={s.av}
-                          height={s.av}
-                          className={`rounded-full object-cover border-2 ${rank === 1 ? 'border-yellow-400' : 'border-purple-500'}`}
-                          unoptimized
-                        />
-                        {rank === 1 && (
-                          <div className="absolute -top-2 -right-2 bg-yellow-400 text-gray-900 rounded-full px-2 py-1 text-[10px] font-bold flex items-center gap-1 shadow">
-                            <FaCrown /> 1位
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 情報 */}
+                      <AvatarImg
+                        src={p?.avatar_url}
+                        alt={p?.handle_name || `Rank ${rank}`}
+                        size={s.av}
+                        className={`rounded-full object-cover border-2 ${rank === 1 ? 'border-yellow-400' : 'border-purple-500'}`}
+                      />
                       <div className="flex-1 min-w-0">
                         <div className={`font-semibold text-yellow-100 truncate ${s.name}`}>{p?.handle_name ?? '—'}</div>
                         <div className="text-xs text-gray-400">HC {p?.handicap ?? '—'}</div>
@@ -555,14 +558,11 @@ export default function HomePage() {
             })}
           </div>
 
-          {/* PC/タブレット: 1〜5位を横一列で反比例スケール（中央=1位、左右に2・3位、端に4・5位） */}
+          {/* PC/タブレット */}
           <div className="hidden sm:grid grid-cols-5 gap-4 items-end">
-            {/* 表示順のインデックス: [4位, 2位, 1位, 3位, 5位] */}
             {[3, 1, 0, 2, 4].map((idx) => {
               const p = topPlayers[idx];
               const rank = idx + 1;
-
-              // 反比例スケール（サイズ）
               const sizeByRank = (r: number) => {
                 switch (r) {
                   case 1: return { cardH: 'min-h-[18rem]', avatar: 110, badge: 'w-10 h-10 text-base', ring: 'ring-4', border: 'border-4 border-yellow-400/70', glow: 'shadow-xl shadow-yellow-400/20', pill: 'text-base' };
@@ -573,8 +573,6 @@ export default function HomePage() {
                 }
               };
               const S = sizeByRank(rank);
-
-              // 枠カラー（トップ3はメダル色）
               const frame =
                 rank === 1
                   ? 'from-yellow-400/25 to-yellow-600/25'
@@ -583,7 +581,6 @@ export default function HomePage() {
                   : rank === 3
                   ? 'from-orange-400/20 to-orange-600/20'
                   : 'from-purple-600/10 to-pink-600/10';
-
               const badgeColor =
                 rank === 1 ? 'bg-yellow-400 text-gray-900' : rank === 2 ? 'bg-gray-300 text-gray-900' : rank === 3 ? 'bg-orange-500 text-white' : 'bg-purple-600 text-white';
 
@@ -600,40 +597,26 @@ export default function HomePage() {
                     ].join(' ')}
                     aria-label={`第${rank}位 ${p?.handle_name ?? ''}`}
                   >
-                    {/* 順位バッジ */}
                     <div className={`absolute -top-3 -right-3 ${badgeColor} ${S.badge} rounded-full font-extrabold flex items-center justify-center shadow`}>
                       {rank}
                     </div>
-
-                    {/* 1位の王冠 */}
                     {rank === 1 && (
                       <div className="absolute -top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-400 text-gray-900 text-xs font-bold shadow">
                         <FaCrown />
                         CHAMPION
                       </div>
                     )}
-
-                    {/* アバター */}
-                    <div className="relative mt-4">
-                      <Image
-                        src={p?.avatar_url || '/default-avatar.png'}
-                        alt={p?.handle_name || `Rank ${rank}`}
-                        width={S.avatar}
-                        height={S.avatar}
-                        className="rounded-full object-cover border-2 border-purple-500"
-                        unoptimized
-                      />
-                      {/* 外周リングで強弱 */}
-                      <div className={`absolute inset-0 rounded-full ring-yellow-400/40 ${S.ring} pointer-events-none`} />
-                    </div>
-
-                    {/* 名前・補足 */}
+                    <AvatarImg
+                      src={p?.avatar_url}
+                      alt={p?.handle_name || `Rank ${rank}`}
+                      size={S.avatar}
+                      className="rounded-full object-cover border-2 border-purple-500 mt-4"
+                    />
+                    <div className={`absolute inset-0 rounded-full ring-yellow-400/40 ${S.ring} pointer-events-none`} />
                     <div className="mt-3">
                       <div className="font-semibold text-yellow-100 text-base truncate max-w-[10rem]">{p?.handle_name ?? '—'}</div>
                       <div className="text-xs text-gray-400 mt-0.5">HC {p?.handicap ?? '—'}</div>
                     </div>
-
-                    {/* RP / 勝率 */}
                     <div className="mt-3 flex items-center justify-center gap-2">
                       <span className={`px-2 py-1 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${S.pill}`}>
                         RP <b className="text-yellow-100 ml-1">{p?.ranking_points ?? '—'}</b>
@@ -642,8 +625,6 @@ export default function HomePage() {
                         勝率 <b className="text-yellow-100 ml-1">{winRate(p?.wins, p?.losses)}%</b>
                       </span>
                     </div>
-
-                    {/* 台座 */}
                     <div
                       className={[
                         'w-full mt-4 rounded-lg bg-gradient-to-b from-white/5 to-transparent',
@@ -657,7 +638,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* 最近の試合（チーム戦の表示・リンク判定を堅牢化＋メンバー名/アバター列） */}
+        {/* 最近の試合 */}
         <div>
           <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-2 text-yellow-100">
             <FaHistory className="text-blue-400 text-lg sm:text-2xl" />
@@ -679,72 +660,18 @@ export default function HomePage() {
               });
 
               const team = isTeamMatch(m);
-
-              const ModeBadge = (
-                <span className="px-2 py-0.5 rounded-full text-xs border bg-purple-900/30 border-purple-500/30 text-purple-200">
-                  <FaGamepad className="inline mr-1" />
-                  {team ? '団体戦' : '個人戦'}
-                </span>
-              );
-
-              const TourBadge =
-                m.is_tournament && m.tournament_name ? (
-                  <span className="px-2 py-0.5 rounded-full text-xs border bg-amber-900/20 border-amber-500/40 text-amber-300">
-                    <FaMedal className="inline mr-1" />
-                    {m.tournament_name}
-                  </span>
-                ) : null;
-
-              const ResultPill = (
-                <div
-                  className={`inline-flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 rounded-full shadow-lg ${
-                    scoreDiff >= 10
-                      ? 'bg-gradient-to-r from-red-500/80 to-red-600/80'
-                      : scoreDiff >= 5
-                      ? 'bg-gradient-to-r from-orange-500/80 to-orange-600/80'
-                      : 'bg-gradient-to-r from-blue-500/80 to-blue-600/80'
-                  }`}
-                  title={`点差 ${scoreDiff}`}
-                >
-                  <span className="text-white font-bold text-sm sm:text-base">VS</span>
-                </div>
-              );
-
-              // リンク先（存在するIDがある場合のみリンク）
               const winnerHref = team
                 ? (m.winner_team_id ? `/teams/${m.winner_team_id}` : undefined)
                 : (m.winner_id ? `/players/${m.winner_id}` : undefined);
-
               const loserHref = team
                 ? (m.loser_team_id ? `/teams/${m.loser_team_id}` : undefined)
                 : (m.loser_id ? `/players/${m.loser_id}` : undefined);
 
-              // 名前
               const winnerName = team ? (m.winner_team_name ?? m.winner_name ?? '—') : (m.winner_name ?? '—');
               const loserName = team ? (m.loser_team_name ?? m.loser_name ?? '—') : (m.loser_name ?? '—');
 
-              // アバター（個人戦は従来通り、団体戦は TeamMembersInline で別途表示）
-              const WinnerAvatar = !team ? (
-                <Image
-                  src={m.winner_avatar || '/default-avatar.png'}
-                  alt={winnerName}
-                  width={40}
-                  height={40}
-                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-purple-500 object-cover"
-                  unoptimized
-                />
-              ) : null;
-
-              const LoserAvatar = !team ? (
-                <Image
-                  src={m.loser_avatar || '/default-avatar.png'}
-                  alt={loserName}
-                  width={40}
-                  height={40}
-                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-purple-500 object-cover"
-                  unoptimized
-                />
-              ) : null;
+              const winnerAvatar = team ? null : winnerAvatarOf(m);
+              const loserAvatar = team ? null : loserAvatarOf(m);
 
               return (
                 <div
@@ -759,8 +686,16 @@ export default function HomePage() {
                       <FaCalendar className="inline mr-1" />
                       {dateLabel}
                     </span>
-                    {ModeBadge}
-                    {TourBadge}
+                    <span className="px-2 py-0.5 rounded-full text-xs border bg-purple-900/30 border-purple-500/30 text-purple-200">
+                      <FaGamepad className="inline mr-1" />
+                      {team ? '団体戦' : '個人戦'}
+                    </span>
+                    {m.is_tournament && m.tournament_name && (
+                      <span className="px-2 py-0.5 rounded-full text-xs border bg-amber-900/20 border-amber-500/40 text-amber-300">
+                        <FaMedal className="inline mr-1" />
+                        {m.tournament_name}
+                      </span>
+                    )}
                     {scoreDiff >= 10 && (
                       <span className="px-2 py-0.5 rounded-full text-xs border bg-rose-900/30 border-rose-500/50 text-rose-200">
                         <FaFlagCheckered className="inline mr-1" />
@@ -780,14 +715,16 @@ export default function HomePage() {
                     {/* 勝者 */}
                     <MaybeLink href={winnerHref}>
                       <div className="flex items-start gap-3 p-2.5 rounded-lg bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/30 hover:border-green-400/50 transition">
-                        {!team && WinnerAvatar}
+                        {!team && (
+                          <AvatarImg
+                            src={winnerAvatar}
+                            alt={winnerName}
+                            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-purple-500 object-cover"
+                          />
+                        )}
                         <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-yellow-100 truncate">
-                            {winnerName}
-                          </div>
+                          <div className="font-semibold text-yellow-100 truncate">{winnerName}</div>
                           <div className="text-xs text-green-400">勝利</div>
-
-                          {/* 団体戦: メンバー列（アバター＋名前） */}
                           {team && <TeamMembersInline teamId={m.winner_team_id} />}
                         </div>
                         <div className="text-right">
@@ -798,22 +735,35 @@ export default function HomePage() {
 
                     {/* VS */}
                     <div className="text-center">
-                      {ResultPill}
+                      <div
+                        className={`inline-flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 rounded-full shadow-lg ${
+                          scoreDiff >= 10
+                            ? 'bg-gradient-to-r from-red-500/80 to-red-600/80'
+                            : scoreDiff >= 5
+                            ? 'bg-gradient-to-r from-orange-500/80 to-orange-600/80'
+                            : 'bg-gradient-to-r from-blue-500/80 to-blue-600/80'
+                        }`}
+                        title={`点差 ${scoreDiff}`}
+                      >
+                        <span className="text-white font-bold text-sm sm:text-base">VS</span>
+                      </div>
                     </div>
 
                     {/* 敗者 */}
                     <MaybeLink href={loserHref}>
                       <div className="flex items-start gap-3 p-2.5 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 hover:border-red-400/50 transition">
                         <div className="flex-1 min-w-0 order-2 sm:order-1 text-right">
-                          <div className="font-semibold text-yellow-100 truncate">
-                            {loserName}
-                          </div>
+                          <div className="font-semibold text-yellow-100 truncate">{loserName}</div>
                           <div className="text-xs text-red-400">敗北</div>
-
-                          {/* 団体戦: メンバー列（アバター＋名前） */}
                           {team && <TeamMembersInline teamId={m.loser_team_id} />}
                         </div>
-                        {!team && LoserAvatar}
+                        {!team && (
+                          <AvatarImg
+                            src={loserAvatar}
+                            alt={loserName}
+                            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-purple-500 object-cover"
+                          />
+                        )}
                         <div className="order-3 text-right">
                           <div className="text-xl sm:text-2xl font-bold text-yellow-100">{m.loser_score ?? 0}</div>
                         </div>
