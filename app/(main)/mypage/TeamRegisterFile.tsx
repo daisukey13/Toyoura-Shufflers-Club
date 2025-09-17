@@ -1,3 +1,4 @@
+// app/mypage/TeamRegisterFile.tsx
 'use client';
 
 import Link from 'next/link';
@@ -5,8 +6,11 @@ import { useEffect, useState } from 'react';
 import { FaUsers, FaChevronRight } from 'react-icons/fa';
 
 type Team = { id: string; name: string };
+type TeamsResponse =
+  | { ok: true; teams: Team[]; admin: boolean }
+  | { ok: false; message?: string };
 
-export default function TeamRegisterTile() {
+export default function TeamRegisterFile() {
   const [loading, setLoading] = useState(true);
   const [teams, setTeams] = useState<Team[]>([]);
   const [admin, setAdmin] = useState(false);
@@ -19,15 +23,32 @@ export default function TeamRegisterTile() {
       try {
         setLoading(true);
         setErr('');
-        const res = await fetch('/api/my/teams', { credentials: 'include', cache: 'no-store' });
-        const j = await res.json();
-        if (!res.ok || !j?.ok) throw new Error(j?.message || `HTTP ${res.status}`);
+        const res = await fetch('/api/my/teams', {
+          credentials: 'include',
+          cache: 'no-store',
+          headers: { 'Accept': 'application/json' },
+        });
+
+        // JSON化前にステータスを把握（JSON化で失敗するケースもあるため）
+        const text = await res.text();
+        const json: TeamsResponse = (() => {
+          try { return JSON.parse(text); } catch { return { ok: false, message: 'Invalid JSON' }; }
+        })();
+
+        if (!res.ok || !json.ok) {
+          const msg = !res.ok ? `HTTP ${res.status}` : (json as any)?.message || 'unknown error';
+          throw new Error(msg);
+        }
+
         if (!alive) return;
-        setTeams(j.teams || []);
-        setAdmin(!!j.admin);
-        if ((j.teams || []).length === 1) setSel(j.teams[0].id);
-      } catch (e: any) {
-        if (alive) setErr(e?.message || '所属チームの取得に失敗しました');
+        const list = Array.isArray(json.teams) ? json.teams : [];
+        setTeams(list);
+        setAdmin(Boolean(json.admin));
+        if (list.length === 1) setSel(list[0].id);
+      } catch (e: unknown) {
+        if (!alive) return;
+        const message = e instanceof Error ? e.message : '所属チームの取得に失敗しました';
+        setErr(message);
       } finally {
         if (alive) setLoading(false);
       }
@@ -37,7 +58,7 @@ export default function TeamRegisterTile() {
 
   if (loading) {
     return (
-      <div className="glass-card rounded-xl p-5 border border-purple-500/30">
+      <div className="glass-card rounded-xl p-5 border border-purple-500/30" aria-busy="true">
         <div className="animate-pulse h-6 w-40 bg-white/10 rounded mb-3" />
         <div className="animate-pulse h-10 w-full bg-white/10 rounded" />
       </div>
@@ -85,6 +106,11 @@ export default function TeamRegisterTile() {
   }
 
   // 管理者 or 複数所属 → セレクトして遷移
+  const canGo = Boolean(sel);
+  const actionClasses = canGo
+    ? 'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90'
+    : 'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-gray-600/50 cursor-not-allowed';
+
   return (
     <div className="glass-card rounded-xl p-5 border border-purple-500/30">
       <div className="flex items-center gap-3 mb-3">
@@ -106,18 +132,20 @@ export default function TeamRegisterTile() {
           ))}
         </select>
 
-        <Link
-          aria-disabled={!sel}
-          href={sel ? `/matches/register/teams?team_id=${encodeURIComponent(sel)}` : '#'}
-          className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white ${
-            sel
-              ? 'bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90'
-              : 'bg-gray-600/50 cursor-not-allowed'
-          }`}
-        >
-          <FaUsers />
-          登録画面へ進む
-        </Link>
+        {canGo ? (
+          <Link
+            href={`/matches/register/teams?team_id=${encodeURIComponent(sel)}`}
+            className={actionClasses}
+          >
+            <FaUsers />
+            登録画面へ進む
+          </Link>
+        ) : (
+          <button type="button" disabled className={actionClasses} aria-disabled="true">
+            <FaUsers />
+            登録画面へ進む
+          </button>
+        )}
 
         {err && <p className="text-xs text-red-400">{err}</p>}
       </div>
