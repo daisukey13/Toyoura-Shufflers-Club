@@ -39,18 +39,14 @@ async function restGet<T = any>(path: string) {
 /** match_details ビュー想定の型（個人戦/団体戦の両方を吸収） */
 interface MatchDetails {
   id: string;
-
-  // 時系列
   match_date: string;
-
-  // 区別
   mode?: 'singles' | 'teams' | string | null;
 
-  // 個人戦フィールド
+  // 個人戦
   winner_id?: string | null;
   winner_name?: string | null;
-  winner_avatar?: string | null;        // 既存コード互換
-  winner_avatar_url?: string | null;    // ビュー側実装によってはこちらになる場合
+  winner_avatar?: string | null;
+  winner_avatar_url?: string | null;
   winner_current_points?: number | null;
   winner_current_handicap?: number | null;
   winner_points_change?: number | null;
@@ -64,13 +60,13 @@ interface MatchDetails {
   loser_current_handicap?: number | null;
   loser_points_change?: number | null;
 
-  // 団体戦フィールド
+  // 団体戦
   winner_team_id?: string | null;
   winner_team_name?: string | null;
   loser_team_id?: string | null;
   loser_team_name?: string | null;
 
-  // 任意メタ
+  // メタ
   is_tournament?: boolean | null;
   tournament_name?: string | null;
   venue?: string | null;
@@ -169,7 +165,7 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
   const wAvatar = m.winner_avatar ?? m.winner_avatar_url;
   const lAvatar = m.loser_avatar ?? m.loser_avatar_url;
 
-  // 番狂わせ判定（安全側：必要データが無ければ false）
+  // 番狂わせ判定
   const isUpset = useMemo(() => {
     const wp = m.winner_current_points ?? null;
     const lp = m.loser_current_points ?? null;
@@ -276,7 +272,7 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
   );
 });
 
-/* ─────────────── 団体戦カード（チームのメンバー表示付き） ─────────────── */
+/* ─────────────── 団体戦カード ─────────────── */
 
 function TeamMembersRow({ members }: { members: MemberProfile[] }) {
   if (!members?.length) return null;
@@ -285,7 +281,6 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
 
   return (
     <div className="mt-1">
-      {/* アバター重ね表示 */}
       <div className="flex -space-x-3">
         {shown.map((p) => (
           <Link key={p.id} href={`/players/${p.id}`} prefetch={false} title={p.handle_name}>
@@ -307,7 +302,6 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
           </div>
         )}
       </div>
-      {/* 名前リスト（小さく・折り返し） */}
       <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">
         {members.map((m) => m.handle_name).join(' / ')}
       </div>
@@ -389,6 +383,24 @@ const TeamsCard = memo(function TeamsCard({
   );
 });
 
+/* ─────────────── 画面幅ヘルパー ─────────────── */
+
+function useIsSmallScreen() {
+  const [isSmall, setIsSmall] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639px)'); // sm 未満
+    const handler = () => setIsSmall(mq.matches);
+    handler();
+    if (mq.addEventListener) mq.addEventListener('change', handler);
+    else mq.addListener(handler);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', handler);
+      else mq.removeListener(handler);
+    };
+  }, []);
+  return isSmall;
+}
+
 /* ─────────────── ページ本体 ─────────────── */
 
 export default function MatchesPage() {
@@ -399,53 +411,39 @@ export default function MatchesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
 
-  // 検索・絞り込み（個人戦/団体戦どちらでも成立するよう拡張）
+  // 検索・絞り込み
   const filteredSortedMatches = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const now = new Date();
 
     const filtered = (matches as MatchDetails[]).filter((m) => {
-      // 検索文字列：個人名 or チーム名 or 会場/大会
       const searchHit =
-        (!term ||
-          (m.winner_name ?? '').toLowerCase().includes(term) ||
-          (m.loser_name ?? '').toLowerCase().includes(term) ||
-          (m.winner_team_name ?? '').toLowerCase().includes(term) ||
-          (m.loser_team_name ?? '').toLowerCase().includes(term) ||
-          (m.venue ?? '').toLowerCase().includes(term) ||
-          (m.tournament_name ?? '').toLowerCase().includes(term));
+        !term ||
+        (m.winner_name ?? '').toLowerCase().includes(term) ||
+        (m.loser_name ?? '').toLowerCase().includes(term) ||
+        (m.winner_team_name ?? '').toLowerCase().includes(term) ||
+        (m.loser_team_name ?? '').toLowerCase().includes(term) ||
+        (m.venue ?? '').toLowerCase().includes(term) ||
+        (m.tournament_name ?? '').toLowerCase().includes(term);
 
-      // 大会/通常
-      const typeHit =
-        filter === 'all'
-          ? true
-          : filter === 'tournament'
-          ? !!m.is_tournament
-          : !m.is_tournament; // normal
+      const typeHit = filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
 
-      // 期間
       const d = new Date(m.match_date);
       let dateHit = true;
-      if (dateFilter === 'today') {
-        dateHit = d.toDateString() === now.toDateString();
-      } else if (dateFilter === 'week') {
-        dateHit = d >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      } else if (dateFilter === 'month') {
-        dateHit = d >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      }
+      if (dateFilter === 'today') dateHit = d.toDateString() === now.toDateString();
+      else if (dateFilter === 'week') dateHit = d >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      else if (dateFilter === 'month') dateHit = d >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
       return searchHit && typeHit && dateHit;
     });
 
-    // 日付降順（保険）
     filtered.sort((a, b) => +new Date(b.match_date) - +new Date(a.match_date));
     return filtered;
   }, [matches, searchTerm, filter, dateFilter]);
 
-  /* ── ここから追加：表示対象のチームのメンバープロフィールを一括取得 ── */
+  /* チームのメンバーを一括取得 */
   const [membersByTeam, setMembersByTeam] = useState<Record<string, MemberProfile[]>>({});
 
-  // 画面に表示している試合に出てくるチームIDを抽出（winner/loser）
   const visibleTeamIds = useMemo(() => {
     const ids = new Set<string>();
     for (const m of filteredSortedMatches) {
@@ -463,7 +461,6 @@ export default function MatchesPage() {
         return;
       }
       try {
-        // team_members を取得
         const inTeams = visibleTeamIds.map((id) => `"${id}"`).join(',');
         const tm = await restGet<{ team_id: string; player_id: string }[]>(
           `/rest/v1/team_members?team_id=in.(${inTeams})&select=team_id,player_id`
@@ -487,15 +484,13 @@ export default function MatchesPage() {
           if (!p) continue;
           (grouped[r.team_id] ||= []).push(p);
         }
-
-        // 表示整形：ハンドルネーム昇順で揃える
         for (const k of Object.keys(grouped)) {
           grouped[k] = grouped[k].sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'));
         }
 
         if (!cancelled) setMembersByTeam(grouped);
       } catch {
-        // 読み込み失敗時は黙って空のまま（一覧自体は見える）
+        // 失敗時は黙って空のまま
       }
     })();
     return () => {
@@ -513,7 +508,19 @@ export default function MatchesPage() {
     return { totalMatches, todayMatches, tournamentMatches, avgScoreDiff };
   }, [matches]);
 
-  // 仮想スクロール描画
+  /* ── ここが修正ポイント：仮想スクロールの itemHeight をモバイル向けに拡大 ── */
+  const isSmall = useIsSmallScreen();
+  const hasNotes = useMemo(() => filteredSortedMatches.some((m) => !!m.notes), [filteredSortedMatches]);
+
+  // モバイルは高さを厚めに（縦並び＋ノート有りでクリップしないように）
+  const virtItemHeight = isSmall
+    ? hasNotes
+      ? 380
+      : 340
+    : hasNotes
+    ? 280
+    : 240;
+
   const renderItem = useCallback(
     (index: number) => {
       const m = filteredSortedMatches[index];
@@ -656,7 +663,7 @@ export default function MatchesPage() {
                 <VirtualList
                   items={filteredSortedMatches}
                   height={600}
-                  itemHeight={260}
+                  itemHeight={virtItemHeight} {/* ← ここが肝：モバイルで拡大 */}
                   renderItem={renderItem}
                   className="space-y-3 sm:space-y-4"
                 />
