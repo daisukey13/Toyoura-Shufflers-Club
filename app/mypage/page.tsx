@@ -871,12 +871,12 @@ export default function MyPage() {
             </div>
 
             <div className="mt-5 flex gap-2 flex-col">
-              <button
-                onClick={() => setRegOpen(true)}
-                className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2"
-              >
-                <FaGamepad /> 個人戦を登録
-              </button>
+             <Link
+              href="/matches/register/singles"  
+              className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2"
+            >
+             <FaGamepad /> 個人戦に登録
+            </Link>
               <Link
                 href="/teams"
                 className="px-4 py-2 rounded-lg bg-purple-600/30 hover:bg-purple-600/40 inline-flex items-center gap-2"
