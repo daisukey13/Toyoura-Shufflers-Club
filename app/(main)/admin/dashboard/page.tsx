@@ -61,8 +61,11 @@ export default function AdminDashboard() {
     totalMatches: 0,
     todayMatches: 0,
   });
+
+  // ★ ランキング設定（API 連携版）
   const [config, setConfig] = useState<RankingConfig>({
     k_factor: 32,
+    // 既存UIのレンジに合わせた初期値（localStorageではなくAPIへ保存）
     score_diff_multiplier: 0.05,
     handicap_diff_multiplier: 0.02,
     win_threshold_handicap_change: 10,
@@ -86,7 +89,9 @@ export default function AdminDashboard() {
           return;
         }
 
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         if (!user) {
           router.replace('/login?redirect=/admin/dashboard');
           return;
@@ -96,7 +101,10 @@ export default function AdminDashboard() {
 
         let isAdmin = false;
         const [adminResp, playerResp] = await Promise.all([
-          (supabase.from('app_admins') as any).select('user_id').eq('user_id', user.id).maybeSingle(),
+          (supabase.from('app_admins') as any)
+            .select('user_id')
+            .eq('user_id', user.id)
+            .maybeSingle(),
           (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
         ]);
         const adminRow = (adminResp?.data ?? null) as AdminRow | null;
@@ -111,7 +119,7 @@ export default function AdminDashboard() {
 
         setAuthz('ok');
         void fetchStats();
-        void loadConfig();
+        void loadConfig();     // ← ★ APIから設定取得
         void fetchNotices();
       } catch {
         setAuthz('no');
@@ -177,36 +185,64 @@ export default function AdminDashboard() {
       if (error) throw error;
     } catch (e) {
       console.error('[admin/dashboard] toggle publish error:', e);
-      setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: !next } : n)));
+      setNotices((prev) =>
+        prev.map((n) => (n.id === target.id ? { ...n, is_published: !next } : n))
+      );
       alert('公開状態の更新に失敗しました。RLS の許可設定をご確認ください。');
     }
   };
 
-  /** 設定ロード（暫定: localStorage） */
-  const loadConfig = () => {
+  /* ==============================
+     ★ ランキング設定の API 連携
+     ============================== */
+
+  // APIから設定を読み込む
+  const loadConfig = async () => {
     try {
-      const raw = localStorage.getItem('rankingConfig');
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as RankingConfig;
-      setConfig((prev) => ({ ...prev, ...parsed }));
+      const r = await fetch('/api/admin/ranking-config', { cache: 'no-store' });
+      const j = await r.json();
+      if (r.ok && j?.ok && j.config) {
+        // 既存UIのスライダー範囲に軽くクランプ（安全策）
+        const clamp = (v: number, min: number, max: number) =>
+          Math.min(max, Math.max(min, Number(v)));
+        const cfg = j.config as RankingConfig;
+        const normalized: RankingConfig = {
+          k_factor: clamp(cfg.k_factor, 10, 64),
+          score_diff_multiplier: clamp(cfg.score_diff_multiplier, 0.01, 0.1),
+          handicap_diff_multiplier: clamp(cfg.handicap_diff_multiplier, 0.01, 0.05),
+          win_threshold_handicap_change: clamp(cfg.win_threshold_handicap_change, 0, 50),
+          handicap_change_amount: clamp(cfg.handicap_change_amount, -10, 10),
+        };
+        setConfig((prev) => ({ ...prev, ...normalized }));
+      }
     } catch (e) {
-      console.warn('[admin/dashboard] loadConfig parse error:', e);
+      console.warn('[admin/dashboard] loadConfig error:', e);
     }
   };
 
-  /** 設定保存（将来は Supabase へ） */
-  const saveConfig = () => {
+  // 設定を保存（PUT）— API側で is_admin を二重チェック
+  const saveConfig = async () => {
     try {
       setSaving(true);
-      localStorage.setItem('rankingConfig', JSON.stringify(config));
-      setTimeout(() => {
-        setSaving(false);
-        alert('設定を保存しました');
-      }, 250);
-    } catch (e) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const res = await fetch('/api/admin/ranking-config', {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          'x-user-id': user?.id || '',
+        },
+        body: JSON.stringify(config),
+      });
+      const j = await res.json();
+      if (!res.ok || !j?.ok) throw new Error(j?.message || `HTTP ${res.status}`);
+      alert('設定を保存しました');
+    } catch (e: any) {
+      alert(`設定の保存に失敗しました: ${e?.message || 'failed'}`);
+    } finally {
       setSaving(false);
-      alert('設定の保存に失敗しました');
-      console.error('[admin/dashboard] saveConfig error:', e);
     }
   };
 
@@ -231,7 +267,7 @@ export default function AdminDashboard() {
     if (!den || den <= 0) return 0;
     const v = (num / den) * 100;
     return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
-  };
+    };
 
   // 認証中
   if (authz === 'checking') {
@@ -454,7 +490,9 @@ export default function AdminDashboard() {
                           </h3>
                           <span
                             className={`px-2 py-0.5 rounded-full text-xs ${
-                              n.is_published ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-300'
+                              n.is_published
+                                ? 'bg-green-500/20 text-green-400'
+                                : 'bg-gray-500/20 text-gray-300'
                             }`}
                           >
                             {n.is_published ? '公開中' : '非公開'}
@@ -489,7 +527,11 @@ export default function AdminDashboard() {
                           className="p-2 rounded-lg hover:bg-purple-900/30 transition-colors"
                           title={n.is_published ? '非公開にする' : '公開する'}
                         >
-                          {n.is_published ? <FaEyeSlash className="text-gray-300" /> : <FaEye className="text-purple-300" />}
+                          {n.is_published ? (
+                            <FaEyeSlash className="text-gray-300" />
+                          ) : (
+                            <FaEye className="text-purple-300" />
+                          )}
                         </button>
                         <Link
                           href={`/admin/notices/${n.id}/edit`}
@@ -518,7 +560,9 @@ export default function AdminDashboard() {
               <div className="space-y-8">
                 {/* K係数 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">K係数（ELOレーティング）</label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    K係数（ELOレーティング）
+                  </label>
                   <p className="text-sm text-gray-400 mb-4">レーティング変動の大きさ。通常は16〜64。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -526,7 +570,9 @@ export default function AdminDashboard() {
                       min={16}
                       max={64}
                       value={config.k_factor}
-                      onChange={(e) => setConfig({ ...config, k_factor: parseInt(e.target.value) })}
+                      onChange={(e) =>
+                        setConfig({ ...config, k_factor: parseInt(e.target.value, 10) })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
@@ -537,27 +583,38 @@ export default function AdminDashboard() {
 
                 {/* スコア差倍率 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">スコア差倍率</label>
-                  <p className="text-sm text-gray-400 mb-4">0.01〜0.1 推奨。</p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    スコア差倍率
+                  </label>
+                  <p className="text-sm text-gray-400 mb-4">0.01〜0.10 推奨。</p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
                       min={0.01}
                       max={0.1}
                       step={0.01}
-                      value={config.score_diff_multiplier}
-                      onChange={(e) => setConfig({ ...config, score_diff_multiplier: parseFloat(e.target.value) })}
+                      value={Number(config.score_diff_multiplier)}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          score_diff_multiplier: parseFloat(e.target.value),
+                        })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.score_diff_multiplier}</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.score_diff_multiplier}
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ差倍率 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ差倍率</label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    ハンディキャップ差倍率
+                  </label>
                   <p className="text-sm text-gray-400 mb-4">0.01〜0.05 推奨。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -565,20 +622,31 @@ export default function AdminDashboard() {
                       min={0.01}
                       max={0.05}
                       step={0.01}
-                      value={config.handicap_diff_multiplier}
-                      onChange={(e) => setConfig({ ...config, handicap_diff_multiplier: parseFloat(e.target.value) })}
+                      value={Number(config.handicap_diff_multiplier)}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          handicap_diff_multiplier: parseFloat(e.target.value),
+                        })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.handicap_diff_multiplier}</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.handicap_diff_multiplier}
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ変更閾値 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ変更閾値（点差）</label>
-                  <p className="text-sm text-gray-400 mb-4">この点差以上で勝利した場合にハンディを調整。</p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    ハンディキャップ変更閾値（点差）
+                  </label>
+                  <p className="text-sm text-gray-400 mb-4">
+                    この点差以上で勝利した場合にハンディを調整。
+                  </p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
@@ -586,19 +654,26 @@ export default function AdminDashboard() {
                       max={15}
                       value={config.win_threshold_handicap_change}
                       onChange={(e) =>
-                        setConfig({ ...config, win_threshold_handicap_change: parseInt(e.target.value) })
+                        setConfig({
+                          ...config,
+                          win_threshold_handicap_change: parseInt(e.target.value, 10),
+                        })
                       }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.win_threshold_handicap_change}点</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.win_threshold_handicap_change}点
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ変更量 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ変更量</label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    ハンディキャップ変更量
+                  </label>
                   <p className="text-sm text-gray-400 mb-4">閾値を超えた場合の変更量。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -607,17 +682,22 @@ export default function AdminDashboard() {
                       max={5}
                       value={config.handicap_change_amount}
                       onChange={(e) =>
-                        setConfig({ ...config, handicap_change_amount: parseInt(e.target.value) })
+                        setConfig({
+                          ...config,
+                          handicap_change_amount: parseInt(e.target.value, 10),
+                        })
                       }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.handicap_change_amount}</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.handicap_change_amount}
+                      </span>
                     </div>
                   </div>
                 </div>
 
-                {/* 保存ボタン */}
+                {/* 保存ボタン（API連携） */}
                 <div className="flex justify-end pt-4">
                   <button
                     onClick={saveConfig}
