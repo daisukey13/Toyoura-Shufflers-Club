@@ -25,7 +25,7 @@ import {
   FaPlus,
 } from 'react-icons/fa';
 
-const TeamRegisterTile = dynamic(() => import('./TeamRegisterTile'), { ssr: false });
+const TeamRegisterFile = dynamic(() => import('./TeamRegisterFile'), { ssr: false });
 
 /* ================================ 型 ================================ */
 type Player = {
@@ -956,7 +956,7 @@ export default function MyPage() {
           </div>
 
           {/* チーム試合登録タイル（SSG不可のため dynamic import） */}
-          <TeamRegisterTile />
+          <TeamRegisterFile />
         </div>
       </div>
 
