@@ -1,17 +1,17 @@
 // app/(main)/register/page.tsx
 'use client';
 
-import { restGet, restPost, restPatch } from '@/lib/supabase/rest';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
 import {
   FaUserPlus, FaUser, FaEnvelope, FaPhone, FaMapMarkerAlt,
   FaGamepad, FaCheckCircle, FaExclamationCircle,
   FaSpinner, FaLock, FaImage
 } from 'react-icons/fa';
+import { supabase } from '@/lib/supabase';
 import AvatarSelector from '@/components/AvatarSelector';
+import TurnstileWidget from '@/components/TurnstileWidget';
 
 type FormData = {
   handle_name: string;
@@ -45,6 +45,10 @@ export default function RegisterPage() {
   const [unlocked, setUnlocked] = useState<boolean>(PASSCODE.length === 0);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState<string | null>(null);
+
+  // Turnstile
+  const [tsToken, setTsToken] = useState<string | undefined>();
+  const [tsError, setTsError] = useState<string | null>(null);
 
   // 以前の実装の残骸を掃除（自動スキップを防止）
   useEffect(() => {
@@ -135,6 +139,31 @@ export default function RegisterPage() {
     }
   };
 
+  // Turnstile 検証（サーバの検証エンドポイントに投げる）
+  async function verifyTurnstileToken(token?: string) {
+    setTsError(null);
+    if (!token) {
+      setTsError('セキュリティチェックが未完了です。');
+      return false;
+    }
+    try {
+      const res = await fetch('/api/turnstile/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !(j?.ok ?? j?.success)) {
+        setTsError('セキュリティ検証に失敗しました。ページを再読み込みしてやり直してください。');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      setTsError('セキュリティ検証に失敗しました。ネットワークをご確認ください。');
+      return false;
+    }
+  }
+
   // 登録送信
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -152,6 +181,10 @@ export default function RegisterPage() {
       alert('入力内容を確認してください。');
       return;
     }
+
+    // ← Turnstile を必須化
+    const humanOK = await verifyTurnstileToken(tsToken);
+    if (!humanOK) return;
 
     setLoading(true);
     try {
@@ -246,7 +279,7 @@ export default function RegisterPage() {
               <FaUserPlus className="text-2xl sm:text-3xl text-white" />
             </div>
           </div>
-          <h1 className="text-2xl sm:text-4xl font-bold text白 mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
             新規プレイヤー登録
           </h1>
           <p className="text-sm sm:text-base text-gray-300">豊浦シャッフラーズクラブへようこそ</p>
@@ -336,7 +369,7 @@ export default function RegisterPage() {
 
               {/* アカウント */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
                   <FaLock className="text-purple-400" />
                   アカウント情報
                 </h2>
@@ -383,7 +416,7 @@ export default function RegisterPage() {
                     required
                     value={formData.passwordConfirm}
                     onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
-                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
                       passwordError && formData.passwordConfirm ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                     }`}
                     placeholder="パスワードを再入力"
@@ -394,7 +427,7 @@ export default function RegisterPage() {
 
               {/* 連絡先 + アバター */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
                   <FaPhone className="text-purple-400" />
                   連絡先情報 / アバター
                 </h2>
@@ -409,7 +442,7 @@ export default function RegisterPage() {
                     required
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
+                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
                     placeholder="例: 090-1234-5678"
                   />
                 </div>
@@ -423,7 +456,7 @@ export default function RegisterPage() {
                     required
                     value={formData.address}
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text白 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
+                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
                   >
                     <option value="" className="bg-gray-800">選択してください</option>
                     {addressOptions.map((a) => (
@@ -473,12 +506,25 @@ export default function RegisterPage() {
                 </label>
               </div>
 
+              {/* Turnstile（人間チェック） */}
+              <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6">
+                <h3 className="text-white font-semibold mb-2 flex items-center gap-2">
+                  <FaLock className="text-purple-400" />
+                  セキュリティチェック
+                </h3>
+                <TurnstileWidget onToken={setTsToken} />
+                {tsError && <p className="text-sm text-red-400 mt-2">{tsError}</p>}
+                {!tsToken && (
+                  <p className="text-xs text-gray-400 mt-2">表示されない場合はページを再読み込みしてください。</p>
+                )}
+              </div>
+
               {/* ボタン */}
               <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
                 <button
                   type="button"
                   onClick={() => router.push('/')}
-                  className="px-6 sm:px-8 py-2.5 bg-gray-700 text白 rounded-xl hover:bg-gray-600"
+                  className="px-6 sm:px-8 py-2.5 bg-gray-700 text-white rounded-xl hover:bg-gray-600"
                 >
                   キャンセル
                 </button>
@@ -489,9 +535,10 @@ export default function RegisterPage() {
                     !!handleNameError ||
                     !!passwordError ||
                     !formData.isHighSchoolOrAbove ||
-                    !formData.agreeToTerms
+                    !formData.agreeToTerms ||
+                    !tsToken // ← トークン必須
                   }
-                  className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text白 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {loading ? (<><FaSpinner className="animate-spin" /> 登録中...</>) : (<><FaUserPlus /> 登録する</>)}
                 </button>
