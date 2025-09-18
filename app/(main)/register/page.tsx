@@ -512,11 +512,10 @@ export default function RegisterPage() {
                   <FaLock className="text-purple-400" />
                   セキュリティチェック
                 </h3>
-                <TurnstileWidget onToken={setTsToken} />
-                {tsError && <p className="text-sm text-red-400 mt-2">{tsError}</p>}
-                {!tsToken && (
-                  <p className="text-xs text-gray-400 mt-2">表示されない場合はページを再読み込みしてください。</p>
-                )}
+               <TurnstileWidget
+  siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+  onVerify={(token: string) => setTsToken(token)}
+/>
               </div>
 
               {/* ボタン */}
