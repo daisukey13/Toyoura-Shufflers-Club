@@ -68,9 +68,6 @@ function LoginPageInner() {
   const tokenTimeRef = useRef<number>(0); // 取得時刻(ms)
   const TOKEN_TTL_MS = 110 * 1000;       // 110秒で期限切れ扱い
 
-  /** window.turnstile への安全アクセス */
-  const getTS = () => (typeof window !== 'undefined' ? (window as any).turnstile : undefined);
-
   /** whoami で既ログイン判定 */
   useEffect(() => {
     if (!mounted) return;
@@ -92,8 +89,7 @@ function LoginPageInner() {
   /** CAPTCHA を無効化（入力変更/失敗/期限切れ時） */
   const resetCaptcha = useCallback((hint?: string) => {
     try {
-      const ts = getTS();
-      if (widgetIdRef.current && ts?.reset) ts.reset(widgetIdRef.current);
+      if (widgetIdRef.current && (window as any).turnstile) (window as any).turnstile.reset(widgetIdRef.current);
     } catch {}
     tokenTimeRef.current = 0;
     setCfToken('');
@@ -114,15 +110,14 @@ function LoginPageInner() {
     if (!host) return;
 
     // 既存があるなら reset
-    const ts = getTS();
-    if (widgetIdRef.current && ts?.reset) {
+    if (widgetIdRef.current && (window as any).turnstile) {
       resetCaptcha();
       return;
     }
 
-    if (ts?.render) {
+    if ((window as any).turnstile) {
       try {
-        const id = ts.render(host, {
+        const id = (window as any).turnstile.render(host, {
           sitekey: SITE_KEY,
           action: 'login',
           theme: 'auto',
@@ -139,7 +134,7 @@ function LoginPageInner() {
           'error-callback': () =>
             resetCaptcha('CAPTCHA の初期化に失敗しました。拡張機能/ネットワーク/CSP をご確認ください。'),
         });
-        widgetIdRef.current = id || 'turnstile-widget';
+        widgetIdRef.current = id;
       } catch {
         setCfMsg('CAPTCHA の初期化に失敗しました。');
       }
@@ -149,8 +144,7 @@ function LoginPageInner() {
   /** タブ離脱やアンマウントで確実に破棄 */
   const unmountTurnstile = useCallback(() => {
     try {
-      const ts = getTS();
-      if (widgetIdRef.current && ts?.remove) ts.remove(widgetIdRef.current);
+      if (widgetIdRef.current && (window as any).turnstile) (window as any).turnstile.remove(widgetIdRef.current);
     } catch {}
     widgetIdRef.current = null;
     tokenTimeRef.current = 0;
@@ -183,6 +177,7 @@ function LoginPageInner() {
     return () => clearTimeout(t);
   }, [mounted, mode, scriptReady]);
 
+  /** サーバCookieとセッションの同期 */
   const syncServerSession = async (event: 'SIGNED_IN' | 'TOKEN_REFRESHED' | 'SIGNED_OUT', session: any) => {
     try {
       await fetch('/auth/callback', {
@@ -193,21 +188,44 @@ function LoginPageInner() {
     } catch {}
   };
 
+  /** 管理者判定（app_admins or players.is_admin） */
+  const getIsAdmin = async (): Promise<boolean> => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const uid = user?.id;
+      if (!uid) return false;
+
+      const [adminResp, playerResp] = await Promise.all([
+        (supabase.from('app_admins') as any).select('user_id').eq('user_id', uid).maybeSingle(),
+        (supabase.from('players') as any).select('is_admin').eq('id', uid).maybeSingle(),
+      ]);
+
+      const adminRow = (adminResp?.data ?? null) as { user_id: string } | null;
+      const playerRow = (playerResp?.data ?? null) as { is_admin: boolean | null } | null;
+
+      return !!adminRow?.user_id || !!playerRow?.is_admin;
+    } catch {
+      return false;
+    }
+  };
+
+  /** ログイン後の行き先：?redirect があれば優先、無ければ 管理者=/admin/dashboard / 一般=/mypage */
   const afterSuccessRedirect = async () => {
-    router.replace(redirectSafe);
+    if (hasRedirect) {
+      router.replace(redirectSafe);
+      return;
+    }
+    const isAdmin = await getIsAdmin();
+    router.replace(isAdmin ? '/admin/dashboard' : DEFAULT_AFTER_LOGIN);
   };
 
   /** 直前に常に最新 Turnstile トークンを取得 */
   const getFreshToken = useCallback(() => {
-    const ts = getTS();
-    const fromWidget =
-      (widgetIdRef.current && ts?.getResponse?.(widgetIdRef.current)) || '';
-    const token = fromWidget || cfToken || '';
+    const t = (widgetIdRef.current && (window as any).turnstile?.getResponse(widgetIdRef.current)) || '';
+    const token = t || cfToken || '';
     if (!token) return '';
     const age = Date.now() - tokenTimeRef.current;
-    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) {
-      return '';
-    }
+    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) return '';
     return token;
   }, [cfToken]);
 
@@ -231,7 +249,6 @@ function LoginPageInner() {
 
       if (mode === 'phone') {
         if (!SITE_KEY) throw new Error('CAPTCHA 用 Site key が未設定です。');
-
         const token = getFreshToken();
         if (!token) {
           resetCaptcha('CAPTCHA を完了してください。');
@@ -280,8 +297,7 @@ function LoginPageInner() {
       if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
       try {
-        const ts = getTS();
-        if (widgetIdRef.current && ts?.reset) ts.reset(widgetIdRef.current);
+        if (widgetIdRef.current && (window as any).turnstile) (window as any).turnstile.reset(widgetIdRef.current);
         tokenTimeRef.current = 0;
         setCfToken('');
       } catch {}
