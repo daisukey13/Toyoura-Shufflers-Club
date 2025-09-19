@@ -86,10 +86,21 @@ function LoginPageInner() {
     return () => { cancelled = true; };
   }, [mounted, hasRedirect, redirectSafe, router]);
 
+  /** Turnstile util */
+  const getT = () => (window as any).turnstile as
+    | {
+        render: (el: HTMLElement, opts: any) => string;
+        reset: (id?: string) => void;
+        remove: (id?: string) => void;
+        getResponse: (id?: string) => string;
+      }
+    | undefined;
+
   /** CAPTCHA を無効化（入力変更/失敗/期限切れ時） */
   const resetCaptcha = useCallback((hint?: string) => {
     try {
-      if (widgetIdRef.current && (window as any).turnstile) (window as any).turnstile.reset(widgetIdRef.current);
+      const T = getT();
+      if (widgetIdRef.current && T) T.reset(widgetIdRef.current);
     } catch {}
     tokenTimeRef.current = 0;
     setCfToken('');
@@ -110,14 +121,15 @@ function LoginPageInner() {
     if (!host) return;
 
     // 既存があるなら reset
-    if (widgetIdRef.current && (window as any).turnstile) {
+    const T = getT();
+    if (widgetIdRef.current && T) {
       resetCaptcha();
       return;
     }
 
-    if ((window as any).turnstile) {
+    if (T) {
       try {
-        const id = (window as any).turnstile.render(host, {
+        const id = T.render(host, {
           sitekey: SITE_KEY,
           action: 'login',
           theme: 'auto',
@@ -144,7 +156,8 @@ function LoginPageInner() {
   /** タブ離脱やアンマウントで確実に破棄 */
   const unmountTurnstile = useCallback(() => {
     try {
-      if (widgetIdRef.current && (window as any).turnstile) (window as any).turnstile.remove(widgetIdRef.current);
+      const T = getT();
+      if (widgetIdRef.current && T) T.remove(widgetIdRef.current);
     } catch {}
     widgetIdRef.current = null;
     tokenTimeRef.current = 0;
@@ -177,7 +190,6 @@ function LoginPageInner() {
     return () => clearTimeout(t);
   }, [mounted, mode, scriptReady]);
 
-  /** サーバCookieとセッションの同期 */
   const syncServerSession = async (event: 'SIGNED_IN' | 'TOKEN_REFRESHED' | 'SIGNED_OUT', session: any) => {
     try {
       await fetch('/auth/callback', {
@@ -188,39 +200,35 @@ function LoginPageInner() {
     } catch {}
   };
 
-  /** 管理者判定（app_admins or players.is_admin） */
-const getIsAdmin = async (): Promise<boolean> => {
-  try {
-    const res = await fetch('/api/auth/is-admin', { cache: 'no-store' });
-    if (!res.ok) return false;
-    const j = await res.json();
-    return !!j?.isAdmin;
-  } catch {
-    return false;
-  }
-};
+  /** ★ 管理者メール決め打ちルール（環境変数でも指定可） */
+  const OVERRIDE_ADMIN_EMAIL =
+    (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'daisukeyud@gmail.com').toLowerCase();
 
-  /** ログイン後の行き先：?redirect があれば優先、無ければ 管理者=/admin/dashboard / 一般=/mypage */
-  const afterSuccessRedirect = async () => {
-    if (hasRedirect) {
-      router.replace(redirectSafe);
+  /** ログイン後の遷移先決定（メールを見て強制ダッシュボードへ） */
+  const afterSuccessRedirect = async (effectiveEmail: string) => {
+    const mail = (effectiveEmail || '').toLowerCase();
+    if (mail === OVERRIDE_ADMIN_EMAIL) {
+      router.replace('/admin/dashboard');
       return;
     }
-    const isAdmin = await getIsAdmin();
-    router.replace(isAdmin ? '/admin/dashboard' : DEFAULT_AFTER_LOGIN);
+    router.replace(redirectSafe);
   };
 
   /** 直前に常に最新 Turnstile トークンを取得 */
   const getFreshToken = useCallback(() => {
-    const t = (widgetIdRef.current && (window as any).turnstile?.getResponse(widgetIdRef.current)) || '';
-    const token = t || cfToken || '';
+    const T = getT();
+    const fromWidget =
+      (widgetIdRef.current && T?.getResponse(widgetIdRef.current)) || '';
+    const token = fromWidget || cfToken || '';
     if (!token) return '';
     const age = Date.now() - tokenTimeRef.current;
-    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) return '';
+    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) {
+      return '';
+    }
     return token;
   }, [cfToken]);
 
-  /** fetch の JSON 安全パーサ（HTML 404 等での "Unexpected token '<'" を防ぐ） */
+  /** fetch の JSON 安全パーサ（HTML 404 等を回避） */
   const safeJson = async (res: Response) => {
     const text = await res.text();
     try {
@@ -240,6 +248,7 @@ const getIsAdmin = async (): Promise<boolean> => {
 
       if (mode === 'phone') {
         if (!SITE_KEY) throw new Error('CAPTCHA 用 Site key が未設定です。');
+
         const token = getFreshToken();
         if (!token) {
           resetCaptcha('CAPTCHA を完了してください。');
@@ -256,14 +265,14 @@ const getIsAdmin = async (): Promise<boolean> => {
 
         if (!res.ok) {
           if ((json as any)?.__nonjson) {
-            throw new Error('サーバ応答が不正です。エンドポイント /api/login/resolve-email を確認してください。');
+            throw new Error('サーバ応答が不正です。/api/login/resolve-email を確認してください。');
           }
           if ((json as any)?.error === 'captcha_failed') {
             const codes: string[] = (json as any)?.codes || [];
             let msg = '人間確認に失敗しました。もう一度 CAPTCHA を完了してください。';
             if (codes.includes('timeout-or-duplicate')) msg = 'CAPTCHA の有効期限が切れたか、既に使用済みです。もう一度実施してください。';
-            if (codes.includes('invalid-input-secret')) msg = 'サーバ側の Turnstile シークレットが正しくありません（管理者設定が必要）。';
-            if (codes.includes('missing-input-secret')) msg = 'サーバ側のシークレットが未設定です（管理者設定が必要）。';
+            if (codes.includes('invalid-input-secret')) msg = 'サーバ側の Turnstile シークレットが正しくありません。';
+            if (codes.includes('missing-input-secret')) msg = 'サーバ側のシークレットが未設定です。';
             if (codes.includes('invalid-input-response')) msg = 'CAPTCHA 応答が無効です。ページを再読み込みして再度お試しください。';
             resetCaptcha(msg);
             throw new Error(msg);
@@ -288,12 +297,13 @@ const getIsAdmin = async (): Promise<boolean> => {
       if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
       try {
-        if (widgetIdRef.current && (window as any).turnstile) (window as any).turnstile.reset(widgetIdRef.current);
+        const T = getT();
+        if (widgetIdRef.current && T) T.reset(widgetIdRef.current);
         tokenTimeRef.current = 0;
         setCfToken('');
       } catch {}
 
-      await afterSuccessRedirect();
+      await afterSuccessRedirect(loginEmail);
     } catch (err: any) {
       setError(err?.message || 'ログインに失敗しました');
     } finally {
