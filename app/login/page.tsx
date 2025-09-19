@@ -64,10 +64,7 @@ function LoginPageInner() {
       process.env.NEXT_PUBLIC_ADMIN_EMAIL ||
       'daisukeyud@gmail.com';
     return new Set(
-      raw
-        .split(',')
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean)
+      raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
     );
   }, []);
   const isForcedAdmin = useCallback(
@@ -105,20 +102,16 @@ function LoginPageInner() {
             router.replace('/admin/dashboard');
             return;
           }
-          if (hasRedirect) {
-            router.replace(redirectSafe);
-          }
+          if (hasRedirect) router.replace(redirectSafe);
         }
       } catch {
         if (!cancelled) setAlreadyAuthed(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [mounted, supabase, isForcedAdmin, hasRedirect, redirectSafe, router]);
 
-  /** Turnstile util */
+  /** Turnstile util（declare global 回避） */
   const getT = () =>
     (window as any).turnstile as
       | {
@@ -239,8 +232,7 @@ function LoginPageInner() {
   /** 最新 Turnstile token */
   const getFreshToken = useCallback(() => {
     const T = getT();
-    const fromWidget =
-      (widgetIdRef.current && T?.getResponse(widgetIdRef.current)) || '';
+    const fromWidget = (widgetIdRef.current && T?.getResponse(widgetIdRef.current)) || '';
     const token = fromWidget || cfToken || '';
     if (!token) return '';
     const age = Date.now() - tokenTimeRef.current;
@@ -298,7 +290,19 @@ function LoginPageInner() {
 
       if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
-      // Turnstile をリセット
+      // 管理者メールなら即座にダッシュボードへ強制（redirect クエリより優先）
+      if (isForcedAdmin(loginEmail) || isForcedAdmin(data.user?.email || '')) {
+        router.replace('/admin/dashboard');
+        try {
+          const T = getT();
+          if (widgetIdRef.current && T) T.reset(widgetIdRef.current);
+        } catch {}
+        tokenTimeRef.current = 0;
+        setCfToken('');
+        return;
+      }
+
+      // Turnstile をリセット（通常ユーザー）
       try {
         const T = getT();
         if (widgetIdRef.current && T) T.reset(widgetIdRef.current);
@@ -306,9 +310,8 @@ function LoginPageInner() {
       tokenTimeRef.current = 0;
       setCfToken('');
 
-      // ★ 入力メール と Supabase 側メール の両方で管理者判定
-      const effectiveEmails = [loginEmail, data.user?.email || ''];
-      await afterSuccessRedirect(effectiveEmails);
+      // 通常の遷移
+      await afterSuccessRedirect([loginEmail, data.user?.email || '']);
     } catch (err: any) {
       setError(err?.message || 'ログインに失敗しました');
     } finally {
@@ -327,7 +330,7 @@ function LoginPageInner() {
   if (!mounted || alreadyAuthed === null) return <Fallback />;
 
   if (alreadyAuthed && !hasRedirect) {
-    // 既ログインでも、上の useEffect で管理者なら自動転送されます
+    // 既ログイン時は上の useEffect で管理者なら自動転送
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
