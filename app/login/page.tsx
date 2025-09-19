@@ -10,17 +10,6 @@ import { FaLock, FaPhone, FaEnvelope, FaArrowLeft } from 'react-icons/fa';
 
 type Mode = 'email' | 'phone';
 
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (el: HTMLElement, opts: any) => string;
-      reset: (id?: string) => void;
-      remove: (id?: string) => void;
-      getResponse: (id?: string) => string;
-    };
-  }
-}
-
 /** 見た目だけ +81 を付ける整形（日本想定） */
 function toE164JapanForView(input: string): string {
   let s = (input || '').trim().normalize('NFKC');
@@ -79,6 +68,9 @@ function LoginPageInner() {
   const tokenTimeRef = useRef<number>(0); // 取得時刻(ms)
   const TOKEN_TTL_MS = 110 * 1000;       // 110秒で期限切れ扱い
 
+  /** window.turnstile への安全アクセス */
+  const getTS = () => (typeof window !== 'undefined' ? (window as any).turnstile : undefined);
+
   /** whoami で既ログイン判定 */
   useEffect(() => {
     if (!mounted) return;
@@ -100,7 +92,8 @@ function LoginPageInner() {
   /** CAPTCHA を無効化（入力変更/失敗/期限切れ時） */
   const resetCaptcha = useCallback((hint?: string) => {
     try {
-      if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
+      const ts = getTS();
+      if (widgetIdRef.current && ts?.reset) ts.reset(widgetIdRef.current);
     } catch {}
     tokenTimeRef.current = 0;
     setCfToken('');
@@ -121,14 +114,15 @@ function LoginPageInner() {
     if (!host) return;
 
     // 既存があるなら reset
-    if (widgetIdRef.current && window.turnstile) {
+    const ts = getTS();
+    if (widgetIdRef.current && ts?.reset) {
       resetCaptcha();
       return;
     }
 
-    if (window.turnstile) {
+    if (ts?.render) {
       try {
-        const id = window.turnstile.render(host, {
+        const id = ts.render(host, {
           sitekey: SITE_KEY,
           action: 'login',
           theme: 'auto',
@@ -145,7 +139,7 @@ function LoginPageInner() {
           'error-callback': () =>
             resetCaptcha('CAPTCHA の初期化に失敗しました。拡張機能/ネットワーク/CSP をご確認ください。'),
         });
-        widgetIdRef.current = id;
+        widgetIdRef.current = id || 'turnstile-widget';
       } catch {
         setCfMsg('CAPTCHA の初期化に失敗しました。');
       }
@@ -155,7 +149,8 @@ function LoginPageInner() {
   /** タブ離脱やアンマウントで確実に破棄 */
   const unmountTurnstile = useCallback(() => {
     try {
-      if (widgetIdRef.current && window.turnstile) window.turnstile.remove(widgetIdRef.current);
+      const ts = getTS();
+      if (widgetIdRef.current && ts?.remove) ts.remove(widgetIdRef.current);
     } catch {}
     widgetIdRef.current = null;
     tokenTimeRef.current = 0;
@@ -204,8 +199,9 @@ function LoginPageInner() {
 
   /** 直前に常に最新 Turnstile トークンを取得 */
   const getFreshToken = useCallback(() => {
+    const ts = getTS();
     const fromWidget =
-      (widgetIdRef.current && window.turnstile?.getResponse(widgetIdRef.current)) || '';
+      (widgetIdRef.current && ts?.getResponse?.(widgetIdRef.current)) || '';
     const token = fromWidget || cfToken || '';
     if (!token) return '';
     const age = Date.now() - tokenTimeRef.current;
@@ -251,11 +247,9 @@ function LoginPageInner() {
         const json = await safeJson(res);
 
         if (!res.ok) {
-          // サーバからの JSON 以外（= ルート間違いなど）を検知
           if ((json as any)?.__nonjson) {
             throw new Error('サーバ応答が不正です。エンドポイント /api/login/resolve-email を確認してください。');
           }
-          // Turnstile 失敗の詳細を表示
           if ((json as any)?.error === 'captcha_failed') {
             const codes: string[] = (json as any)?.codes || [];
             let msg = '人間確認に失敗しました。もう一度 CAPTCHA を完了してください。';
@@ -286,7 +280,8 @@ function LoginPageInner() {
       if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
       try {
-        if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
+        const ts = getTS();
+        if (widgetIdRef.current && ts?.reset) ts.reset(widgetIdRef.current);
         tokenTimeRef.current = 0;
         setCfToken('');
       } catch {}
