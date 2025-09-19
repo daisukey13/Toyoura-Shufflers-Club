@@ -189,25 +189,16 @@ function LoginPageInner() {
   };
 
   /** 管理者判定（app_admins or players.is_admin） */
-  const getIsAdmin = async (): Promise<boolean> => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const uid = user?.id;
-      if (!uid) return false;
-
-      const [adminResp, playerResp] = await Promise.all([
-        (supabase.from('app_admins') as any).select('user_id').eq('user_id', uid).maybeSingle(),
-        (supabase.from('players') as any).select('is_admin').eq('id', uid).maybeSingle(),
-      ]);
-
-      const adminRow = (adminResp?.data ?? null) as { user_id: string } | null;
-      const playerRow = (playerResp?.data ?? null) as { is_admin: boolean | null } | null;
-
-      return !!adminRow?.user_id || !!playerRow?.is_admin;
-    } catch {
-      return false;
-    }
-  };
+const getIsAdmin = async (): Promise<boolean> => {
+  try {
+    const res = await fetch('/api/auth/is-admin', { cache: 'no-store' });
+    if (!res.ok) return false;
+    const j = await res.json();
+    return !!j?.isAdmin;
+  } catch {
+    return false;
+  }
+};
 
   /** ログイン後の行き先：?redirect があれば優先、無ければ 管理者=/admin/dashboard / 一般=/mypage */
   const afterSuccessRedirect = async () => {
