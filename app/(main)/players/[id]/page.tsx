@@ -18,7 +18,6 @@ import {
 } from '@/lib/hooks/useFetchSupabaseData';
 import { createClient } from '@/lib/supabase/client';
 
-/* ───────────────────────────── Types / helpers ───────────────────────────── */
 type Player = {
   id: string;
   handle_name: string;
@@ -47,7 +46,6 @@ function winRateOf(p?: Player | null) {
   return g ? Math.round((w / g) * 100) : 0;
 }
 
-/* ───────────────────────────── Rank badge (Huge) ───────────────────────────── */
 function rankTheme(rank?: number | null) {
   if (!rank) return { ring: 'from-purple-500 to-pink-600', glow: 'bg-purple-400' };
   if (rank === 1) return { ring: 'from-yellow-300 to-yellow-500', glow: 'bg-yellow-300' };
@@ -81,17 +79,14 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
   );
 }
 
-/* ───────────────────────────── Page ───────────────────────────── */
 export default function PlayerProfilePage() {
   const params = useParams<{ id: string }>();
   const playerId = params?.id;
 
-  // 個別プレイヤー詳細（試合履歴など）
   const { player, matches, loading, error } = useFetchPlayerDetail(playerId, {
     requireAuth: false,
   });
 
-  // 全プレイヤーから順位算出（RP降順）
   const { players: allPlayers } = useFetchPlayersData({ requireAuth: false });
   const { rank, totalActive } = useMemo(() => {
     const src = Array.isArray(allPlayers) ? allPlayers : [];
@@ -105,7 +100,6 @@ export default function PlayerProfilePage() {
   const wr = winRateOf(player);
   const games = gamesOf(player);
 
-  /* ───────── 所属チームを取得（フォールバックあり） ───────── */
   const [teams, setTeams] = useState<TeamWithRole[]>([]);
   const [teamsLoading, setTeamsLoading] = useState<boolean>(true);
 
@@ -221,7 +215,7 @@ export default function PlayerProfilePage() {
 
         {!loading && !error && player && (
           <div className="max-w-5xl mx-auto space-y-6 sm:space-y-8">
-            {/* ── ヒーロー：巨大ランク＋基本情報 ── */}
+            {/* ── ヒーロー ── */}
             <div className="glass-card rounded-2xl p-6 sm:p-8 border border-purple-500/30">
               <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8">
                 <div className="shrink-0">
@@ -309,7 +303,7 @@ export default function PlayerProfilePage() {
               </div>
             </div>
 
-            {/* ── 所属チーム ─────────────────────────────────── */}
+            {/* ── 所属チーム ── */}
             <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
               <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5 flex items-center gap-2">
                 <FaUsers className="text-purple-300" />
@@ -346,10 +340,10 @@ export default function PlayerProfilePage() {
               )}
             </div>
 
-            {/* ── 直近の試合 ──────────────────────────── */}
+            {/* ── 直近の試合 ── */}
             <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
-              {/* 見出し + 右肩リンク（ここに常時表示） */}
-              <div className="mb-4 sm:mb-5 flex items-center justify-between gap-3">
+              {/* 見出し＋右肩リンク（常時表示／モバイルでは折り返し） */}
+              <div className="mb-4 sm:mb-5 flex items-center justify-between gap-3 flex-wrap">
                 <h2 className="text-lg sm:text-xl font-bold text-yellow-100">
                   直近の試合
                 </h2>
@@ -358,6 +352,7 @@ export default function PlayerProfilePage() {
                     href={`/players/${player.id}/matches`}
                     prefetch={false}
                     className="text-sm sm:text-base text-purple-300 hover:text-purple-200 underline underline-offset-4"
+                    data-testid="all-matches-link"
                     aria-label="このプレイヤーの全ての試合を見る"
                   >
                     全ての試合を見る →
