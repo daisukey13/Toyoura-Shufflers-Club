@@ -9,9 +9,9 @@ import {
   FaGamepad, FaCheckCircle, FaExclamationCircle,
   FaSpinner, FaLock, FaImage
 } from 'react-icons/fa';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import AvatarSelector from '@/components/AvatarSelector';
-import TurnstileWidget from '@/components/TurnstileWidget';
+import TurnstileOnce from '@/components/TurnstileOnce';
 
 type FormData = {
   handle_name: string;
@@ -32,16 +32,16 @@ const addressOptions = [
 ];
 
 const DEFAULT_AVATAR = '/default-avatar.png';
-
-// パスコード（設定されていると必須）
 const PASSCODE = process.env.NEXT_PUBLIC_SIGNUP_PASSCODE || '';
 const RATING_DEFAULT = Number(process.env.NEXT_PUBLIC_RATING_DEFAULT ?? 1000);
 const HANDICAP_DEFAULT = Number(process.env.NEXT_PUBLIC_HANDICAP_DEFAULT ?? 30);
 
+const supabase = createClient();
+
 export default function RegisterPage() {
   const router = useRouter();
 
-  // 毎回ロックから始める（PASSCODE が空なら最初から解錠）
+  // パスコード（PASSCODE 空なら最初から解錠）
   const [unlocked, setUnlocked] = useState<boolean>(PASSCODE.length === 0);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState<string | null>(null);
@@ -50,7 +50,7 @@ export default function RegisterPage() {
   const [tsToken, setTsToken] = useState<string | undefined>();
   const [tsError, setTsError] = useState<string | null>(null);
 
-  // 以前の実装の残骸を掃除（自動スキップを防止）
+  // 以前のローカル保存を掃除（自動スキップ抑止）
   useEffect(() => {
     try {
       sessionStorage.removeItem('regUnlocked');
@@ -139,7 +139,7 @@ export default function RegisterPage() {
     }
   };
 
-  // Turnstile 検証（サーバの検証エンドポイントに投げる）
+  // Turnstile 検証（サーバー側エンドポイント）
   async function verifyTurnstileToken(token?: string) {
     setTsError(null);
     if (!token) {
@@ -158,7 +158,7 @@ export default function RegisterPage() {
         return false;
       }
       return true;
-    } catch (e) {
+    } catch {
       setTsError('セキュリティ検証に失敗しました。ネットワークをご確認ください。');
       return false;
     }
@@ -182,7 +182,7 @@ export default function RegisterPage() {
       return;
     }
 
-    // ← Turnstile を必須化
+    // Turnstile 必須
     const humanOK = await verifyTurnstileToken(tsToken);
     if (!humanOK) return;
 
@@ -195,7 +195,7 @@ export default function RegisterPage() {
         return;
       }
 
-      // 1) Auth ユーザー作成
+      // 1) Authユーザー作成
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email.trim(),
         password: formData.password.trim(),
@@ -369,7 +369,7 @@ export default function RegisterPage() {
 
               {/* アカウント */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
                   <FaLock className="text-purple-400" />
                   アカウント情報
                 </h2>
@@ -427,7 +427,7 @@ export default function RegisterPage() {
 
               {/* 連絡先 + アバター */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
                   <FaPhone className="text-purple-400" />
                   連絡先情報 / アバター
                 </h2>
@@ -465,7 +465,7 @@ export default function RegisterPage() {
                   </select>
                 </div>
 
-                {/* アバター選択（Supabase Storageからページング） */}
+                {/* アバター選択（Supabase Storage からページング） */}
                 <div>
                   <label className="block text-sm font-medium text-purple-300 mb-2 flex items-center gap-2">
                     <FaImage className="text-purple-400" />
@@ -512,10 +512,18 @@ export default function RegisterPage() {
                   <FaLock className="text-purple-400" />
                   セキュリティチェック
                 </h3>
-               <TurnstileWidget
-  siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
-  onVerify={(token: string) => setTsToken(token)}
-/>
+
+                <TurnstileOnce
+                  siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || ''}
+                  onVerify={(token: string) => setTsToken(token)}
+                  action="register"
+                  theme="auto"
+                />
+
+                <p className="mt-3 text-sm">
+                  {tsToken ? '✅ 検証に成功しました' : '🔒 チェックを完了してください'}
+                </p>
+                {tsError && <p className="mt-1 text-sm text-red-400">{tsError}</p>}
               </div>
 
               {/* ボタン */}
@@ -535,7 +543,7 @@ export default function RegisterPage() {
                     !!passwordError ||
                     !formData.isHighSchoolOrAbove ||
                     !formData.agreeToTerms ||
-                    !tsToken // ← トークン必須
+                    !tsToken
                   }
                   className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
                 >
