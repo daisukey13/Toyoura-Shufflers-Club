@@ -60,21 +60,16 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
   const t = rankTheme(rank);
   return (
     <div className="relative inline-block">
-      {/* soft glow */}
       <div className={`absolute -inset-4 rounded-full blur-2xl opacity-40 ${t.glow}`} />
-      {/* ring */}
       <div className={`relative rounded-full p-1 bg-gradient-to-br ${t.ring}`}>
         <div className="rounded-full bg-[#1f1f2f] p-4 sm:p-5">
           <div className="flex items-center justify-center">
-            {/* ランク数字（勝利数より2倍以上大きい） */}
             <span className="font-extrabold tracking-tight text-6xl sm:text-7xl text-yellow-100 drop-shadow">
               {rank ?? '—'}
             </span>
           </div>
         </div>
       </div>
-
-      {/* Crown for Top3 */}
       {rank && rank <= 3 && (
         <div className="absolute -top-4 -right-4 sm:-top-5 sm:-right-5">
           <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-yellow-400/20 border border-yellow-400/40 flex items-center justify-center">
@@ -88,8 +83,12 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
 
 /* ───────────────────────────── Page ───────────────────────────── */
 export default function PlayerProfilePage() {
-  const params = useParams<{ id: string }>();
-  const playerId = params?.id as string; // ← 文字列として確定
+  // params.id が string[] のケースにも対応
+  const params = useParams();
+  const playerId = useMemo(() => {
+    const raw = (params as any)?.id;
+    return Array.isArray(raw) ? (raw[0] as string) : (raw as string);
+  }, [params]);
 
   // 個別プレイヤー詳細（試合履歴など）
   const { player, matches, loading, error } = useFetchPlayerDetail(playerId, {
@@ -110,7 +109,7 @@ export default function PlayerProfilePage() {
   const wr = winRateOf(player);
   const games = gamesOf(player);
 
-  /* ───────── 所属チームを取得（スキーマ差異に強いフォールバック版） ───────── */
+  /* ───────── 所属チーム取得（フォールバック強化版） ───────── */
   const [teams, setTeams] = useState<TeamWithRole[]>([]);
   const [teamsLoading, setTeamsLoading] = useState<boolean>(true);
 
@@ -122,7 +121,6 @@ export default function PlayerProfilePage() {
       if (!playerId) return;
       setTeamsLoading(true);
       try {
-        // よくある中間テーブル候補（存在するものを使う）
         const membershipCandidates = [
           { table: 'team_members', playerCol: 'player_id', teamCol: 'team_id', roleCol: 'role' },
           { table: 'players_teams', playerCol: 'player_id', teamCol: 'team_id', roleCol: null },
@@ -134,7 +132,6 @@ export default function PlayerProfilePage() {
         let lastErr: any = null;
 
         for (const c of membershipCandidates) {
-          // role が無ければ team_id のみ選択
           const sel = c.roleCol ? `${c.teamCol}, ${c.roleCol}` : `${c.teamCol}`;
           const { data, error } = await (supabase.from(c.table) as any)
             .select(sel)
@@ -164,7 +161,6 @@ export default function PlayerProfilePage() {
           return;
         }
 
-        // teams 情報を取得
         const { data: teamRows, error: tErr } = await (supabase.from('teams') as any)
           .select('id, name, avatar_url')
           .in('id', ids);
@@ -172,7 +168,6 @@ export default function PlayerProfilePage() {
 
         const teamsRaw = (teamRows ?? []) as Team[];
 
-        // role を結合
         const roleMap = new Map<string, string | null>();
         (memberRows ?? []).forEach((r) => {
           if (r.team_id) roleMap.set(r.team_id, r.role ?? null);
@@ -243,7 +238,7 @@ export default function PlayerProfilePage() {
                   </div>
                 </div>
 
-                {/* 名前＋RP/HC（特大表示） */}
+                {/* 名前＋RP/HC */}
                 <div className="flex-1 w-full">
                   <div className="flex items-center gap-4 sm:gap-5">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -259,7 +254,6 @@ export default function PlayerProfilePage() {
                     </div>
                   </div>
 
-                  {/* RP / HC を特大で */}
                   <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4">
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
                       <div className="flex items-center justify-center gap-2 text-purple-200 mb-1">
@@ -281,7 +275,6 @@ export default function PlayerProfilePage() {
                     </div>
                   </div>
 
-                  {/* 勝利/敗北/勝率 */}
                   <div className="mt-5 grid grid-cols-3 gap-3 sm:gap-4">
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
                       <div className="text-2xl font-extrabold text-green-400">
@@ -303,7 +296,6 @@ export default function PlayerProfilePage() {
                     </div>
                   </div>
 
-                  {/* 勝率バー */}
                   <div className="mt-3 sm:mt-4">
                     <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
                       <div
@@ -438,24 +430,23 @@ export default function PlayerProfilePage() {
                   })}
                 </div>
               )}
+            </div>
 
-              {/* ── フッターCTA（常に表示） ───────────────── */}
-              <div className="mt-5 pt-4 border-t border-purple-500/20 flex flex-col sm:flex-row items-center justify-between gap-3">
-                <Link
-                  href={`/players/${playerId}/matches`} // ← playerId を使用して常に有効
-                  className="w-full sm:w-auto inline-flex items-center justify-center px-4 py-2 rounded-lg border border-purple-500/40 bg-gray-900/40 text-purple-200 hover:border-purple-400 hover:text-purple-100 transition"
-                >
-                  全ての試合を見る →
-                </Link>
-
-                <Link
-                  href="/matches"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 transition"
-                >
-                  <FaTrophy />
-                  試合結果一覧へ
-                </Link>
-              </div>
+            {/* ── 固定CTA（常に表示・カードの外） ───────────────── */}
+            <div className="flex flex-col sm:flex-row justify-end gap-3 sm:gap-4">
+              <Link
+                href={`/players/${playerId}/matches`}
+                className="w-full sm:w-auto inline-flex items-center justify-center px-4 py-2 rounded-lg border border-purple-500/40 bg-gray-900/40 text-purple-200 hover:border-purple-400 hover:text-purple-100 transition"
+              >
+                全ての試合を見る →
+              </Link>
+              <Link
+                href="/matches"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 transition"
+              >
+                <FaTrophy />
+                試合結果一覧へ
+              </Link>
             </div>
           </div>
         )}
