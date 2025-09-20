@@ -78,11 +78,11 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
 }
 
 export default function PlayerProfilePage() {
-  // id を string に正規化（配列で来るケースにも対応）
+  // id を安全に文字列化（配列で来ても対応）
   const params = useParams();
   const playerId = useMemo(() => {
     const raw = (params as any)?.id;
-    return Array.isArray(raw) ? (raw[0] as string) : (raw as string);
+    return (Array.isArray(raw) ? raw[0] : raw) as string | undefined;
   }, [params]);
 
   const { player, matches, loading, error } = useFetchPlayerDetail(playerId, {
@@ -95,7 +95,7 @@ export default function PlayerProfilePage() {
     const arr = [...src].sort(
       (a: any, b: any) => (b.ranking_points ?? 0) - (a.ranking_points ?? 0)
     );
-    const idx = arr.findIndex((p: any) => p.id === playerId);
+    const idx = playerId ? arr.findIndex((p: any) => p.id === playerId) : -1;
     return { rank: idx >= 0 ? idx + 1 : null, totalActive: arr.length };
   }, [allPlayers, playerId]);
 
@@ -159,7 +159,6 @@ export default function PlayerProfilePage() {
         if (tErr) throw tErr;
 
         const teamsRaw = (teamRows ?? []) as Team[];
-
         const roleMap = new Map<string, string | null>();
         (memberRows ?? []).forEach((r) => {
           if (r.team_id) roleMap.set(r.team_id, r.role ?? null);
@@ -187,6 +186,9 @@ export default function PlayerProfilePage() {
       cancelled = true;
     };
   }, [playerId]);
+
+  // Link 用の安全な id（ロード前は空文字にし、描画は行う）
+  const pid = playerId || player?.id || '';
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
@@ -323,11 +325,34 @@ export default function PlayerProfilePage() {
               )}
             </div>
 
-            {/* 直近の試合（簡易） */}
+            {/* 直近の試合（カードヘッダー右にリンクを常時表示） */}
             <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
-              <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5">直近の試合</h2>
+              <div className="mb-4 sm:mb-5 flex items-center justify-between gap-3">
+                <h2 className="text-lg sm:text-xl font-bold text-yellow-100">
+                  直近の試合
+                </h2>
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/players/${pid}/matches`}
+                    prefetch={false}
+                    className="px-3 py-1.5 rounded-lg border border-purple-500/40 bg-gray-900/40 text-purple-200 hover:border-purple-400 hover:text-purple-100 transition text-sm"
+                  >
+                    全ての試合を見る →
+                  </Link>
+                  <Link
+                    href="/matches"
+                    prefetch={false}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 transition text-sm"
+                  >
+                    <FaTrophy />
+                    試合結果一覧
+                  </Link>
+                </div>
+              </div>
 
-              {(!matches || matches.length === 0) && <div className="text-gray-400">まだ試合がありません。</div>}
+              {(!matches || matches.length === 0) && (
+                <div className="text-gray-400">まだ試合がありません。</div>
+              )}
 
               {Array.isArray(matches) && matches.length > 0 && (
                 <div className="space-y-3">
@@ -358,7 +383,9 @@ export default function PlayerProfilePage() {
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-lg sm:text-xl font-extrabold text-white">15 - {m.loser_score ?? 0}</div>
+                            <div className="text-lg sm:text-xl font-extrabold text-white">
+                              15 - {m.loser_score ?? 0}
+                            </div>
                             <div className={`text-xs sm:text-sm ${isWin ? 'text-green-300' : 'text-red-300'}`}>
                               {isWin ? '+' : ''}
                               {isWin ? m.winner_points_change ?? 0 : m.loser_points_change ?? 0}
@@ -379,25 +406,6 @@ export default function PlayerProfilePage() {
                   })}
                 </div>
               )}
-
-              {/* ←← ここが確実に表示されるフッター（常時） */}
-              <div className="mt-6 flex flex-col sm:flex-row justify-end gap-3">
-                <Link
-                  href={`/players/${playerId}/matches`}
-                  prefetch={false}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg border border-purple-500/40 bg-gray-900/40 text-purple-200 hover:border-purple-400 hover:text-purple-100 transition"
-                >
-                  全ての試合を見る →
-                </Link>
-                <Link
-                  href="/matches"
-                  prefetch={false}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 transition"
-                >
-                  <FaTrophy />
-                  試合結果一覧へ
-                </Link>
-              </div>
             </div>
           </div>
         )}
