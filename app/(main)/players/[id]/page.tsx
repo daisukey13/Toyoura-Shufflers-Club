@@ -18,6 +18,7 @@ import {
 } from '@/lib/hooks/useFetchSupabaseData';
 import { createClient } from '@/lib/supabase/client';
 
+/* ───────── Types ───────── */
 type Player = {
   id: string;
   handle_name: string;
@@ -34,6 +35,7 @@ type TeamMemberRow = { team_id: string | null; role?: string | null };
 type Team = { id: string; name: string; avatar_url?: string | null };
 type TeamWithRole = Team & { role?: string | null };
 
+/* ───────── Helpers ───────── */
 function gamesOf(p?: Player | null) {
   if (!p) return 0;
   return (p.wins ?? 0) + (p.losses ?? 0);
@@ -45,7 +47,6 @@ function winRateOf(p?: Player | null) {
   const g = w + l;
   return g ? Math.round((w / g) * 100) : 0;
 }
-
 function rankTheme(rank?: number | null) {
   if (!rank) return { ring: 'from-purple-500 to-pink-600', glow: 'bg-purple-400' };
   if (rank === 1) return { ring: 'from-yellow-300 to-yellow-500', glow: 'bg-yellow-300' };
@@ -54,6 +55,7 @@ function rankTheme(rank?: number | null) {
   return { ring: 'from-purple-400 to-pink-500', glow: 'bg-purple-400' };
 }
 
+/* ───────── UI ───────── */
 function HugeRankBadge({ rank }: { rank?: number | null }) {
   const t = rankTheme(rank);
   return (
@@ -79,6 +81,7 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
   );
 }
 
+/* ───────── Page ───────── */
 export default function PlayerProfilePage() {
   const params = useParams<{ id: string }>();
   const playerId = params?.id;
@@ -100,6 +103,7 @@ export default function PlayerProfilePage() {
   const wr = winRateOf(player);
   const games = gamesOf(player);
 
+  /* 所属チーム（存在する中間テーブルに自動対応） */
   const [teams, setTeams] = useState<TeamWithRole[]>([]);
   const [teamsLoading, setTeamsLoading] = useState<boolean>(true);
 
@@ -276,7 +280,7 @@ export default function PlayerProfilePage() {
                     </div>
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
                       <div className="text-2xl font-extrabold text-blue-400">
-                        {wr}%
+                        {winRateOf(player)}%
                       </div>
                       <div className="text-xs sm:text-sm text-gray-400">勝率</div>
                     </div>
@@ -342,7 +346,7 @@ export default function PlayerProfilePage() {
 
             {/* ── 直近の試合 ── */}
             <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
-              {/* 見出し＋右肩リンク（常時表示／モバイルでは折り返し） */}
+              {/* 見出し＋右肩リンク（常時表示／モバイルで折り返し可） */}
               <div className="mb-4 sm:mb-5 flex items-center justify-between gap-3 flex-wrap">
                 <h2 className="text-lg sm:text-xl font-bold text-yellow-100">
                   直近の試合
@@ -350,7 +354,6 @@ export default function PlayerProfilePage() {
                 <div className="flex items-center gap-4">
                   <Link
                     href={`/players/${player.id}/matches`}
-                    prefetch={false}
                     className="text-sm sm:text-base text-purple-300 hover:text-purple-200 underline underline-offset-4"
                     data-testid="all-matches-link"
                     aria-label="このプレイヤーの全ての試合を見る"
@@ -359,7 +362,6 @@ export default function PlayerProfilePage() {
                   </Link>
                   <Link
                     href="/matches"
-                    prefetch={false}
                     className="inline-flex items-center gap-2 text-sm sm:text-base text-purple-300 hover:text-purple-200"
                   >
                     <FaTrophy /> 試合結果一覧へ
