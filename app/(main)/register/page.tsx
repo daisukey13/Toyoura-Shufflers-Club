@@ -9,9 +9,9 @@ import {
   FaGamepad, FaCheckCircle, FaExclamationCircle,
   FaSpinner, FaLock, FaImage
 } from 'react-icons/fa';
-import { createClient } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase';
 import AvatarSelector from '@/components/AvatarSelector';
-import TurnstileOnce from '@/components/TurnstileOnce';
+import TurnstileWidget from '@/components/TurnstileWidget';
 
 type FormData = {
   handle_name: string;
@@ -36,32 +36,28 @@ const PASSCODE = process.env.NEXT_PUBLIC_SIGNUP_PASSCODE || '';
 const RATING_DEFAULT = Number(process.env.NEXT_PUBLIC_RATING_DEFAULT ?? 1000);
 const HANDICAP_DEFAULT = Number(process.env.NEXT_PUBLIC_HANDICAP_DEFAULT ?? 30);
 
-const supabase = createClient();
-
-// players_private への upsert 用・ゆるい型
+// players_private に入れる想定の型（SDK の厳しいジェネリクスを避けるためローカルで定義）
 type PlayersPrivateInsert = {
-  player_id?: string | null;
-  id?: string | null;
-  user_id?: string | null;
-  auth_user_id?: string | null;
-  full_name?: string | null;
-  email?: string | null;
-  phone?: string | null;
+  // どれが主キーでも通るようにユニオン的に持たせておく（実際に使うのは 1 つ）
+  player_id?: string;
+  id?: string;
+  user_id?: string;
+  auth_user_id?: string;
+  full_name: string;
+  email: string;
+  phone: string;
 };
 
 export default function RegisterPage() {
   const router = useRouter();
 
-  // PASSCODE が空なら最初から解錠
   const [unlocked, setUnlocked] = useState<boolean>(PASSCODE.length === 0);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState<string | null>(null);
 
-  // Turnstile
   const [tsToken, setTsToken] = useState<string | undefined>();
   const [tsError, setTsError] = useState<string | null>(null);
 
-  // 古い保存を掃除（自動スキップ抑止）
   useEffect(() => {
     try {
       sessionStorage.removeItem('regUnlocked');
@@ -86,8 +82,6 @@ export default function RegisterPage() {
   const [handleNameError, setHandleNameError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [checkingHandleName, setCheckingHandleName] = useState(false);
-
-  // ── helpers ──────────────────────────────────────────────────────────────
 
   async function ensureHandleUnique(handle: string) {
     const { data, error } = await supabase
@@ -132,21 +126,23 @@ export default function RegisterPage() {
     }
   }, [formData.password, formData.passwordConfirm]);
 
-  // パスコード送信
   const onSubmitPasscode = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setPasscodeError(null);
     const input = passcodeInput.trim();
     const expected = PASSCODE.trim();
+
     if (expected.length === 0) {
       setUnlocked(true);
       return;
     }
-    setUnlocked(input === expected);
-    if (input !== expected) setPasscodeError('招待コードが違います。');
+    if (input === expected) {
+      setUnlocked(true);
+    } else {
+      setPasscodeError('招待コードが違います。');
+    }
   };
 
-  // Turnstile 検証
   async function verifyTurnstileToken(token?: string) {
     setTsError(null);
     if (!token) {
@@ -171,7 +167,6 @@ export default function RegisterPage() {
     }
   }
 
-  // 登録送信
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!unlocked) return;
@@ -201,7 +196,7 @@ export default function RegisterPage() {
         return;
       }
 
-      // 1) Auth ユーザー作成
+      // 1) Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email.trim(),
         password: formData.password.trim(),
@@ -210,7 +205,7 @@ export default function RegisterPage() {
       if (authError || !authData?.user) throw authError ?? new Error('ユーザー作成に失敗しました');
       const userId = authData.user.id;
 
-      // 2) 公開 players
+      // 2) players
       const publicRow = {
         id: userId,
         handle_name: formData.handle_name,
@@ -229,9 +224,9 @@ export default function RegisterPage() {
         if (error) throw error;
       }
 
-      // 3) 非公開 players_private（主キー候補を順に試行）
+      // 3) players_private — SDK 型衝突を避けてジェネリクス指定をやめる
       const tryKeys: Array<'player_id' | 'id' | 'user_id' | 'auth_user_id'> = [
-        'player_id', 'id', 'user_id', 'auth_user_id'
+        'player_id', 'id', 'user_id', 'auth_user_id',
       ];
       let saved = false, lastErr: any = null;
 
@@ -241,15 +236,18 @@ export default function RegisterPage() {
           full_name: formData.full_name,
           email: formData.email.trim(),
           phone: formData.phone.trim(),
-        };
+        } as PlayersPrivateInsert;
 
-        // テーブルが Database 型に無い場合でも通るように any 併用
-        const qb = supabase.from<PlayersPrivateInsert>('players_private' as any);
-        const { error } = await (qb as any).upsert(base as PlayersPrivateInsert, { onConflict: key as any });
+        // ← ここがポイント：from/upsert にジェネリクスを付けず any で通す
+        const table = supabase.from('players_private');
+        const { error } = await (table as any).upsert(
+          base as any,
+          { onConflict: key as any }
+        );
         if (!error) { saved = true; break; }
         lastErr = error;
 
-        // 典型的なスキーマ系以外のエラーなら打ち切り
+        // スキーマ未整備や一意制約未設定などの典型エラーだけループ継続
         if (!/does not exist|no unique|exclusion|schema cache/i.test(String(error?.message))) {
           break;
         }
@@ -281,8 +279,6 @@ export default function RegisterPage() {
     }
   };
 
-  // ── UI ────────────────────────────────────────────────────────────────────
-
   return (
     <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-8">
       <div className="container mx-auto px-4 py-4 sm:py-8">
@@ -300,7 +296,7 @@ export default function RegisterPage() {
         </div>
 
         <div className="max-w-3xl mx-auto">
-          {/* パスコード（ロック時のみ表示） */}
+          {/* パスコード */}
           {!unlocked && (
             <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 mb-4 sm:mb-6">
               <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2 mb-3">
@@ -328,7 +324,7 @@ export default function RegisterPage() {
             </div>
           )}
 
-          {/* 登録フォーム（解錠後のみ描画） */}
+          {/* 登録フォーム */}
           {unlocked && (
             <form onSubmit={onSubmit} className="space-y-4 sm:space-y-8">
               {/* 基本情報 */}
@@ -441,7 +437,7 @@ export default function RegisterPage() {
 
               {/* 連絡先 + アバター */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
                   <FaPhone className="text-purple-400" />
                   連絡先情報 / アバター
                 </h2>
@@ -479,7 +475,6 @@ export default function RegisterPage() {
                   </select>
                 </div>
 
-                {/* アバター選択 */}
                 <div>
                   <label className="block text-sm font-medium text-purple-300 mb-2 flex items-center gap-2">
                     <FaImage className="text-purple-400" />
@@ -520,24 +515,17 @@ export default function RegisterPage() {
                 </label>
               </div>
 
-              {/* Turnstile（人間チェック） */}
+              {/* Turnstile */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6">
                 <h3 className="text-white font-semibold mb-2 flex items-center gap-2">
                   <FaLock className="text-purple-400" />
                   セキュリティチェック
                 </h3>
-
-                <TurnstileOnce
-                  siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || ''}
+                <TurnstileWidget
+                  siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
                   onVerify={(token: string) => setTsToken(token)}
-                  action="register"
-                  theme="auto"
                 />
-
-                <p className="mt-3 text-sm">
-                  {tsToken ? '✅ 検証に成功しました' : '🔒 チェックを完了してください'}
-                </p>
-                {tsError && <p className="mt-1 text-sm text-red-400">{tsError}</p>}
+                {tsError && <p className="mt-2 text-sm text-red-400">{tsError}</p>}
               </div>
 
               {/* ボタン */}
