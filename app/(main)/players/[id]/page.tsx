@@ -89,7 +89,7 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
 /* ───────────────────────────── Page ───────────────────────────── */
 export default function PlayerProfilePage() {
   const params = useParams<{ id: string }>();
-  const playerId = params?.id;
+  const playerId = params?.id as string; // ← 文字列として確定
 
   // 個別プレイヤー詳細（試合履歴など）
   const { player, matches, loading, error } = useFetchPlayerDetail(playerId, {
@@ -151,7 +151,6 @@ export default function PlayerProfilePage() {
           }
         }
 
-        // 候補すべてダメでも、UIは「所属なし」で続行
         const ids: string[] = (memberRows ?? [])
           .map((r) => r.team_id)
           .filter((v): v is string => typeof v === 'string' && v.length > 0);
@@ -282,7 +281,7 @@ export default function PlayerProfilePage() {
                     </div>
                   </div>
 
-                  {/* 勝利/敗北/勝率（Rank数値より小さい= text-2xl） */}
+                  {/* 勝利/敗北/勝率 */}
                   <div className="mt-5 grid grid-cols-3 gap-3 sm:gap-4">
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
                       <div className="text-2xl font-extrabold text-green-400">
@@ -440,18 +439,21 @@ export default function PlayerProfilePage() {
                 </div>
               )}
 
-              <div className="mt-4 text-right">
+              {/* ── フッターCTA（常に表示） ───────────────── */}
+              <div className="mt-5 pt-4 border-t border-purple-500/20 flex flex-col sm:flex-row items-center justify-between gap-3">
                 <Link
-                  href={`/players/${player.id}/matches`}
-                  className="inline-block mt-3 text-sm text-purple-400 hover:text-purple-300"
+                  href={`/players/${playerId}/matches`} // ← playerId を使用して常に有効
+                  className="w-full sm:w-auto inline-flex items-center justify-center px-4 py-2 rounded-lg border border-purple-500/40 bg-gray-900/40 text-purple-200 hover:border-purple-400 hover:text-purple-100 transition"
                 >
-                         全ての試合を見る →
+                  全ての試合を見る →
                 </Link>
+
                 <Link
                   href="/matches"
-                  className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 transition"
                 >
-                  <FaTrophy /> 試合結果一覧へ
+                  <FaTrophy />
+                  試合結果一覧へ
                 </Link>
               </div>
             </div>
