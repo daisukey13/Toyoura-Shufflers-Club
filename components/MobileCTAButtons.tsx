@@ -1,10 +1,10 @@
+// components/MobileCTAButtons.tsx
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { FaUserPlus, FaGamepad, FaUsers, FaSignInAlt, FaCheck } from 'react-icons/fa';
 import { useAuth } from '@/contexts/AuthContext';
-import { createClient } from '@/lib/supabase/client';
 
 type Variant = 'primary' | 'pink' | 'orange' | 'teal' | 'success' | 'disabled';
 
@@ -68,44 +68,24 @@ function CTAButton({
 export default function MobileCTAButtons() {
   const { user, player, loading } = useAuth();
 
-  // Supabase の即時セッション確認（AuthContext が遅い場合の保険）
-  const [hasSession, setHasSession] = useState<boolean>(false);
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth
-      .getSession()
-      .then(({ data }) => setHasSession(!!data.session))
-      .catch(() => {});
-  }, []);
+  const isLoggedIn = !!user;
 
-  // 1.2秒たっても loading が終わらない場合は「ログイン」ボタンを表示して操作可能にする
-  const [slowAuth, setSlowAuth] = useState(false);
-  useEffect(() => {
-    if (!loading) return;
-    const t = setTimeout(() => setSlowAuth(true), 1200);
-    return () => clearTimeout(t);
-  }, [loading]);
-
-  // 実効的な判定（Context または Supabase のどちらかでログインならログイン扱い）
-  const isLoggedIn = !!user || hasSession;
-
-  // 「読み込み中…」を見せるのは最初の ~1.2秒だけ
-  const showLoading = loading && !slowAuth;
-
+  // ← mounted は使わず、必要な値だけを依存にする
   const loginLabel = useMemo(() => {
-    if (showLoading) return '読み込み中…';
+    if (loading) return '読み込み中…';
     if (isLoggedIn) return 'ログイン中';
     return 'ログイン';
-  }, [showLoading, isLoggedIn]);
+  }, [loading, isLoggedIn]);
 
-  // まだ player 情報が未解決でも、ログイン中なら /mypage に誘導（管理者は /admin/dashboard）
   const loginHref = useMemo(() => {
-    if (showLoading) return undefined; // 最初の瞬間だけ非活性
-    if (isLoggedIn) return player?.is_admin ? '/admin/dashboard' : '/mypage';
+    if (loading) return undefined;
+    if (isLoggedIn) {
+      return player?.is_admin ? '/admin/dashboard' : '/mypage';
+    }
     return '/login';
-  }, [showLoading, isLoggedIn, player?.is_admin]);
+  }, [loading, isLoggedIn, player?.is_admin]);
 
-  const loginVariant: Variant = showLoading ? 'disabled' : isLoggedIn ? 'success' : 'teal';
+  const loginVariant: Variant = loading ? 'disabled' : isLoggedIn ? 'success' : 'teal';
 
   return (
     <div className="mx-auto w-full max-w-xs sm:max-w-none sm:w-[28rem] space-y-3">
@@ -132,7 +112,7 @@ export default function MobileCTAButtons() {
         icon={isLoggedIn ? <FaCheck className="text-xl" /> : <FaSignInAlt className="text-xl" />}
         text={loginLabel}
         variant={loginVariant}
-        disabled={showLoading}
+        disabled={loading}
       />
     </div>
   );
