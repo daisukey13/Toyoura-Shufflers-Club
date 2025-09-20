@@ -401,8 +401,10 @@ export default function HomePage() {
             </p>
           </div>
 
-          {/* CTA */}
-          <div className="flex flex-col sm:flex-row gap-3 justify-center max-w-xs mx-auto sm:max-w-none">
+          {/* CTA（スマホ最適のフル幅ボタン群） */}
+<div className="mt-4 sm:mt-6 flex justify-center">
+  <MobileCTAButtons />
+</div>
             {/* プレーヤー新規登録 */}
             <Link
               href="/register"
