@@ -3,8 +3,6 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
-import RegisterButtons from '@/components/RegisterButtons';
-import AuthAwareLoginButtonClient from '@/components/client/AuthAwareLoginButton.client';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
@@ -13,7 +11,6 @@ import {
   FaUsers,
   FaChartLine,
   FaHistory,
-  FaUserPlus,
   FaCalendar,
   FaMedal,
   FaGamepad,
@@ -21,6 +18,7 @@ import {
   FaFlagCheckered,
   FaCrown,
 } from 'react-icons/fa';
+import MobileCTAButtons from '@/components/MobileCTAButtons';
 
 const supabase = createClient();
 
@@ -43,17 +41,16 @@ interface TopPlayer {
 type RecentMatch = {
   id: string;
   match_date: string;
-  mode?: string | null; // 'singles' | 'teams'
+  mode?: string | null;
   is_tournament?: boolean | null;
   tournament_name?: string | null;
   venue?: string | null;
   notes?: string | null;
 
-  // 個人戦
   winner_id?: string | null;
   winner_name?: string | null;
   winner_avatar?: string | null;
-  winner_avatar_url?: string | null; // ← 追加フォールバック
+  winner_avatar_url?: string | null;
   winner_current_points?: number | null;
   winner_current_handicap?: number | null;
   winner_points_change?: number | null;
@@ -61,13 +58,12 @@ type RecentMatch = {
   loser_id?: string | null;
   loser_name?: string | null;
   loser_avatar?: string | null;
-  loser_avatar_url?: string | null; // ← 追加フォールバック
+  loser_avatar_url?: string | null;
   loser_score?: number | null;
   loser_current_points?: number | null;
   loser_current_handicap?: number | null;
   loser_points_change?: number | null;
 
-  // 団体戦（unified_match_feed から）
   winner_team_id?: string | null;
   winner_team_name?: string | null;
   loser_team_id?: string | null;
@@ -115,7 +111,7 @@ export default function HomePage() {
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
   const [recentMatches, setRecentMatches] = useState<RecentMatch[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
-  const [teamMembersMap, setTeamMembersMap] = useState<Record<string, MemberLite[]>>({}); // team_id -> members[]
+  const [teamMembersMap, setTeamMembersMap] = useState<Record<string, MemberLite[]>>({});
 
   const router = useRouter();
   const { user, player, loading } = useAuth();
@@ -128,7 +124,7 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // （任意）ログイン済みなら自動遷移
+  // ログイン済みなら自動遷移
   useEffect(() => {
     if (user && player && !loading) {
       if (player.is_admin) router.push('/admin/dashboard');
@@ -181,25 +177,21 @@ export default function HomePage() {
     try {
       let data: RecentMatch[] | null = null;
 
-      // トライ1: unified_match_feed
-      {
-        const res = await supabase
-          .from('unified_match_feed')
-          .select('*')
-          .order('match_date', { ascending: false })
-          .limit(6);
+      const res1 = await supabase
+        .from('unified_match_feed')
+        .select('*')
+        .order('match_date', { ascending: false })
+        .limit(6);
+      if (!res1.error && res1.data) data = res1.data as RecentMatch[];
 
-        if (!res.error && res.data) data = res.data as RecentMatch[];
-      }
-
-      // フォールバック: match_details（個人戦ビュー）
       if (!data) {
-        const res = await supabase
+        const res2 = await supabase
           .from('match_details')
           .select('*')
           .order('created_at', { ascending: false })
           .limit(6);
-        if (!res.error) data = (res.data ?? []).map((m: any) => ({ ...m, mode: 'singles' })) as RecentMatch[];
+        if (!res2.error)
+          data = (res2.data ?? []).map((m: any) => ({ ...m, mode: 'singles' })) as RecentMatch[];
       }
 
       setRecentMatches(data ?? []);
@@ -217,7 +209,7 @@ export default function HomePage() {
         .order('date', { ascending: false })
         .limit(3);
 
-    if (error) {
+      if (error) {
         console.error('Error fetching notices:', error);
         return;
       }
@@ -227,7 +219,7 @@ export default function HomePage() {
     }
   };
 
-  // ────────────────────────── メニュー ──────────────────────────
+  // ─────────────── メニュー ───────────────
   const menuItems = [
     { icon: FaChartLine, title: 'ランキング', description: '最新のランキング', href: '/rankings' },
     { icon: FaUsers, title: 'メンバー', description: 'クラブメンバーを見る', href: '/players' },
@@ -242,7 +234,6 @@ export default function HomePage() {
     return g > 0 ? Math.round((W / g) * 100) : 0;
   };
 
-  // チーム戦の堅牢判定
   const isTeamMatch = (m: RecentMatch) =>
     (m.mode && m.mode.toLowerCase() === 'teams') ||
     !!m.winner_team_id ||
@@ -250,7 +241,7 @@ export default function HomePage() {
     !!m.winner_team_name ||
     !!m.loser_team_name;
 
-  // 最近の試合に出てくるチームのメンバー（アバター＋ハンドルネーム）を一括取得
+  // 最近の試合に出てくるチームメンバーを一括取得
   useEffect(() => {
     const loadTeamMembers = async () => {
       try {
@@ -262,35 +253,23 @@ export default function HomePage() {
               .filter((x): x is string => !!x)
           )
         );
-
-        // 既に取得済みの team_id を除外（再フェッチ抑制）
         const missing = ids.filter((id) => !(id in teamMembersMap));
         if (missing.length === 0) return;
 
-        // team_members から player_id を収集
         const { data: tm, error: tmErr } = await supabase
           .from('team_members')
           .select('team_id, player_id')
           .in('team_id', missing);
-
-        if (tmErr) {
-          console.error('fetch team_members error:', tmErr);
-          return;
-        }
+        if (tmErr) return console.error('fetch team_members error:', tmErr);
 
         const playerIds = Array.from(new Set((tm ?? []).map((r) => (r as any).player_id)));
         if (playerIds.length === 0) return;
 
-        // players 情報取得
         const { data: ps, error: pErr } = await supabase
           .from('players')
           .select('id, handle_name, avatar_url')
           .in('id', playerIds);
-
-        if (pErr) {
-          console.error('fetch players error:', pErr);
-          return;
-        }
+        if (pErr) return console.error('fetch players error:', pErr);
 
         const pMap = new Map<string, MemberLite>();
         (ps ?? []).forEach((p) => {
@@ -301,7 +280,6 @@ export default function HomePage() {
           });
         });
 
-        // team_id -> members[] の形に整形（ハンドルネーム昇順）
         const grouped: Record<string, MemberLite[]> = {};
         (tm ?? []).forEach((row) => {
           const tid = (row as any).team_id as string;
@@ -314,7 +292,7 @@ export default function HomePage() {
         Object.keys(grouped).forEach((tid) => {
           grouped[tid] = grouped[tid]
             .sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'))
-            .slice(0, 4); // 表示は最大4名
+            .slice(0, 4);
         });
 
         setTeamMembersMap((prev) => ({ ...prev, ...grouped }));
@@ -323,42 +301,12 @@ export default function HomePage() {
       }
     };
 
-    if (recentMatches.length) {
-      void loadTeamMembers();
-    }
+    if (recentMatches.length) void loadTeamMembers();
   }, [recentMatches, teamMembersMap]);
 
-  // null/undefined 安全な Link ラッパ
   const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
     href ? <Link href={href}>{children}</Link> : <div>{children}</div>;
 
-  // メンバー列（アバター＋名前を横並び / 団体戦用）
-  const TeamMembersInline = ({ teamId }: { teamId?: string | null }) => {
-    const members = useMemo(() => {
-      if (!teamId) return [] as MemberLite[];
-      return teamMembersMap[teamId] ?? [];
-    }, [teamId, teamMembersMap]);
-
-    if (!teamId || members.length === 0) return null;
-
-    return (
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        {members.map((mem) => (
-          <div key={mem.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-gray-900/40">
-            <AvatarImg
-              src={mem.avatar_url}
-              alt={mem.handle_name}
-              size={20}
-              className="w-5 h-5 rounded-full border border-purple-500 object-cover"
-            />
-            <span className="text-[11px] text-gray-200 max-w-[6.5rem] truncate">{mem.handle_name}</span>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  /** 個人戦アバターの安全な取得（winner/loser） */
   const winnerAvatarOf = (m: RecentMatch) => m.winner_avatar ?? m.winner_avatar_url ?? null;
   const loserAvatarOf = (m: RecentMatch) => m.loser_avatar ?? m.loser_avatar_url ?? null;
 
@@ -401,25 +349,9 @@ export default function HomePage() {
             </p>
           </div>
 
-          {/* CTA（スマホ最適のフル幅ボタン群） */}
-<div className="mt-4 sm:mt-6 flex justify-center">
-  <MobileCTAButtons />
-</div>
-            {/* プレーヤー新規登録 */}
-            <Link
-              href="/register"
-              className="gradient-button px-6 py-2.5 sm:px-8 sm:py-3 rounded-full text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
-            >
-              <FaUserPlus className="text-sm" /> 新規登録
-            </Link>
-
-            {/* 既存の「試合登録」ボタンを置き換え */}
-            <div className="px-0 sm:px-0">
-              <RegisterButtons />
-            </div>
-
-            {/* ログイン状態に応じて色・文言を切替 */}
-            <AuthAwareLoginButtonClient />
+          {/* スマホ最適のフル幅ボタン群（4つ） */}
+          <div className="mt-4 sm:mt-6 flex justify-center">
+            <MobileCTAButtons />
           </div>
 
           {/* お知らせ */}
@@ -504,15 +436,14 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* トッププレーヤー（省略なし・元のままの構成） */}
-        {/* --- ここはご提示コードと同様のレイアウト／内容を維持しています --- */}
-        {/* モバイル 1–5位 */}
+        {/* トッププレーヤー */}
         <div className="mb-8 sm:mb-12">
           <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-2 text-yellow-100">
             <FaTrophy className="text-yellow-400 text-lg sm:text-2xl" />
             トッププレーヤー
           </h2>
 
+          {/* モバイル */}
           <div className="sm:hidden space-y-2">
             {topPlayers.slice(0, 5).map((p, idx) => {
               const rank = idx + 1;
