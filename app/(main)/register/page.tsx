@@ -38,10 +38,21 @@ const HANDICAP_DEFAULT = Number(process.env.NEXT_PUBLIC_HANDICAP_DEFAULT ?? 30);
 
 const supabase = createClient();
 
+// players_private への upsert 用・ゆるい型
+type PlayersPrivateInsert = {
+  player_id?: string | null;
+  id?: string | null;
+  user_id?: string | null;
+  auth_user_id?: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+};
+
 export default function RegisterPage() {
   const router = useRouter();
 
-  // パスコード（PASSCODE 空なら最初から解錠）
+  // PASSCODE が空なら最初から解錠
   const [unlocked, setUnlocked] = useState<boolean>(PASSCODE.length === 0);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState<string | null>(null);
@@ -50,7 +61,7 @@ export default function RegisterPage() {
   const [tsToken, setTsToken] = useState<string | undefined>();
   const [tsError, setTsError] = useState<string | null>(null);
 
-  // 以前のローカル保存を掃除（自動スキップ抑止）
+  // 古い保存を掃除（自動スキップ抑止）
   useEffect(() => {
     try {
       sessionStorage.removeItem('regUnlocked');
@@ -76,7 +87,7 @@ export default function RegisterPage() {
   const [passwordError, setPasswordError] = useState('');
   const [checkingHandleName, setCheckingHandleName] = useState(false);
 
-  // ---- helpers -------------------------------------------------------------
+  // ── helpers ──────────────────────────────────────────────────────────────
 
   async function ensureHandleUnique(handle: string) {
     const { data, error } = await supabase
@@ -127,19 +138,15 @@ export default function RegisterPage() {
     setPasscodeError(null);
     const input = passcodeInput.trim();
     const expected = PASSCODE.trim();
-
     if (expected.length === 0) {
       setUnlocked(true);
       return;
     }
-    if (input === expected) {
-      setUnlocked(true);
-    } else {
-      setPasscodeError('招待コードが違います。');
-    }
+    setUnlocked(input === expected);
+    if (input !== expected) setPasscodeError('招待コードが違います。');
   };
 
-  // Turnstile 検証（サーバー側エンドポイント）
+  // Turnstile 検証
   async function verifyTurnstileToken(token?: string) {
     setTsError(null);
     if (!token) {
@@ -182,7 +189,6 @@ export default function RegisterPage() {
       return;
     }
 
-    // Turnstile 必須
     const humanOK = await verifyTurnstileToken(tsToken);
     if (!humanOK) return;
 
@@ -195,7 +201,7 @@ export default function RegisterPage() {
         return;
       }
 
-      // 1) Authユーザー作成
+      // 1) Auth ユーザー作成
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email.trim(),
         password: formData.password.trim(),
@@ -224,18 +230,26 @@ export default function RegisterPage() {
       }
 
       // 3) 非公開 players_private（主キー候補を順に試行）
-      const tryKeys: Array<'player_id' | 'id' | 'user_id' | 'auth_user_id'> = ['player_id', 'id', 'user_id', 'auth_user_id'];
+      const tryKeys: Array<'player_id' | 'id' | 'user_id' | 'auth_user_id'> = [
+        'player_id', 'id', 'user_id', 'auth_user_id'
+      ];
       let saved = false, lastErr: any = null;
+
       for (const key of tryKeys) {
-        const base: Record<string, any> = {
+        const base: PlayersPrivateInsert = {
           [key]: userId,
           full_name: formData.full_name,
           email: formData.email.trim(),
           phone: formData.phone.trim(),
         };
-        const { error } = await supabase.from('players_private').upsert(base, { onConflict: key } as any);
+
+        // テーブルが Database 型に無い場合でも通るように any 併用
+        const qb = supabase.from<PlayersPrivateInsert>('players_private' as any);
+        const { error } = await (qb as any).upsert(base as PlayersPrivateInsert, { onConflict: key as any });
         if (!error) { saved = true; break; }
         lastErr = error;
+
+        // 典型的なスキーマ系以外のエラーなら打ち切り
         if (!/does not exist|no unique|exclusion|schema cache/i.test(String(error?.message))) {
           break;
         }
@@ -267,7 +281,7 @@ export default function RegisterPage() {
     }
   };
 
-  // ---- UI ------------------------------------------------------------------
+  // ── UI ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-8">
@@ -369,7 +383,7 @@ export default function RegisterPage() {
 
               {/* アカウント */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
                   <FaLock className="text-purple-400" />
                   アカウント情報
                 </h2>
@@ -427,7 +441,7 @@ export default function RegisterPage() {
 
               {/* 連絡先 + アバター */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
                   <FaPhone className="text-purple-400" />
                   連絡先情報 / アバター
                 </h2>
@@ -465,7 +479,7 @@ export default function RegisterPage() {
                   </select>
                 </div>
 
-                {/* アバター選択（Supabase Storage からページング） */}
+                {/* アバター選択 */}
                 <div>
                   <label className="block text-sm font-medium text-purple-300 mb-2 flex items-center gap-2">
                     <FaImage className="text-purple-400" />
