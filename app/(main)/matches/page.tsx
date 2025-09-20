@@ -1,4 +1,3 @@
-// app/(main)/matches/page.tsx
 'use client';
 
 import {
@@ -6,9 +5,9 @@ import {
   useMemo,
   memo,
   useCallback,
-  lazy,
-  Suspense,
   useEffect,
+  Suspense,
+  lazy,
 } from 'react';
 import {
   FaTrophy,
@@ -20,12 +19,16 @@ import {
   FaStar,
   FaUsers,
   FaUser,
+  FaAngleLeft,
+  FaAngleRight,
 } from 'react-icons/fa';
 import Link from 'next/link';
 import { useFetchMatchesData as useMatchesData } from '@/lib/hooks/useFetchSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
-// 仮想スクロール（大画面＆件数多い時のみ使用）
+/* ─────────────── （必要なら残す）大画面の仮想スクロール ───────────────
+   ※ ページャと併用してもOK。ページ内の5件だけを仮想化しても効果は薄いので
+   実用上は常時オフでも問題ありません。必要なら useVirtual を true に。 */
 const VirtualList = lazy(() => import('@/components/VirtualList'));
 
 /* ─────────────── REST (チームメンバー取得に使用) ─────────────── */
@@ -52,7 +55,7 @@ function useIsSmallScreen() {
     const onChange = (e: MediaQueryListEvent | MediaQueryList) =>
       setSmall('matches' in e ? e.matches : (e as MediaQueryList).matches);
     setSmall(mq.matches);
-    // @ts-ignore (Safari古い版対策)
+    // @ts-ignore
     mq.addEventListener ? mq.addEventListener('change', onChange) : mq.addListener(onChange);
     return () => {
       // @ts-ignore
@@ -65,18 +68,13 @@ function useIsSmallScreen() {
 /** match_details ビュー想定の型（個人戦/団体戦の両方を吸収） */
 interface MatchDetails {
   id: string;
-
-  // 時系列
   match_date: string;
-
-  // 区別
   mode?: 'singles' | 'teams' | string | null;
 
-  // 個人戦フィールド
   winner_id?: string | null;
   winner_name?: string | null;
-  winner_avatar?: string | null; // 既存コード互換
-  winner_avatar_url?: string | null; // ビュー側実装によってはこちらになる場合
+  winner_avatar?: string | null;
+  winner_avatar_url?: string | null;
   winner_current_points?: number | null;
   winner_current_handicap?: number | null;
   winner_points_change?: number | null;
@@ -90,13 +88,11 @@ interface MatchDetails {
   loser_current_handicap?: number | null;
   loser_points_change?: number | null;
 
-  // 団体戦フィールド
   winner_team_id?: string | null;
   winner_team_name?: string | null;
   loser_team_id?: string | null;
   loser_team_name?: string | null;
 
-  // 任意メタ
   is_tournament?: boolean | null;
   tournament_name?: string | null;
   venue?: string | null;
@@ -188,7 +184,13 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
         hour: '2-digit',
         minute: '2-digit',
       })}`;
-    return date.toLocaleString();
+    return date.toLocaleString('ja-JP', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }, [m.match_date]);
 
   return (
@@ -379,6 +381,7 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
             prefetch={false}
             title={p.handle_name}
           >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={p.avatar_url || '/default-avatar.png'}
               alt={p.handle_name}
@@ -495,6 +498,94 @@ const TeamsCard = memo(function TeamsCard({
   );
 });
 
+/* ─────────────── 簡易ページャ ─────────────── */
+
+const PER_PAGE = 5;
+
+function usePagination(total: number) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  const safeSet = (n: number) => setPage(Math.min(Math.max(1, n), totalPages));
+
+  return { page, setPage: safeSet, totalPages };
+}
+
+function Pager({
+  page,
+  totalPages,
+  onChange,
+}: {
+  page: number;
+  totalPages: number;
+  onChange: (p: number) => void;
+}) {
+  // 例: 1 ... 4 5 [6] 7 8 ... 20
+  const range = useMemo(() => {
+    const arr: (number | '...')[] = [];
+    const push = (v: number | '...') => arr.push(v);
+    const window = 1; // 現在の前後
+    const first = 1;
+    const last = totalPages;
+
+    if (last <= 7) {
+      for (let i = 1; i <= last; i++) push(i);
+      return arr;
+    }
+
+    push(first);
+    if (page - window > first + 1) push('...');
+    for (let i = Math.max(first + 1, page - window); i <= Math.min(last - 1, page + window); i++) {
+      if (i > first && i < last) push(i);
+    }
+    if (page + window < last - 1) push('...');
+    push(last);
+    return arr;
+  }, [page, totalPages]);
+
+  return (
+    <div className="flex items-center justify-center gap-1 sm:gap-2 mt-6">
+      <button
+        onClick={() => onChange(page - 1)}
+        disabled={page <= 1}
+        className="px-3 py-2 rounded-lg border border-purple-500/30 text-gray-300 disabled:opacity-50 hover:bg-purple-500/10"
+        aria-label="前のページ"
+      >
+        <FaAngleLeft />
+      </button>
+
+      {range.map((v, i) =>
+        v === '...' ? (
+          <span key={`e-${i}`} className="px-2 text-gray-500">
+            …
+          </span>
+        ) : (
+          <button
+            key={v}
+            onClick={() => onChange(v)}
+            className={`px-3 py-2 rounded-lg border transition ${
+              v === page
+                ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white border-transparent'
+                : 'border-purple-500/30 text-gray-300 hover:bg-purple-500/10'
+            }`}
+          >
+            {v}
+          </button>
+        )
+      )}
+
+      <button
+        onClick={() => onChange(page + 1)}
+        disabled={page >= totalPages}
+        className="px-3 py-2 rounded-lg border border-purple-500/30 text-gray-300 disabled:opacity-50 hover:bg-purple-500/10"
+        aria-label="次のページ"
+      >
+        <FaAngleRight />
+      </button>
+    </div>
+  );
+}
+
 /* ─────────────── ページ本体 ─────────────── */
 
 export default function MatchesPage() {
@@ -504,17 +595,14 @@ export default function MatchesPage() {
   // フィルタ
   const [filter, setFilter] = useState<'all' | 'normal' | 'tournament'>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>(
-    'all'
-  );
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
 
-  // 検索・絞り込み（個人戦/団体戦どちらでも成立するよう拡張）
+  // 検索・絞り込み（個人戦/団体戦共通）
   const filteredSortedMatches = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const now = new Date();
 
     const filtered = (matches as MatchDetails[]).filter((m) => {
-      // 検索文字列：個人名 or チーム名 or 会場/大会
       const searchHit =
         !term ||
         (m.winner_name ?? '').toLowerCase().includes(term) ||
@@ -524,45 +612,46 @@ export default function MatchesPage() {
         (m.venue ?? '').toLowerCase().includes(term) ||
         (m.tournament_name ?? '').toLowerCase().includes(term);
 
-      // 大会/通常
-      const typeHit =
-        filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
+      const typeHit = filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
 
-      // 期間
       const d = new Date(m.match_date);
       let dateHit = true;
-      if (dateFilter === 'today') {
-        dateHit = d.toDateString() === now.toDateString();
-      } else if (dateFilter === 'week') {
-        dateHit = d >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      } else if (dateFilter === 'month') {
-        dateHit = d >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      }
+      if (dateFilter === 'today') dateHit = d.toDateString() === now.toDateString();
+      else if (dateFilter === 'week') dateHit = d >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      else if (dateFilter === 'month') dateHit = d >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
       return searchHit && typeHit && dateHit;
     });
 
-    // 日付降順（保険）
-    filtered.sort(
-      (a, b) => +new Date(b.match_date) - +new Date(a.match_date)
-    );
+    // 最新→過去（時系列降順）
+    filtered.sort((a, b) => +new Date(b.match_date) - +new Date(a.match_date));
     return filtered;
   }, [matches, searchTerm, filter, dateFilter]);
 
-  /* ── ここから追加：表示対象のチームのメンバープロフィールを一括取得 ── */
-  const [membersByTeam, setMembersByTeam] = useState<
-    Record<string, MemberProfile[]>
-  >({});
+  /* ── ページャ（5件/ページ） ── */
+  const { page, setPage, totalPages } = usePagination(filteredSortedMatches.length);
 
-  // 画面に表示している試合に出てくるチームIDを抽出（winner/loser）
+  // フィルタ変更時は1ページ目へ
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, filter, dateFilter]);
+
+  const pagedMatches = useMemo(
+    () => filteredSortedMatches.slice((page - 1) * PER_PAGE, page * PER_PAGE),
+    [filteredSortedMatches, page]
+  );
+
+  /* ── 表示中の試合に出てくるチームのメンバーを取得 ── */
+  const [membersByTeam, setMembersByTeam] = useState<Record<string, MemberProfile[]>>({});
   const visibleTeamIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const m of filteredSortedMatches) {
+    for (const m of pagedMatches) {
       if (m.winner_team_id) ids.add(m.winner_team_id);
       if (m.loser_team_id) ids.add(m.loser_team_id);
     }
     return Array.from(ids);
-  }, [filteredSortedMatches]);
+  }, [pagedMatches]);
 
   useEffect(() => {
     let cancelled = false;
@@ -572,41 +661,32 @@ export default function MatchesPage() {
         return;
       }
       try {
-        // team_members を取得
         const inTeams = visibleTeamIds.map((id) => `"${id}"`).join(',');
         const tm = await restGet<{ team_id: string; player_id: string }[]>(
           `/rest/v1/team_members?team_id=in.(${inTeams})&select=team_id,player_id`
         );
-
         const pids = Array.from(new Set(tm.map((r) => r.player_id)));
         if (pids.length === 0) {
           if (!cancelled) setMembersByTeam({});
           return;
         }
-
         const inPlayers = pids.map((id) => `"${id}"`).join(',');
         const players = await restGet<MemberProfile[]>(
           `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url`
         );
         const pmap = new Map(players.map((p) => [p.id, p]));
-
         const grouped: Record<string, MemberProfile[]> = {};
         for (const r of tm) {
           const p = pmap.get(r.player_id);
           if (!p) continue;
           (grouped[r.team_id] ||= []).push(p);
         }
-
-        // 表示整形：ハンドルネーム昇順で揃える
         for (const k of Object.keys(grouped)) {
-          grouped[k] = grouped[k].sort((a, b) =>
-            a.handle_name.localeCompare(b.handle_name, 'ja')
-          );
+          grouped[k] = grouped[k].sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'));
         }
-
         if (!cancelled) setMembersByTeam(grouped);
       } catch {
-        // 読み込み失敗時は黙って空のまま（一覧自体は見える）
+        /* ignore */
       }
     })();
     return () => {
@@ -614,42 +694,30 @@ export default function MatchesPage() {
     };
   }, [visibleTeamIds]);
 
-  // 統計
+  // 統計（全体）
   const stats = useMemo(() => {
     const arr = matches as MatchDetails[];
     const totalMatches = arr.length;
-    const todayMatches =
-      arr.filter(
-        (m) =>
-          new Date(m.match_date).toDateString() ===
-          new Date().toDateString()
-      ).length;
+    const todayMatches = arr.filter((m) => new Date(m.match_date).toDateString() === new Date().toDateString()).length;
     const tournamentMatches = arr.filter((m) => !!m.is_tournament).length;
-    const avgScoreDiff =
-      arr.length > 0
-        ? arr.reduce((s, m) => s + (15 - (m.loser_score ?? 0)), 0) / arr.length
-        : 0;
+    const avgScoreDiff = arr.length > 0 ? arr.reduce((s, m) => s + (15 - (m.loser_score ?? 0)), 0) / arr.length : 0;
     return { totalMatches, todayMatches, tournamentMatches, avgScoreDiff };
   }, [matches]);
 
-  // 仮想化は PC 以上のみ。モバイルでは通常レンダリング（クリップ防止）
-  const useVirtual = !isSmall && filteredSortedMatches.length > 20;
-  const virtualItemHeight = useMemo(() => 240, []); // PCでも十分な高さ
-
-  // 仮想スクロール描画
+  // 仮想化はオフ（ページャ優先）
+  const useVirtual = false;
   const renderItem = useCallback(
     (index: number) => {
-      const m = filteredSortedMatches[index];
+      const m = pagedMatches[index];
       if (!m) return null;
-      const isTeams =
-        m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
+      const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
       return isTeams ? (
         <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
       ) : (
         <SinglesCard key={m.id} m={m} />
       );
     },
-    [filteredSortedMatches, membersByTeam]
+    [pagedMatches, membersByTeam]
   );
 
   return (
@@ -665,9 +733,7 @@ export default function MatchesPage() {
           <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">
             試合結果
           </h1>
-          <p className="text-gray-400 text-sm sm:text-base">
-            個人戦・団体戦を時系列で一覧
-          </p>
+          <p className="text-gray-400 text-sm sm:text-base">個人戦・団体戦を時系列（最新→過去）で一覧</p>
         </div>
 
         {/* ローディング/エラー */}
@@ -687,30 +753,22 @@ export default function MatchesPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-4 sm:p-6 text-center transform hover:scale-105 transition-all">
                 <FaGamepad className="text-2xl sm:text-3xl text-purple-400 mx-auto mb-2 sm:mb-3" />
-                <div className="text-2xl sm:text-3xl font-bold text-white">
-                  {stats.totalMatches}
-                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stats.totalMatches}</div>
                 <div className="text-xs sm:text-sm text-gray-400">総試合数</div>
               </div>
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-4 sm:p-6 text-center transform hover:scale-105 transition-all">
                 <FaCalendar className="text-2xl sm:text-3xl text-blue-400 mx-auto mb-2 sm:mb-3" />
-                <div className="text-2xl sm:text-3xl font-bold text-white">
-                  {stats.todayMatches}
-                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stats.todayMatches}</div>
                 <div className="text-xs sm:text-sm text-gray-400">本日の試合</div>
               </div>
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-4 sm:p-6 text-center transform hover:scale-105 transition-all">
                 <FaMedal className="text-2xl sm:text-3xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
-                <div className="text-2xl sm:text-3xl font-bold text-white">
-                  {stats.tournamentMatches}
-                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stats.tournamentMatches}</div>
                 <div className="text-xs sm:text-sm text-gray-400">大会試合</div>
               </div>
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-4 sm:p-6 text-center transform hover:scale-105 transition-all">
                 <FaTrophy className="text-2xl sm:text-3xl text-green-400 mx-auto mb-2 sm:mb-3" />
-                <div className="text-2xl sm:text-3xl font-bold text-white">
-                  {stats.avgScoreDiff.toFixed(1)}
-                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stats.avgScoreDiff.toFixed(1)}</div>
                 <div className="text-xs sm:text-sm text-gray-400">平均点差</div>
               </div>
             </div>
@@ -737,7 +795,6 @@ export default function MatchesPage() {
               />
 
               <div className="flex flex-wrap gap-2 sm:gap-3">
-                {/* 試合タイプフィルター */}
                 <div className="flex gap-2">
                   {(['all', 'normal', 'tournament'] as const).map((k) => (
                     <button
@@ -754,67 +811,50 @@ export default function MatchesPage() {
                   ))}
                 </div>
 
-                {/* 期間フィルター */}
                 <select
                   value={dateFilter}
                   onChange={(e) => setDateFilter(e.target.value as any)}
                   className="px-3 sm:px-4 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 text-sm sm:text-base"
                 >
-                  <option value="all" className="bg-gray-800">
-                    全期間
-                  </option>
-                  <option value="today" className="bg-gray-800">
-                    今日
-                  </option>
-                  <option value="week" className="bg-gray-800">
-                    過去7日間
-                  </option>
-                  <option value="month" className="bg-gray-800">
-                    過去30日間
-                  </option>
+                  <option value="all" className="bg-gray-800">全期間</option>
+                  <option value="today" className="bg-gray-800">今日</option>
+                  <option value="week" className="bg-gray-800">過去7日間</option>
+                  <option value="month" className="bg-gray-800">過去30日間</option>
                 </select>
               </div>
             </div>
 
-            {/* 試合一覧（個人戦/団体戦混在） */}
-            {filteredSortedMatches.length === 0 ? (
+            {/* 一覧（5件/ページ） */}
+            {pagedMatches.length === 0 ? (
               <div className="text-center py-12 sm:py-16">
                 <FaGamepad className="text-5xl sm:text-6xl text-gray-600 mx-auto mb-4" />
-                <p className="text-gray-400 text-sm sm:text-base">
-                  条件に合う試合が見つかりません
-                </p>
+                <p className="text-gray-400 text-sm sm:text-base">条件に合う試合が見つかりません</p>
               </div>
             ) : !useVirtual ? (
-              // モバイル or 件数少：通常描画（クリップ無し）
               <div className="space-y-3 sm:space-y-4">
-                {filteredSortedMatches.map((m) => {
-                  const isTeams =
-                    m.mode === 'teams' ||
-                    !!m.winner_team_name ||
-                    !!m.loser_team_name;
+                {pagedMatches.map((m) => {
+                  const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
                   return isTeams ? (
-                    <TeamsCard
-                      key={m.id}
-                      m={m}
-                      membersByTeam={membersByTeam}
-                    />
+                    <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
                   ) : (
                     <SinglesCard key={m.id} m={m} />
                   );
                 })}
               </div>
             ) : (
-              // PC & 件数多：仮想化（十分な高さを確保）
               <Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
                 <VirtualList
-                  items={filteredSortedMatches}
+                  items={pagedMatches}
                   height={720}
-                  itemHeight={virtualItemHeight}
+                  itemHeight={240}
                   renderItem={renderItem}
                   className="space-y-3 sm:space-y-4"
                 />
               </Suspense>
             )}
+
+            {/* ページャ */}
+            <Pager page={page} totalPages={totalPages} onChange={setPage} />
           </>
         )}
       </div>

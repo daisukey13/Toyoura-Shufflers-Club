@@ -10,18 +10,7 @@ import { FaLock, FaPhone, FaEnvelope, FaArrowLeft } from 'react-icons/fa';
 
 type Mode = 'email' | 'phone';
 
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (el: HTMLElement, opts: any) => string;
-      reset: (id?: string) => void;
-      remove: (id?: string) => void;
-      getResponse: (id?: string) => string;
-    };
-  }
-}
-
-/** 見た目だけ +81 を付ける整形（日本想定） */
+/** +81 表示整形（見た目のみ、日本想定） */
 function toE164JapanForView(input: string): string {
   let s = (input || '').trim().normalize('NFKC');
   s = s.replace(/[^\d+]/g, '');
@@ -54,6 +43,7 @@ function LoginPageInner() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // 既存の redirect クエリは「一般ユーザーのときのみ」使います（管理者は常に /admin/dashboard 優先）
   const DEFAULT_AFTER_LOGIN = '/mypage';
   const redirectQ = mounted ? (searchParams.get('redirect') ?? '') : '';
   const hasRedirect = !!(redirectQ && redirectQ !== '/login');
@@ -68,7 +58,25 @@ function LoginPageInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
 
-  // Turnstile（電話番号タブのみ使用）
+  // ---- 管理者メール 決め打ち（複数可） -----------------------------------
+  const ADMIN_EMAILS: Set<string> = useMemo(() => {
+    const raw =
+      process.env.NEXT_PUBLIC_ADMIN_EMAILS ||
+      process.env.NEXT_PUBLIC_ADMIN_EMAIL ||
+      'daisukeyud@gmail.com';
+    return new Set(
+      raw
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
+    );
+  }, []);
+  const isForcedAdmin = useCallback(
+    (mail?: string | null) => !!mail && ADMIN_EMAILS.has(mail.trim().toLowerCase()),
+    [ADMIN_EMAILS]
+  );
+
+  // ---- Turnstile（電話番号タブのみ） ---------------------------------------
   const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
   const [scriptReady, setScriptReady] = useState(false);
   const [scriptError, setScriptError] = useState('');
@@ -76,10 +84,10 @@ function LoginPageInner() {
   const [cfMsg, setCfMsg] = useState('');
   const widgetHostRef = useRef<HTMLDivElement | null>(null);
   const widgetIdRef = useRef<string | null>(null);
-  const tokenTimeRef = useRef<number>(0); // 取得時刻(ms)
-  const TOKEN_TTL_MS = 110 * 1000;       // 110秒で期限切れ扱い
+  const tokenTimeRef = useRef<number>(0);
+  const TOKEN_TTL_MS = 110 * 1000;
 
-  /** whoami で既ログイン判定 */
+  /** whoami → 既ログイン検出。管理者なら即ダッシュボードへ（一般ユーザーは自動遷移しない） */
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
@@ -89,25 +97,47 @@ function LoginPageInner() {
         const j = r.ok ? await r.json() : { authenticated: false };
         if (cancelled) return;
         setAlreadyAuthed(!!j?.authenticated);
-        if (j?.authenticated && hasRedirect) router.replace(redirectSafe);
+
+        if (j?.authenticated) {
+          const { data: gu } = await supabase.auth.getUser();
+          const currentEmail = gu?.user?.email?.toLowerCase() || '';
+          if (currentEmail && isForcedAdmin(currentEmail)) {
+            router.replace('/admin/dashboard');
+          }
+          // ※ 一般ユーザーはここで自動遷移しない（/mypage に飛ばすレースを防止）
+        }
       } catch {
         if (!cancelled) setAlreadyAuthed(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [mounted, hasRedirect, redirectSafe, router]);
+    return () => {
+      cancelled = true;
+    };
+  }, [mounted, supabase, isForcedAdmin, router]);
 
-  /** CAPTCHA を無効化（入力変更/失敗/期限切れ時） */
+  /** Turnstile window 参照（型定義の衝突回避のため any で扱う） */
+  const getT = () =>
+    (window as any).turnstile as
+      | {
+          render: (el: HTMLElement, opts: any) => string;
+          reset: (id?: string) => void;
+          remove: (id?: string) => void;
+          getResponse: (id?: string) => string;
+        }
+      | undefined;
+
+  /** CAPTCHA リセット */
   const resetCaptcha = useCallback((hint?: string) => {
     try {
-      if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
+      const T = getT();
+      if (widgetIdRef.current && T) T.reset(widgetIdRef.current);
     } catch {}
     tokenTimeRef.current = 0;
     setCfToken('');
     setCfMsg(hint || '');
   }, []);
 
-  /** phone タブ時だけ Turnstile を mount */
+  /** phone タブで mount */
   const mountTurnstile = useCallback(() => {
     setCfMsg('');
     setCfToken('');
@@ -120,15 +150,14 @@ function LoginPageInner() {
     const host = widgetHostRef.current;
     if (!host) return;
 
-    // 既存があるなら reset
-    if (widgetIdRef.current && window.turnstile) {
+    const T = getT();
+    if (widgetIdRef.current && T) {
       resetCaptcha();
       return;
     }
-
-    if (window.turnstile) {
+    if (T) {
       try {
-        const id = window.turnstile.render(host, {
+        const id = T.render(host, {
           sitekey: SITE_KEY,
           action: 'login',
           theme: 'auto',
@@ -152,10 +181,11 @@ function LoginPageInner() {
     }
   }, [SITE_KEY, resetCaptcha]);
 
-  /** タブ離脱やアンマウントで確実に破棄 */
+  /** アンマウント */
   const unmountTurnstile = useCallback(() => {
     try {
-      if (widgetIdRef.current && window.turnstile) window.turnstile.remove(widgetIdRef.current);
+      const T = getT();
+      if (widgetIdRef.current && T) T.remove(widgetIdRef.current);
     } catch {}
     widgetIdRef.current = null;
     tokenTimeRef.current = 0;
@@ -163,7 +193,6 @@ function LoginPageInner() {
     setCfMsg('');
   }, []);
 
-  // スクリプト読み込み完了時 / モード切替で mount/unmount
   useEffect(() => {
     if (!mounted) return;
     if (mode === 'phone' && scriptReady) {
@@ -177,7 +206,6 @@ function LoginPageInner() {
     };
   }, [mounted, mode, scriptReady, mountTurnstile, unmountTurnstile]);
 
-  // スクリプトが来ないときのガード
   useEffect(() => {
     if (!mounted || mode !== 'phone' || scriptReady) return;
     const t = setTimeout(() => {
@@ -198,24 +226,26 @@ function LoginPageInner() {
     } catch {}
   };
 
-  const afterSuccessRedirect = async () => {
-    router.replace(redirectSafe);
+  /** 成功後の遷移（管理者メールは常にダッシュボード） */
+  const afterSuccessRedirect = async (emails: string[]) => {
+    const lower = emails.map((e) => (e || '').toLowerCase());
+    const isAdmin = lower.some((e) => isForcedAdmin(e));
+    router.replace(isAdmin ? '/admin/dashboard' : redirectSafe);
   };
 
-  /** 直前に常に最新 Turnstile トークンを取得 */
+  /** 最新 Turnstile token */
   const getFreshToken = useCallback(() => {
+    const T = getT();
     const fromWidget =
-      (widgetIdRef.current && window.turnstile?.getResponse(widgetIdRef.current)) || '';
+      (widgetIdRef.current && T?.getResponse(widgetIdRef.current)) || '';
     const token = fromWidget || cfToken || '';
     if (!token) return '';
     const age = Date.now() - tokenTimeRef.current;
-    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) {
-      return '';
-    }
+    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) return '';
     return token;
   }, [cfToken]);
 
-  /** fetch の JSON 安全パーサ（HTML 404 等での "Unexpected token '<'" を防ぐ） */
+  /** JSON 安全パーサ */
   const safeJson = async (res: Response) => {
     const text = await res.text();
     try {
@@ -235,48 +265,28 @@ function LoginPageInner() {
 
       if (mode === 'phone') {
         if (!SITE_KEY) throw new Error('CAPTCHA 用 Site key が未設定です。');
-
         const token = getFreshToken();
         if (!token) {
           resetCaptcha('CAPTCHA を完了してください。');
           throw new Error('CAPTCHA を完了してください。');
         }
-
-        // 電話番号 → email の解決
+        // 電話番号→email 解決
         const res = await fetch('/api/login/resolve-email', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ phone, token }),
         });
         const json = await safeJson(res);
-
         if (!res.ok) {
-          // サーバからの JSON 以外（= ルート間違いなど）を検知
-          if ((json as any)?.__nonjson) {
-            throw new Error('サーバ応答が不正です。エンドポイント /api/login/resolve-email を確認してください。');
-          }
-          // Turnstile 失敗の詳細を表示
           if ((json as any)?.error === 'captcha_failed') {
-            const codes: string[] = (json as any)?.codes || [];
-            let msg = '人間確認に失敗しました。もう一度 CAPTCHA を完了してください。';
-            if (codes.includes('timeout-or-duplicate')) msg = 'CAPTCHA の有効期限が切れたか、既に使用済みです。もう一度実施してください。';
-            if (codes.includes('invalid-input-secret')) msg = 'サーバ側の Turnstile シークレットが正しくありません（管理者設定が必要）。';
-            if (codes.includes('missing-input-secret')) msg = 'サーバ側のシークレットが未設定です（管理者設定が必要）。';
-            if (codes.includes('invalid-input-response')) msg = 'CAPTCHA 応答が無効です。ページを再読み込みして再度お試しください。';
-            resetCaptcha(msg);
-            throw new Error(msg);
+            resetCaptcha('人間確認に失敗しました。もう一度行ってください。');
           }
-          if ((json as any)?.error === 'invalid_phone') throw new Error('電話番号の形式が正しくありません。');
-          if ((json as any)?.error === 'not_found') throw new Error('この電話番号のユーザーが見つかりませんでした。');
-          if ((json as any)?.error === 'rate_limited') throw new Error('リクエストが多すぎます。しばらくしてからお試しください。');
-
           throw new Error((json as any)?.message || '照会に失敗しました。');
         }
-
         loginEmail = (json as any).email;
       }
 
-      // メール/パスワードでログイン（電話番号の時は解決した email を使用）
+      // サインイン
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password,
@@ -285,13 +295,17 @@ function LoginPageInner() {
 
       if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
+      // Turnstile をリセット
       try {
-        if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
-        tokenTimeRef.current = 0;
-        setCfToken('');
+        const T = getT();
+        if (widgetIdRef.current && T) T.reset(widgetIdRef.current);
       } catch {}
+      tokenTimeRef.current = 0;
+      setCfToken('');
 
-      await afterSuccessRedirect();
+      // ★ 入力メール と Supabase 側メール の両方で管理者判定
+      const effectiveEmails = [loginEmail, data.user?.email || ''];
+      await afterSuccessRedirect(effectiveEmails);
     } catch (err: any) {
       setError(err?.message || 'ログインに失敗しました');
     } finally {
@@ -309,7 +323,8 @@ function LoginPageInner() {
 
   if (!mounted || alreadyAuthed === null) return <Fallback />;
 
-  if (alreadyAuthed && !hasRedirect) {
+  if (alreadyAuthed) {
+    // 既ログイン時：管理者なら上の useEffect で自動遷移、一般ユーザーは選択肢を表示
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
@@ -332,9 +347,7 @@ function LoginPageInner() {
   }
 
   const primaryButtonText = loading ? 'ログイン中…' : 'ログイン';
-  const primaryDisabled =
-    loading ||
-    (mode === 'phone' && !!SITE_KEY && !cfToken); // 電話番号タブでは CAPTCHA 完了が必須
+  const primaryDisabled = loading || (mode === 'phone' && !!SITE_KEY && !cfToken);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">

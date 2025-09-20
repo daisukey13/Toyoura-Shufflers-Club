@@ -18,7 +18,7 @@ import {
 } from '@/lib/hooks/useFetchSupabaseData';
 import { createClient } from '@/lib/supabase/client';
 
-/* ───────────────────────────── Types / helpers ───────────────────────────── */
+/* ───────── Types ───────── */
 type Player = {
   id: string;
   handle_name: string;
@@ -35,6 +35,7 @@ type TeamMemberRow = { team_id: string | null; role?: string | null };
 type Team = { id: string; name: string; avatar_url?: string | null };
 type TeamWithRole = Team & { role?: string | null };
 
+/* ───────── Helpers ───────── */
 function gamesOf(p?: Player | null) {
   if (!p) return 0;
   return (p.wins ?? 0) + (p.losses ?? 0);
@@ -46,8 +47,6 @@ function winRateOf(p?: Player | null) {
   const g = w + l;
   return g ? Math.round((w / g) * 100) : 0;
 }
-
-/* ───────────────────────────── Rank badge (Huge) ───────────────────────────── */
 function rankTheme(rank?: number | null) {
   if (!rank) return { ring: 'from-purple-500 to-pink-600', glow: 'bg-purple-400' };
   if (rank === 1) return { ring: 'from-yellow-300 to-yellow-500', glow: 'bg-yellow-300' };
@@ -56,25 +55,21 @@ function rankTheme(rank?: number | null) {
   return { ring: 'from-purple-400 to-pink-500', glow: 'bg-purple-400' };
 }
 
+/* ───────── UI ───────── */
 function HugeRankBadge({ rank }: { rank?: number | null }) {
   const t = rankTheme(rank);
   return (
     <div className="relative inline-block">
-      {/* soft glow */}
       <div className={`absolute -inset-4 rounded-full blur-2xl opacity-40 ${t.glow}`} />
-      {/* ring */}
       <div className={`relative rounded-full p-1 bg-gradient-to-br ${t.ring}`}>
         <div className="rounded-full bg-[#1f1f2f] p-4 sm:p-5">
           <div className="flex items-center justify-center">
-            {/* ランク数字（勝利数より2倍以上大きい） */}
             <span className="font-extrabold tracking-tight text-6xl sm:text-7xl text-yellow-100 drop-shadow">
               {rank ?? '—'}
             </span>
           </div>
         </div>
       </div>
-
-      {/* Crown for Top3 */}
       {rank && rank <= 3 && (
         <div className="absolute -top-4 -right-4 sm:-top-5 sm:-right-5">
           <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-yellow-400/20 border border-yellow-400/40 flex items-center justify-center">
@@ -86,17 +81,15 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
   );
 }
 
-/* ───────────────────────────── Page ───────────────────────────── */
+/* ───────── Page ───────── */
 export default function PlayerProfilePage() {
   const params = useParams<{ id: string }>();
   const playerId = params?.id;
 
-  // 個別プレイヤー詳細（試合履歴など）
   const { player, matches, loading, error } = useFetchPlayerDetail(playerId, {
     requireAuth: false,
   });
 
-  // 全プレイヤーから順位算出（RP降順）
   const { players: allPlayers } = useFetchPlayersData({ requireAuth: false });
   const { rank, totalActive } = useMemo(() => {
     const src = Array.isArray(allPlayers) ? allPlayers : [];
@@ -110,7 +103,7 @@ export default function PlayerProfilePage() {
   const wr = winRateOf(player);
   const games = gamesOf(player);
 
-  /* ───────── 所属チームを取得（スキーマ差異に強いフォールバック版） ───────── */
+  /* 所属チーム（存在する中間テーブルに自動対応） */
   const [teams, setTeams] = useState<TeamWithRole[]>([]);
   const [teamsLoading, setTeamsLoading] = useState<boolean>(true);
 
@@ -122,7 +115,6 @@ export default function PlayerProfilePage() {
       if (!playerId) return;
       setTeamsLoading(true);
       try {
-        // よくある中間テーブル候補（存在するものを使う）
         const membershipCandidates = [
           { table: 'team_members', playerCol: 'player_id', teamCol: 'team_id', roleCol: 'role' },
           { table: 'players_teams', playerCol: 'player_id', teamCol: 'team_id', roleCol: null },
@@ -134,7 +126,6 @@ export default function PlayerProfilePage() {
         let lastErr: any = null;
 
         for (const c of membershipCandidates) {
-          // role が無ければ team_id のみ選択
           const sel = c.roleCol ? `${c.teamCol}, ${c.roleCol}` : `${c.teamCol}`;
           const { data, error } = await (supabase.from(c.table) as any)
             .select(sel)
@@ -151,7 +142,6 @@ export default function PlayerProfilePage() {
           }
         }
 
-        // 候補すべてダメでも、UIは「所属なし」で続行
         const ids: string[] = (memberRows ?? [])
           .map((r) => r.team_id)
           .filter((v): v is string => typeof v === 'string' && v.length > 0);
@@ -165,21 +155,17 @@ export default function PlayerProfilePage() {
           return;
         }
 
-        // teams 情報を取得
         const { data: teamRows, error: tErr } = await (supabase.from('teams') as any)
           .select('id, name, avatar_url')
           .in('id', ids);
         if (tErr) throw tErr;
 
-        const teamsRaw = (teamRows ?? []) as Team[];
-
-        // role を結合
         const roleMap = new Map<string, string | null>();
         (memberRows ?? []).forEach((r) => {
           if (r.team_id) roleMap.set(r.team_id, r.role ?? null);
         });
 
-        const merged: TeamWithRole[] = teamsRaw.map((t) => ({
+        const merged: TeamWithRole[] = (teamRows ?? []).map((t: any) => ({
           ...t,
           role: roleMap.get(t.id) ?? null,
         }));
@@ -233,10 +219,9 @@ export default function PlayerProfilePage() {
 
         {!loading && !error && player && (
           <div className="max-w-5xl mx-auto space-y-6 sm:space-y-8">
-            {/* ── ヒーロー：巨大ランク＋基本情報 ── */}
+            {/* ── ヒーロー ── */}
             <div className="glass-card rounded-2xl p-6 sm:p-8 border border-purple-500/30">
               <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8">
-                {/* Huge Rank */}
                 <div className="shrink-0">
                   <HugeRankBadge rank={rank} />
                   <div className="text-center mt-2 text-xs sm:text-sm text-gray-400">
@@ -244,7 +229,6 @@ export default function PlayerProfilePage() {
                   </div>
                 </div>
 
-                {/* 名前＋RP/HC（特大表示） */}
                 <div className="flex-1 w-full">
                   <div className="flex items-center gap-4 sm:gap-5">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -260,7 +244,6 @@ export default function PlayerProfilePage() {
                     </div>
                   </div>
 
-                  {/* RP / HC を特大で */}
                   <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4">
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
                       <div className="flex items-center justify-center gap-2 text-purple-200 mb-1">
@@ -282,7 +265,6 @@ export default function PlayerProfilePage() {
                     </div>
                   </div>
 
-                  {/* 勝利/敗北/勝率（Rank数値より小さい= text-2xl） */}
                   <div className="mt-5 grid grid-cols-3 gap-3 sm:gap-4">
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
                       <div className="text-2xl font-extrabold text-green-400">
@@ -298,13 +280,12 @@ export default function PlayerProfilePage() {
                     </div>
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
                       <div className="text-2xl font-extrabold text-blue-400">
-                        {wr}%
+                        {winRateOf(player)}%
                       </div>
                       <div className="text-xs sm:text-sm text-gray-400">勝率</div>
                     </div>
                   </div>
 
-                  {/* 勝率バー */}
                   <div className="mt-3 sm:mt-4">
                     <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
                       <div
@@ -326,7 +307,7 @@ export default function PlayerProfilePage() {
               </div>
             </div>
 
-            {/* ── 所属チーム ─────────────────────────────────── */}
+            {/* ── 所属チーム ── */}
             <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
               <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5 flex items-center gap-2">
                 <FaUsers className="text-purple-300" />
@@ -363,11 +344,30 @@ export default function PlayerProfilePage() {
               )}
             </div>
 
-            {/* ── 直近の試合（簡易） ──────────────────────────── */}
+            {/* ── 直近の試合 ── */}
             <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
-              <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5">
-                直近の試合
-              </h2>
+              {/* 見出し＋右肩リンク（常時表示／モバイルで折り返し可） */}
+              <div className="mb-4 sm:mb-5 flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="text-lg sm:text-xl font-bold text-yellow-100">
+                  直近の試合
+                </h2>
+                <div className="flex items-center gap-4">
+                  <Link
+                    href={`/players/${player.id}/matches`}
+                    className="text-sm sm:text-base text-purple-300 hover:text-purple-200 underline underline-offset-4"
+                    data-testid="all-matches-link"
+                    aria-label="このプレイヤーの全ての試合を見る"
+                  >
+                    全ての試合を見る →
+                  </Link>
+                  <Link
+                    href="/matches"
+                    className="inline-flex items-center gap-2 text-sm sm:text-base text-purple-300 hover:text-purple-200"
+                  >
+                    <FaTrophy /> 試合結果一覧へ
+                  </Link>
+                </div>
+              </div>
 
               {(!matches || matches.length === 0) && (
                 <div className="text-gray-400">まだ試合がありません。</div>
@@ -423,7 +423,6 @@ export default function PlayerProfilePage() {
                           </div>
                         </div>
 
-                        {/* 相手プロフィールリンク */}
                         {oppId && (
                           <div className="mt-1 text-right">
                             <Link
@@ -439,15 +438,6 @@ export default function PlayerProfilePage() {
                   })}
                 </div>
               )}
-
-              <div className="mt-4 text-right">
-                <Link
-                  href="/matches"
-                  className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
-                >
-                  <FaTrophy /> 試合結果一覧へ
-                </Link>
-              </div>
             </div>
           </div>
         )}
