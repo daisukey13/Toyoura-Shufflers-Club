@@ -43,6 +43,7 @@ function LoginPageInner() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // 既存の redirect クエリは「一般ユーザーのときのみ」使います（管理者は常に /admin/dashboard 優先）
   const DEFAULT_AFTER_LOGIN = '/mypage';
   const redirectQ = mounted ? (searchParams.get('redirect') ?? '') : '';
   const hasRedirect = !!(redirectQ && redirectQ !== '/login');
@@ -64,7 +65,10 @@ function LoginPageInner() {
       process.env.NEXT_PUBLIC_ADMIN_EMAIL ||
       'daisukeyud@gmail.com';
     return new Set(
-      raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+      raw
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
     );
   }, []);
   const isForcedAdmin = useCallback(
@@ -83,7 +87,7 @@ function LoginPageInner() {
   const tokenTimeRef = useRef<number>(0);
   const TOKEN_TTL_MS = 110 * 1000;
 
-  /** whoami → 既ログイン検出時、強制的に管理者判定して転送 */
+  /** whoami → 既ログイン検出。管理者なら即ダッシュボードへ（一般ユーザーは自動遷移しない） */
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
@@ -95,23 +99,23 @@ function LoginPageInner() {
         setAlreadyAuthed(!!j?.authenticated);
 
         if (j?.authenticated) {
-          // 現在ユーザーの email を取得し、強制転送判定
           const { data: gu } = await supabase.auth.getUser();
-          const currentEmail = gu?.user?.email ?? '';
-          if (isForcedAdmin(currentEmail)) {
+          const currentEmail = gu?.user?.email?.toLowerCase() || '';
+          if (currentEmail && isForcedAdmin(currentEmail)) {
             router.replace('/admin/dashboard');
-            return;
           }
-          if (hasRedirect) router.replace(redirectSafe);
+          // ※ 一般ユーザーはここで自動遷移しない（/mypage に飛ばすレースを防止）
         }
       } catch {
         if (!cancelled) setAlreadyAuthed(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [mounted, supabase, isForcedAdmin, hasRedirect, redirectSafe, router]);
+    return () => {
+      cancelled = true;
+    };
+  }, [mounted, supabase, isForcedAdmin, router]);
 
-  /** Turnstile util（declare global 回避） */
+  /** Turnstile window 参照（型定義の衝突回避のため any で扱う） */
   const getT = () =>
     (window as any).turnstile as
       | {
@@ -232,7 +236,8 @@ function LoginPageInner() {
   /** 最新 Turnstile token */
   const getFreshToken = useCallback(() => {
     const T = getT();
-    const fromWidget = (widgetIdRef.current && T?.getResponse(widgetIdRef.current)) || '';
+    const fromWidget =
+      (widgetIdRef.current && T?.getResponse(widgetIdRef.current)) || '';
     const token = fromWidget || cfToken || '';
     if (!token) return '';
     const age = Date.now() - tokenTimeRef.current;
@@ -290,19 +295,7 @@ function LoginPageInner() {
 
       if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
-      // 管理者メールなら即座にダッシュボードへ強制（redirect クエリより優先）
-      if (isForcedAdmin(loginEmail) || isForcedAdmin(data.user?.email || '')) {
-        router.replace('/admin/dashboard');
-        try {
-          const T = getT();
-          if (widgetIdRef.current && T) T.reset(widgetIdRef.current);
-        } catch {}
-        tokenTimeRef.current = 0;
-        setCfToken('');
-        return;
-      }
-
-      // Turnstile をリセット（通常ユーザー）
+      // Turnstile をリセット
       try {
         const T = getT();
         if (widgetIdRef.current && T) T.reset(widgetIdRef.current);
@@ -310,8 +303,9 @@ function LoginPageInner() {
       tokenTimeRef.current = 0;
       setCfToken('');
 
-      // 通常の遷移
-      await afterSuccessRedirect([loginEmail, data.user?.email || '']);
+      // ★ 入力メール と Supabase 側メール の両方で管理者判定
+      const effectiveEmails = [loginEmail, data.user?.email || ''];
+      await afterSuccessRedirect(effectiveEmails);
     } catch (err: any) {
       setError(err?.message || 'ログインに失敗しました');
     } finally {
@@ -329,8 +323,8 @@ function LoginPageInner() {
 
   if (!mounted || alreadyAuthed === null) return <Fallback />;
 
-  if (alreadyAuthed && !hasRedirect) {
-    // 既ログイン時は上の useEffect で管理者なら自動転送
+  if (alreadyAuthed) {
+    // 既ログイン時：管理者なら上の useEffect で自動遷移、一般ユーザーは選択肢を表示
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
