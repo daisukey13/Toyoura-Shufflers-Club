@@ -1,19 +1,35 @@
+// components/MobileCTAButtons.tsx
 'use client';
 
 import Link from 'next/link';
 import { useMemo } from 'react';
-import { FaUserPlus, FaGamepad, FaUsers, FaSignInAlt, FaCheck } from 'react-icons/fa';
+import {
+  FaUserPlus,
+  FaGamepad,
+  FaUsers,
+  FaSignInAlt,
+  FaCheck,
+} from 'react-icons/fa';
 import { useAuth } from '@/contexts/AuthContext';
 
-type Variant = 'primary' | 'pink' | 'orange' | 'teal' | 'success' | 'disabled';
+type Variant =
+  | 'primary'
+  | 'pink'
+  | 'orange'
+  | 'teal'
+  | 'success'
+  | 'disabled';
+
+/** ここでパスだけ簡単に変更できます */
+const SINGLES_URL = '/matches/register?type=singles';
+const TEAMS_URL   = '/matches/register?type=teams';
 
 function baseClasses(variant: Variant) {
   const common =
-    'w-full h-14 px-4 rounded-2xl flex items-center justify-between gap-3 shadow-lg ring-1 transition active:scale-[0.99]';
+    'w-full h-14 px-4 rounded-2xl flex items-center justify-between gap-3 shadow-lg ring-1 transition active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70';
   const left =
     'shrink-0 w-10 h-10 rounded-xl grid place-items-center text-white/90 shadow-inner';
-  const right =
-    'ml-auto text-sm font-semibold tracking-wide';
+  const right = 'ml-auto text-sm font-semibold tracking-wide';
   const label = 'text-[15px] font-semibold';
 
   const skin: Record<Variant, string> = {
@@ -40,7 +56,13 @@ function baseClasses(variant: Variant) {
     disabled: 'bg-white/10',
   };
 
-  return { common: `${common} ${skin[variant]}`, left, leftSkin: leftSkin[variant], right, label };
+  return {
+    common: `${common} ${skin[variant]}`,
+    left,
+    leftSkin: leftSkin[variant],
+    right,
+    label,
+  };
 }
 
 function CTAButton({
@@ -57,17 +79,28 @@ function CTAButton({
   disabled?: boolean;
 }) {
   const c = baseClasses(disabled ? 'disabled' : variant);
-  const Inner = (
+
+  const content = (
     <div className={c.common} aria-disabled={disabled}>
       <div className={`${c.left} ${c.leftSkin}`}>{icon}</div>
       <span className={`text-white ${c.label}`}>{text}</span>
-      <span className={`${c.right} text-white/90`}>→</span>
+      <span className={`${c.right} text-white/90`} aria-hidden>
+        →
+      </span>
     </div>
   );
-  if (disabled || !href) return <div>{Inner}</div>;
+
+  if (disabled || !href) {
+    return (
+      <div role="button" aria-disabled className="w-full">
+        {content}
+      </div>
+    );
+  }
+
   return (
-    <Link href={href} className="block">
-      {Inner}
+    <Link href={href} className="block" prefetch={false} aria-label={text}>
+      {content}
     </Link>
   );
 }
@@ -76,6 +109,7 @@ export default function MobileCTAButtons() {
   const { user, player, loading } = useAuth();
 
   const isLoggedIn = !!user;
+
   const loginLabel = useMemo(() => {
     if (loading) return '読み込み中…';
     if (isLoggedIn) return 'ログイン中';
@@ -91,7 +125,11 @@ export default function MobileCTAButtons() {
     return '/login';
   }, [loading, isLoggedIn, player?.is_admin]);
 
-  const loginVariant: Variant = loading ? 'disabled' : isLoggedIn ? 'success' : 'teal';
+  const loginVariant: Variant = loading
+    ? 'disabled'
+    : isLoggedIn
+    ? 'success'
+    : 'teal';
 
   return (
     <div className="mx-auto w-full max-w-xs sm:max-w-none sm:w-[28rem] space-y-3">
@@ -102,20 +140,26 @@ export default function MobileCTAButtons() {
         variant="primary"
       />
       <CTAButton
-        href="/matches/register/singles"
+        href={SINGLES_URL}
         icon={<FaGamepad className="text-xl" />}
         text="個人試合を登録"
         variant="pink"
       />
       <CTAButton
-        href="/matches/register/teams"
+        href={TEAMS_URL}
         icon={<FaUsers className="text-xl" />}
         text="チーム試合を登録"
         variant="orange"
       />
       <CTAButton
         href={loginHref}
-        icon={isLoggedIn ? <FaCheck className="text-xl" /> : <FaSignInAlt className="text-xl" />}
+        icon={
+          isLoggedIn ? (
+            <FaCheck className="text-xl" />
+          ) : (
+            <FaSignInAlt className="text-xl" />
+          )
+        }
         text={loginLabel}
         variant={loginVariant}
         disabled={loading}

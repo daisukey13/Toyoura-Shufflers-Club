@@ -218,3 +218,83 @@ body::before {
 }
 #mobile-menu-overlay { position: fixed !important; inset: 0 !important; z-index: 2147483645 !important; }
 #mobile-menu         { position: fixed !important; left: 0 !important; right: 0 !important; top: 0 !important; z-index: 2147483646 !important; }
+
+/* === Arcade theme tokens & utilities ========================= */
+@layer base {
+  :root {
+    --arcade-surface: 28 28 44;       /* #1c1c2c */
+    --arcade-panel:  36 36 58;        /* #24243a */
+    --glow-purple:  168 85 247;       /* #a855f7 */
+    --glow-pink:    236 72 153;       /* #ec4899 */
+    --glow-green:    34 197 94;       /* #22c55e */
+    --glow-blue:     59 130 246;      /* #3b82f6 */
+    --glow-gold:    234 179  8;       /* #eab308 */
+  }
+
+  /* 背景：暗いラバー調 + 著作権に触れない抽象パターン */
+  .bg-arcade {
+    background:
+      radial-gradient(1200px 600px at 100% -10%, rgba(168,85,247,.14) 0%, transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(236,72,153,.12) 0%, transparent 60%),
+      linear-gradient(180deg, rgba(255,255,255,.03), transparent 30%),
+      repeating-linear-gradient(  0deg, rgba(255,255,255,.02), rgba(255,255,255,.02) 2px, transparent 2px, transparent 28px),
+      repeating-linear-gradient( 90deg, rgba(255,255,255,.02), rgba(255,255,255,.02) 2px, transparent 2px, transparent 28px),
+      rgb(var(--arcade-surface));
+  }
+}
+
+@layer utilities {
+  /* 立体ボタンの共通化（内外シャドウ + 光沢帯） */
+  .btn-arcade {
+    @apply relative inline-flex items-center justify-center rounded-2xl font-bold text-white
+           transition-all select-none shadow-[0_8px_0_rgba(0,0,0,.35),0_0_0_1px_rgba(255,255,255,.06)_inset]
+           active:translate-y-[2px] active:shadow-[0_6px_0_rgba(0,0,0,.35),0_0_0_1px_rgba(255,255,255,.06)_inset];
+  }
+  .btn-arcade::after { /* 光沢 */
+    content: "";
+    position: absolute; inset: 0; border-radius: 1rem;
+    background: linear-gradient( to bottom, rgba(255,255,255,.25), rgba(255,255,255,0) 45% );
+    pointer-events: none;
+  }
+
+  /* カラーバリアント（派手めグラデ + ネオン外周） */
+  .btn-arcade--green {
+    background-image: linear-gradient(180deg, #34d399, #16a34a);
+    box-shadow:
+      0 0 24px rgba(var(--glow-green)/.35),
+      0 10px 0 rgba(0,0,0,.35),
+      inset 0 1px 0 rgba(255,255,255,.25);
+  }
+  .btn-arcade--blue {
+    background-image: linear-gradient(180deg, #60a5fa, #2563eb);
+    box-shadow:
+      0 0 24px rgba(var(--glow-blue)/.35),
+      0 10px 0 rgba(0,0,0,.35),
+      inset 0 1px 0 rgba(255,255,255,.25);
+  }
+  .btn-arcade--gold {
+    background-image: linear-gradient(180deg, #facc15, #d97706);
+    color: #1a1a1a;
+    text-shadow: 0 1px 0 rgba(255,255,255,.4);
+    box-shadow:
+      0 0 28px rgba(var(--glow-gold)/.35),
+      0 10px 0 rgba(0,0,0,.35),
+      inset 0 1px 0 rgba(255,255,255,.35);
+  }
+  .btn-arcade--magenta {
+    background-image: linear-gradient(180deg, #fb7185, #db2777);
+    box-shadow:
+      0 0 24px rgba(var(--glow-pink)/.35),
+      0 10px 0 rgba(0,0,0,.35),
+      inset 0 1px 0 rgba(255,255,255,.25);
+  }
+
+  /* パネル（event tile風の厚みと縁取り） */
+  .panel-arcade {
+    @apply rounded-2xl border border-white/10 bg-[rgb(var(--arcade-panel)/.75)] backdrop-blur
+           shadow-[0_12px_40px_rgba(0,0,0,.45),inset_0_1px_0_rgba(255,255,255,.08)];
+  }
+
+  /* 小さな数値を等幅で（タイマー/カウンタ） */
+  .tnum { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+}
