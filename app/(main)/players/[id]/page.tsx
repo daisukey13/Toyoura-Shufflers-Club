@@ -442,6 +442,12 @@ export default function PlayerProfilePage() {
 
               <div className="mt-4 text-right">
                 <Link
+                  href={`/players/${player.id}/matches`}
+                  className="inline-block mt-3 text-sm text-purple-400 hover:text-purple-300"
+                >
+                         全ての試合を見る →
+                </Link>
+                <Link
                   href="/matches"
                   className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
                 >
