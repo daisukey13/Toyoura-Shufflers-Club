@@ -1,32 +1,28 @@
+// app/(main)/players/[id]/matches/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { useParams, useSearchParams, useRouter } from 'next/navigation';
+import { FaArrowLeft, FaCalendar, FaChevronLeft, FaChevronRight } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
-import { FaArrowLeft, FaHistory, FaUsers, FaUser } from 'react-icons/fa';
 
-type MatchRow = {
+type MatchDetails = {
   id: string;
   match_date: string;
-  mode?: 'singles' | 'teams' | string | null;
-  // 個人戦
+  // singles想定のビュー(match_details)。存在しない項目はundefinedでもOKにしておく
   winner_id?: string | null;
   winner_name?: string | null;
+  winner_points_change?: number | null;
   loser_id?: string | null;
   loser_name?: string | null;
-  loser_score?: number | null;
-  winner_points_change?: number | null;
   loser_points_change?: number | null;
-  // 団体戦
-  winner_team_id?: string | null;
-  winner_team_name?: string | null;
-  loser_team_id?: string | null;
-  loser_team_name?: string | null;
-
-  is_tournament?: boolean | null;
-  tournament_name?: string | null;
-  venue?: string | null;
+  loser_score?: number | null;
+  // 互換
+  winner_avatar?: string | null;
+  winner_avatar_url?: string | null;
+  loser_avatar?: string | null;
+  loser_avatar_url?: string | null;
   notes?: string | null;
 };
 
@@ -36,74 +32,50 @@ export default function PlayerAllMatchesPage() {
   const { id: playerId } = useParams<{ id: string }>();
   const router = useRouter();
   const sp = useSearchParams();
-  const page = Math.max(1, Number(sp.get('p') || 1));
+  const pageParam = Math.max(1, parseInt(sp.get('page') || '1', 10) || 1);
 
-  const supabase = useMemo(() => createClient(), []);
+  const [items, setItems] = useState<MatchDetails[]>([]);
+  const [total, setTotal] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>('');
 
-  const [rows, setRows] = useState<MatchRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  // 所属チームIDを推定（存在するテーブルだけ使う）
-  async function resolveTeamIds(pid: string): Promise<string[]> {
-    const candidates = [
-      { table: 'team_members', player: 'player_id', team: 'team_id' },
-      { table: 'players_teams', player: 'player_id', team: 'team_id' },
-      { table: 'team_players', player: 'player_id', team: 'team_id' },
-      { table: 'memberships',  player: 'player_id', team: 'team_id' },
-    ] as const;
-
-    for (const c of candidates) {
-      const q = supabase.from(c.table as any).select(`${c.team}`).eq(c.player, pid);
-      const { data, error } = await q;
-      if (!error && Array.isArray(data) && data.length) {
-        return Array.from(
-          new Set<string>(data.map((r: any) => r?.[c.team]).filter(Boolean))
-        );
-      }
-    }
-    return [];
-  }
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)),
+    [total]
+  );
 
   useEffect(() => {
     let cancelled = false;
+    const supabase = createClient();
 
     (async () => {
+      if (!playerId) return;
       setLoading(true);
+      setError('');
+
       try {
-        const teamIds = await resolveTeamIds(playerId);
-
-        // or() で個人戦( winner/loser ) と 団体戦( 自チームが勝者/敗者 ) をまとめて取得
-        const conds = [
-          `winner_id.eq.${playerId}`,
-          `loser_id.eq.${playerId}`,
-        ];
-        if (teamIds.length) {
-          const quoted = teamIds.map((id) => `"${id}"`).join(',');
-          conds.push(`winner_team_id.in.(${quoted})`);
-          conds.push(`loser_team_id.in.(${quoted})`);
-        }
-
-        const from = (page - 1) * PAGE_SIZE;
+        const from = (pageParam - 1) * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
 
-        const { data, count, error } = await supabase
+        // singles用ビュー: match_details（winner/loserどちらでもヒット）
+        const q = supabase
           .from('match_details')
           .select('*', { count: 'exact' })
-          .or(conds.join(','))
+          .or(`winner_id.eq.${playerId},loser_id.eq.${playerId}`)
           .order('match_date', { ascending: false })
           .range(from, to);
 
+        const { data, count, error } = await q;
         if (error) throw error;
 
         if (!cancelled) {
-          setRows((data ?? []) as MatchRow[]);
+          setItems((data as any) ?? []);
           setTotal(count ?? 0);
         }
-      } catch (e) {
+      } catch (e: any) {
         if (!cancelled) {
-          console.error('[player matches] fetch error:', e);
-          setRows([]);
+          setError(e?.message || '読み込みに失敗しました');
+          setItems([]);
           setTotal(0);
         }
       } finally {
@@ -111,127 +83,165 @@ export default function PlayerAllMatchesPage() {
       }
     })();
 
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playerId, page]);
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    return () => {
+      cancelled = true;
+    };
+  }, [playerId, pageParam]);
 
   const gotoPage = (p: number) => {
-    const n = Math.min(totalPages, Math.max(1, p));
+    const safe = Math.min(Math.max(1, p), totalPages);
     const params = new URLSearchParams(sp.toString());
-    if (n === 1) params.delete('p'); else params.set('p', String(n));
-    router.replace(`?${params.toString()}`);
+    params.set('page', String(safe));
+    router.push(`/players/${playerId}/matches?${params.toString()}`);
   };
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
       <div className="container mx-auto px-4 py-6 sm:py-8">
+        {/* 戻る */}
         <div className="mb-4">
-          <Link href={`/players/${playerId}`} className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200">
+          <Link
+            href={`/players/${playerId}`}
+            className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
+          >
             <FaArrowLeft /> プロフィールへ戻る
           </Link>
         </div>
 
-        <div className="text-center mb-6 sm:mb-8">
-          <div className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-purple-600/20 border border-purple-500/40">
-            <FaHistory />
-            <span className="font-semibold">全ての試合</span>
-          </div>
-          <div className="mt-2 text-gray-400 text-sm">
-            合計 {total} 件（{PAGE_SIZE}件/ページ）
-          </div>
-        </div>
+        <div className="max-w-3xl mx-auto">
+          <div className="mb-6 sm:mb-8 flex items-end justify-between gap-3 flex-wrap">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-yellow-100">全ての試合</h1>
+              <p className="text-gray-400 text-sm mt-1">
+                1ページ {PAGE_SIZE}件・新しい順 / 合計 {total} 件
+              </p>
+            </div>
 
-        {/* 本体 */}
-        {loading ? (
-          <div className="glass-card rounded-xl p-6 text-center text-gray-400">読み込み中…</div>
-        ) : rows.length === 0 ? (
-          <div className="glass-card rounded-xl p-6 text-center text-gray-400">試合がありません。</div>
-        ) : (
-          <div className="space-y-3 sm:space-y-4">
-            {rows.map((m) => {
-              const isTeams = (m.mode === 'teams') || !!m.winner_team_name || !!m.loser_team_name;
-              const loserScore = m.loser_score ?? 0;
-              const date = new Date(m.match_date).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+            {/* ページャ（上） */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => gotoPage(pageParam - 1)}
+                disabled={pageParam <= 1 || loading}
+                className="px-3 py-2 rounded-lg bg-gray-800/60 border border-purple-500/30 disabled:opacity-50"
+              >
+                <FaChevronLeft />
+              </button>
+              <span className="text-sm text-gray-300">
+                {pageParam} / {totalPages}
+              </span>
+              <button
+                onClick={() => gotoPage(pageParam + 1)}
+                disabled={pageParam >= totalPages || loading}
+                className="px-3 py-2 rounded-lg bg-gray-800/60 border border-purple-500/30 disabled:opacity-50"
+              >
+                <FaChevronRight />
+              </button>
+            </div>
+          </div>
 
-              return (
-                <div key={m.id} className="glass-card rounded-xl p-4 border border-purple-500/30">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400 mb-2">
-                    <span>{date}</span>
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${isTeams ? 'bg-yellow-500/15 text-yellow-300 border-yellow-400/30' : 'bg-purple-500/15 text-purple-200 border-purple-400/30'}`}>
-                      {isTeams ? <FaUsers /> : <FaUser />}
-                      {isTeams ? 'teams' : 'singles'}
-                    </span>
-                    {m.tournament_name && <span className="px-2 py-0.5 rounded-full border bg-amber-500/10 border-amber-400/30 text-amber-300">{m.tournament_name}</span>}
+          {/* ローディング/エラー */}
+          {loading && (
+            <div className="space-y-3">
+              {Array.from({ length: PAGE_SIZE }).map((_, i) => (
+                <div key={i} className="h-20 rounded-xl bg-white/5 animate-pulse" />
+              ))}
+            </div>
+          )}
+          {!loading && error && (
+            <div className="rounded-xl p-4 border border-red-500/40 bg-red-500/10">
+              読み込みエラー：{error}
+            </div>
+          )}
+          {!loading && !error && items.length === 0 && (
+            <div className="text-gray-400">該当する試合がありません。</div>
+          )}
+
+          {/* 一覧 */}
+          {!loading && !error && items.length > 0 && (
+            <div className="space-y-3">
+              {items.map((m) => {
+                const isWin = m.winner_id === playerId;
+                const oppName = isWin ? m.loser_name : m.winner_name;
+                const oppId = isWin ? m.loser_id : m.winner_id;
+
+                return (
+                  <div
+                    key={m.id}
+                    className={`rounded-xl p-3 sm:p-4 border transition-colors ${
+                      isWin
+                        ? 'bg-green-500/10 border-green-500/30'
+                        : 'bg-red-500/10 border-red-500/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs text-gray-400 flex items-center gap-1">
+                          <FaCalendar />
+                          {new Date(m.match_date).toLocaleString('ja-JP', {
+                            month: 'numeric',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </div>
+                        <div className="font-semibold text-yellow-100 truncate">
+                          {isWin ? '勝利' : '敗北'}：{oppName}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-lg sm:text-xl font-extrabold text-white">
+                          15 - {m.loser_score ?? 0}
+                        </div>
+                        <div
+                          className={`text-xs sm:text-sm ${
+                            isWin ? 'text-green-300' : 'text-red-300'
+                          }`}
+                        >
+                          {isWin ? '+' : ''}
+                          {isWin ? m.winner_points_change ?? 0 : m.loser_points_change ?? 0}pt
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 相手プロフィール */}
+                    {oppId && (
+                      <div className="mt-1 text-right">
+                        <Link
+                          href={`/players/${oppId}`}
+                          className="text-purple-300 hover:text-purple-200 text-xs sm:text-sm"
+                        >
+                          相手プロフィール →
+                        </Link>
+                      </div>
+                    )}
                   </div>
+                );
+              })}
+            </div>
+          )}
 
-                  {!isTeams ? (
-                    <div className="grid sm:grid-cols-3 items-center gap-3">
-                      <Link href={`/players/${m.winner_id ?? ''}`} className="block rounded-lg p-3 bg-green-500/10 border border-green-500/30 hover:border-green-400/50">
-                        <div className="font-semibold text-yellow-100 truncate">{m.winner_name}</div>
-                        <div className="text-xs text-green-400">勝利</div>
-                      </Link>
-
-                      <div className="text-center">
-                        <div className={`inline-flex items-center justify-center w-12 h-12 rounded-full ${ (15 - loserScore) >= 10 ? 'bg-gradient-to-r from-red-500/80 to-red-600/80' : 'bg-gradient-to-r from-blue-500/80 to-blue-600/80'}`}>
-                          <span className="text-white font-bold">VS</span>
-                        </div>
-                        <div className="text-xs text-gray-400 mt-1">15 - {loserScore}</div>
-                      </div>
-
-                      <Link href={`/players/${m.loser_id ?? ''}`} className="block rounded-lg p-3 bg-red-500/10 border border-red-500/30 hover:border-red-400/50">
-                        <div className="font-semibold text-yellow-100 truncate">{m.loser_name}</div>
-                        <div className="text-xs text-red-400">敗北</div>
-                      </Link>
-                    </div>
-                  ) : (
-                    <div className="grid sm:grid-cols-3 items-center gap-3">
-                      <Link href={`/teams/${m.winner_team_id ?? ''}`} className="block rounded-lg p-3 bg-green-500/10 border border-green-500/30 hover:border-green-400/50">
-                        <div className="font-semibold text-yellow-100 truncate">{m.winner_team_name}</div>
-                        <div className="text-xs text-green-400">勝利</div>
-                      </Link>
-
-                      <div className="text-center">
-                        <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-r from-blue-500/80 to-blue-600/80">
-                          <span className="text-white font-bold">VS</span>
-                        </div>
-                        <div className="text-xs text-gray-400 mt-1">15 - {loserScore}</div>
-                      </div>
-
-                      <Link href={`/teams/${m.loser_team_id ?? ''}`} className="block rounded-lg p-3 bg-red-500/10 border border-red-500/30 hover:border-red-400/50">
-                        <div className="font-semibold text-yellow-100 truncate">{m.loser_team_name}</div>
-                        <div className="text-xs text-red-400">敗北</div>
-                      </Link>
-                    </div>
-                  )}
-
-                  {m.notes && <div className="mt-2 text-xs text-gray-300">{m.notes}</div>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ページャ */}
-        <div className="mt-6 flex items-center justify-between">
-          <button
-            onClick={() => gotoPage(page - 1)}
-            disabled={page <= 1}
-            className="px-4 py-2 rounded-lg border border-purple-500/30 disabled:opacity-50"
-          >
-            前へ
-          </button>
-          <div className="text-sm text-gray-300">
-            {page} / {totalPages}
-          </div>
-          <button
-            onClick={() => gotoPage(page + 1)}
-            disabled={page >= totalPages}
-            className="px-4 py-2 rounded-lg border border-purple-500/30 disabled:opacity-50"
-          >
-            次へ
-          </button>
+          {/* ページャ（下） */}
+          {!loading && totalPages > 1 && (
+            <div className="mt-6 sm:mt-8 flex items-center justify-center gap-2">
+              <button
+                onClick={() => gotoPage(pageParam - 1)}
+                disabled={pageParam <= 1}
+                className="px-4 py-2 rounded-lg bg-gray-800/60 border border-purple-500/30 disabled:opacity-50"
+              >
+                <FaChevronLeft /> 前へ
+              </button>
+              <span className="text-sm text-gray-300">
+                {pageParam} / {totalPages}
+              </span>
+              <button
+                onClick={() => gotoPage(pageParam + 1)}
+                disabled={pageParam >= totalPages}
+                className="px-4 py-2 rounded-lg bg-gray-800/60 border border-purple-500/30 disabled:opacity-50"
+              >
+                次へ <FaChevronRight />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
