@@ -307,8 +307,40 @@ export default function HomePage() {
   const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
     href ? <Link href={href}>{children}</Link> : <div>{children}</div>;
 
+  /** 個人戦アバターの安全な取得 */
   const winnerAvatarOf = (m: RecentMatch) => m.winner_avatar ?? m.winner_avatar_url ?? null;
   const loserAvatarOf = (m: RecentMatch) => m.loser_avatar ?? m.loser_avatar_url ?? null;
+
+  /** ▲ 抜けていたコンポーネントを追加：団体戦メンバーの横並び表示 */
+  const TeamMembersInline = ({ teamId }: { teamId?: string | null }) => {
+    const members = useMemo(() => {
+      if (!teamId) return [] as MemberLite[];
+      return teamMembersMap[teamId] ?? [];
+    }, [teamId, teamMembersMap]);
+
+    if (!teamId || members.length === 0) return null;
+
+    return (
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {members.map((mem) => (
+          <div
+            key={mem.id}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-gray-900/40"
+          >
+            <AvatarImg
+              src={mem.avatar_url}
+              alt={mem.handle_name}
+              size={20}
+              className="w-5 h-5 rounded-full border border-purple-500 object-cover"
+            />
+            <span className="text-[11px] text-gray-200 max-w-[6.5rem] truncate">
+              {mem.handle_name}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen">
@@ -534,7 +566,7 @@ export default function HomePage() {
                       {rank}
                     </div>
                     {rank === 1 && (
-                      <div className="absolute -top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-400 text-gray-900 text-xs font-bold shadow">
+                      <div className="absolute -top-4 left-1/2 -translate-x-1/2 flex items中心 gap-2 px-3 py-1 rounded-full bg-yellow-400 text-gray-900 text-xs font-bold shadow">
                         <FaCrown />
                         CHAMPION
                       </div>
@@ -560,7 +592,7 @@ export default function HomePage() {
                     </div>
                     <div
                       className={[
-                        'w-full mt-4 rounded-lg bg-gradient-to-b from-white/5 to-transparent',
+                        'w-full mt-4 rounded-lg bg-gradient-to-b from白/5 to-transparent',
                         rank === 1 ? 'h-16' : rank === 2 ? 'h-12' : rank === 3 ? 'h-11' : rank === 4 ? 'h-9' : 'h-8',
                       ].join(' ')}
                     />
@@ -686,7 +718,7 @@ export default function HomePage() {
                     <MaybeLink href={loserHref}>
                       <div className="flex items-start gap-3 p-2.5 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 hover:border-red-400/50 transition">
                         <div className="flex-1 min-w-0 order-2 sm:order-1 text-right">
-                          <div className="font-semibold text-yellow-100 truncate">{loserName}</div>
+                          <div className="font-semibold text黄色-100 truncate">{loserName}</div>
                           <div className="text-xs text-red-400">敗北</div>
                           {team && <TeamMembersInline teamId={m.loser_team_id} />}
                         </div>
