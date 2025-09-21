@@ -3,17 +3,8 @@
 
 import { useEffect, useRef } from 'react';
 
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (el: HTMLElement, opts: any) => string;
-      remove: (id: string) => void;
-    };
-  }
-}
-
 type Props = {
-  siteKey: string;                 // 例: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!
+  siteKey: string;
   onVerify: (token: string) => void;
   action?: string;
   cData?: string;
@@ -21,6 +12,11 @@ type Props = {
   className?: string;
 };
 
+/**
+ * Cloudflare Turnstile（1回だけ描画）
+ * - グローバル型は再宣言しない（既存の型と衝突するため）
+ * - 実体は any 経由で安全に呼び出す
+ */
 export default function TurnstileOnce({
   siteKey,
   onVerify,
@@ -30,43 +26,57 @@ export default function TurnstileOnce({
   className,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const widgetIdRef  = useRef<string | null>(null);
-  const renderedRef  = useRef(false);
+  const widgetIdRef = useRef<string | null>(null);
+  const renderedRef = useRef(false);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // スクリプトを一度だけ挿入
     const SCRIPT_ID = 'cf-turnstile-api';
-    if (!document.getElementById(SCRIPT_ID)) {
-      const s = document.createElement('script');
-      s.id = SCRIPT_ID;
-      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-      s.async = true;
-      s.defer = true;
-      document.head.appendChild(s);
+    let script = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
+    if (!script) {
+      script = document.createElement('script');
+      script.id = SCRIPT_ID;
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
     }
 
-    const tick = setInterval(() => {
-      // 既に描画済み or API未ロード or DOM無し → 何もしない
-      if (renderedRef.current || !window.turnstile || !containerRef.current) return;
+    // API 出現をポーリングして 1 回だけ render
+    const poll = setInterval(() => {
+      const t: any = (window as any).turnstile;
+      if (!t || !containerRef.current || renderedRef.current) return;
 
       renderedRef.current = true;
-      widgetIdRef.current = window.turnstile.render(containerRef.current, {
+      const maybeId = t.render(containerRef.current, {
         sitekey: siteKey,
         theme,
         action,
         cData,
         callback: (token: string) => onVerify(token),
-        'error-callback': () => { /* 必要ならエラー表示 */ },
-        'expired-callback': () => { /* 必要なら再検証依頼 */ },
+        'error-callback': () => {},
+        'expired-callback': () => {},
       });
 
-      clearInterval(tick);
+      // 型定義によっては render の戻り値が void になっている場合があるので安全に格納
+      widgetIdRef.current = typeof maybeId === 'string' ? maybeId : null;
+
+      clearInterval(poll);
     }, 50);
 
     return () => {
-      clearInterval(tick);
-      // アンマウント時はウィジェット破棄（StrictModeでも安全）
-      if (widgetIdRef.current && window.turnstile) {
-        try { window.turnstile.remove(widgetIdRef.current); } catch {}
+      clearInterval(poll);
+      const t: any = (window as any).turnstile;
+      const id = widgetIdRef.current;
+
+      if (!t) return;
+      // どちらが存在してもクリーンアップできるように分岐
+      if (id && typeof t.remove === 'function') {
+        try { t.remove(id); } catch {}
+      } else if (typeof t.reset === 'function') {
+        try { t.reset(id); } catch {}
       }
     };
   }, [siteKey, onVerify, action, cData, theme]);
