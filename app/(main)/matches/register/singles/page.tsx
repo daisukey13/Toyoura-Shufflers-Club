@@ -11,6 +11,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
 
+/* ───────────────────────────── Types ───────────────────────────── */
 type Player = {
   id: string;
   handle_name: string;
@@ -18,12 +19,9 @@ type Player = {
   handicap: number;
   avatar_url?: string | null;
 };
+type PlayerAdminRow = { id: string; is_admin: boolean | null };
 
-type PlayerAdminRow = {
-  id: string;
-  is_admin: boolean | null;
-};
-
+/* ───────────────────────────── Helpers ───────────────────────────── */
 async function parseRestError(res: Response) {
   let msg = `HTTP ${res.status}`;
   try {
@@ -41,26 +39,42 @@ const toInt = (v: string | number, fb = 0) => {
   const n = typeof v === 'number' ? v : parseInt(String(v), 10);
   return Number.isFinite(n) ? n : fb;
 };
+/** datetime-local 用：ローカルタイムの初期値（YYYY-MM-DDTHH:mm） */
+function nowLocalDatetime() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
 
+/* ───────────────────────────── Page ───────────────────────────── */
 export default function SinglesRegisterPage() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
-  // ログイン判定（サーバ Cookie ベース）
+  // 認証状態（Supabase 直読み・/auth/whoami 依存を排除）
   const [authed, setAuthed] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
-        const r = await fetch('/auth/whoami', { cache: 'no-store', credentials: 'include' });
-        const j = r.ok ? await r.json() : { authenticated: false };
-        if (alive) setAuthed(!!j?.authenticated);
+        const { data } = await supabase.auth.getUser();
+        if (alive) setAuthed(!!data?.user);
       } catch {
         if (alive) setAuthed(false);
       }
     })();
-    return () => { alive = false; };
-  }, []);
+
+    // auth の変化も追従
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      setAuthed(!!session?.user);
+    });
+
+    return () => {
+      alive = false;
+      sub?.subscription?.unsubscribe?.();
+    };
+  }, [supabase]);
 
   // 自分のプレイヤーID & 管理者判定
   const [me, setMe] = useState<{ id: string; is_admin: boolean } | null>(null);
@@ -78,23 +92,18 @@ export default function SinglesRegisterPage() {
         .eq('id', user.id)
         .single<PlayerAdminRow>();
 
-      if (rowErr) {
-        // 取得失敗時は is_admin=false 扱いで継続
-        if (alive) setMe({ id: user.id, is_admin: false });
-        return;
-      }
-
-      if (alive) setMe({ id: user.id, is_admin: Boolean(row?.is_admin) });
+      // 取得失敗時は is_admin=false 扱いで継続
+      if (alive) setMe({ id: user.id, is_admin: !rowErr && Boolean(row?.is_admin) });
     })();
     return () => { alive = false; };
   }, [authed, supabase]);
 
-  // プレイヤー一覧（認証後）
+  // プレイヤー一覧（認証後のみ）
   const { players = [], loading: playersLoading, error: playersError } =
     useFetchPlayersData({ enabled: authed === true, requireAuth: true });
 
   // UI 状態
-  const [matchDate, setMatchDate] = useState(new Date().toISOString().slice(0, 16));
+  const [matchDate, setMatchDate] = useState(nowLocalDatetime());
   const [opponentId, setOpponentId] = useState('');
   const [iWon, setIWon] = useState(true);
   const [loserScore, setLoserScore] = useState(0); // 0-14
@@ -121,6 +130,10 @@ export default function SinglesRegisterPage() {
     try {
       if (authed !== true || !me?.id) throw new Error('ログインが必要です');
 
+      // HTML の datetime-local はローカル時刻で返るため、そのまま文字列で API へ
+      const when = String(matchDate || '').trim();
+      if (!when) throw new Error('試合日時を入力してください');
+
       let payload: any;
 
       if (adminMode && me.is_admin) {
@@ -133,7 +146,7 @@ export default function SinglesRegisterPage() {
         }
         payload = {
           mode: 'singles',
-          match_date: matchDate,
+          match_date: when,
           winner_id: winnerIdAdmin,
           loser_id: loserIdAdmin,
           loser_score: loserScore,
@@ -149,7 +162,7 @@ export default function SinglesRegisterPage() {
 
         payload = {
           mode: 'singles',
-          match_date: matchDate,
+          match_date: when,
           winner_id,
           loser_id,
           loser_score: loserScore,
@@ -159,7 +172,7 @@ export default function SinglesRegisterPage() {
       const res = await fetch('/api/matches', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
         body: JSON.stringify(payload),
       });
 
@@ -182,7 +195,7 @@ export default function SinglesRegisterPage() {
     }
   };
 
-  // 画面表示
+  /* ─────────── 画面表示 ─────────── */
   if (authed === null) {
     return (
       <div className="min-h-screen grid place-items-center p-8">
@@ -228,13 +241,18 @@ export default function SinglesRegisterPage() {
       </div>
 
       {/* エラー/成功 */}
-      {error && (
+      {playersError && (
         <div className="glass-card rounded-md p-3 mb-4 border border-red-500/40 bg-red-500/10">
+          <p className="text-red-300 text-sm">プレイヤー一覧の取得に失敗しました。時間をおいて再度お試しください。</p>
+        </div>
+      )}
+      {error && (
+        <div className="glass-card rounded-md p-3 mb-4 border border-red-500/40 bg-red-500/10" aria-live="polite">
           <p className="text-red-300 text-sm">{error}</p>
         </div>
       )}
       {success && (
-        <div className="glass-card rounded-md p-3 mb-4 border border-green-500/40 bg-green-500/10">
+        <div className="glass-card rounded-md p-3 mb-4 border border-green-500/40 bg-green-500/10" aria-live="polite">
           <p className="text-green-300 text-sm">🎉 登録しました。まもなく一覧へ移動します…</p>
         </div>
       )}
@@ -279,7 +297,7 @@ export default function SinglesRegisterPage() {
                     className="w-full px-3 py-2 bg-purple-900/30 border border-amber-500/30 rounded-lg text-yellow-100"
                   >
                     <option value="">選択してください</option>
-                    {players.map((p: any) => (
+                    {(players as Player[]).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.handle_name}
                       </option>
@@ -294,7 +312,7 @@ export default function SinglesRegisterPage() {
                     className="w-full px-3 py-2 bg-purple-900/30 border border-amber-500/30 rounded-lg text-yellow-100"
                   >
                     <option value="">選択してください</option>
-                    {players.map((p: any) => (
+                    {(players as Player[]).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.handle_name}
                       </option>
