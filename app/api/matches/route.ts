@@ -35,44 +35,33 @@ type Body = SinglesPayload | TeamsPayload;
 
 /* ===================== Helpers ===================== */
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-const toInt = (v: unknown, fallback = 0) => {
+const toInt = (v: unknown, fb = 0) => {
   const n = typeof v === 'number' ? v : parseInt(String(v), 10);
-  return Number.isFinite(n) ? n : fallback;
+  return Number.isFinite(n) ? n : fb;
 };
-const isPgCode = (err: unknown, code: string) =>
-  String((err as any)?.message ?? (err as any)?.code ?? err ?? '').includes(code);
+const hasSrv = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-/** ELO風の変動（個人戦のみ） */
 function calcDelta(
-  winnerPoints: number,
-  loserPoints: number,
-  winnerHandicap: number,
-  loserHandicap: number,
-  scoreDifference: number // 15 - loser_score
+  wPts: number, lPts: number, wH: number, lH: number, scoreDiff: number
 ) {
   const K = 32;
-  const expectedWinner = 1 / (1 + Math.pow(10, (loserPoints - winnerPoints) / 400));
-  const scoreDiffMultiplier = 1 + scoreDifference / 30;
-  const handicapDiff = winnerHandicap - loserHandicap;
-  const handicapMultiplier = 1 + handicapDiff / 50;
-
-  const baseWinnerChange = K * (1 - expectedWinner) * scoreDiffMultiplier * handicapMultiplier;
-  const baseLoserChange = -K * expectedWinner * scoreDiffMultiplier;
-
-  const winnerHandicapChange = scoreDifference >= 10 ? -1 : 0;
-  const loserHandicapChange = scoreDifference >= 10 ? 1 : 0;
-
+  const expW = 1 / (1 + Math.pow(10, (lPts - wPts) / 400));
+  const diffMul = 1 + scoreDiff / 30;
+  const hcMul = 1 + (wH - lH) / 50;
+  const wChange = K * (1 - expW) * diffMul * hcMul;
+  const lChange = -K * expW * diffMul;
+  const wHc = scoreDiff >= 10 ? -1 : 0;
+  const lHc = scoreDiff >= 10 ? 1 : 0;
   return {
-    winnerPointsChange: Math.round(baseWinnerChange),
-    loserPointsChange: Math.round(baseLoserChange),
-    winnerHandicapChange,
-    loserHandicapChange,
+    winnerPointsChange: Math.round(wChange),
+    loserPointsChange: Math.round(lChange),
+    winnerHandicapChange: wHc,
+    loserHandicapChange: lHc,
   };
 }
 
-/** service-role がある時だけ reporter の players を用意 */
 async function ensureReporterPlayerIfAdmin(reporterId: string, displayName: string | null) {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return;
+  if (!hasSrv) return;
   const { data } = await supabaseAdmin
     .from('players')
     .select('id')
@@ -99,32 +88,29 @@ async function ensureReporterPlayerIfAdmin(reporterId: string, displayName: stri
   if (error) throw new Error(`reporter の players 作成に失敗: ${error.message}`);
 }
 
-/** reporter が admin か（service-role が無ければ false） */
-async function isAdminPlayer(reporterId: string): Promise<boolean> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return false;
+async function isAdminPlayer(playerId: string): Promise<boolean> {
+  if (!hasSrv) return false;
   const { data } = await supabaseAdmin
     .from('players')
     .select('is_admin')
-    .eq('id', reporterId)
+    .eq('id', playerId)
     .maybeSingle();
   return Boolean(data?.is_admin);
 }
 
-/** service-role ありの時だけ厳密にチェック（無ければ false のままでもOK） */
-async function isMemberOfTeam(reporterId: string, teamId: string): Promise<boolean> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return false;
+async function isMemberOfTeam(playerId: string, teamId: string): Promise<boolean> {
+  if (!hasSrv) return false;
   const candidates = [
     { table: 'team_members', playerCol: 'player_id', teamCol: 'team_id' },
     { table: 'players_teams', playerCol: 'player_id', teamCol: 'team_id' },
     { table: 'team_players', playerCol: 'player_id', teamCol: 'team_id' },
     { table: 'memberships',  playerCol: 'player_id', teamCol: 'team_id' },
   ] as const;
-
   for (const c of candidates) {
     const { data, error } = await supabaseAdmin
       .from(c.table)
       .select('team_id')
-      .eq(c.playerCol, reporterId)
+      .eq(c.playerCol, playerId)
       .eq(c.teamCol, teamId)
       .limit(1);
     if (!error && data && data.length > 0) return true;
@@ -132,49 +118,84 @@ async function isMemberOfTeam(reporterId: string, teamId: string): Promise<boole
   return false;
 }
 
-/** 列不一致に強い INSERT（指定カラムを順に落として再試行） */
-async function tryInsertWithFallback(
-  client: any,               // supabase client（admin でも user でも可）
-  table: string,
-  values: Record<string, any>,
-  dropCandidatesInOrder: string[],
-  selectCols = 'id'
+/** スキーマ差異に強い “スマート挿入”（列欠如・NOT NULL・enum 違反に順次フォールバック） */
+async function smartInsertMatches(
+  client: any,
+  initialRow: Record<string, any>,
+  modeAlternatives: string[],   // 例: ['player','singles','single']
 ): Promise<{ id: string }> {
-  const tried: string[] = [];
-  let payload = { ...values };
+  // 挿入試行のたびに row をコピーして改変
+  let row = { ...initialRow };
+  let modeIdx = 0;
+  const triedDrop = new Set<string>();
+  let safety = 0;
 
-  for (let i = 0; i <= dropCandidatesInOrder.length; i++) {
-    const { data, error } = await client.from(table).insert(payload).select(selectCols).single();
-    if (!error && data) return data as any;
+  // 最多 12 回程度で打ち切り（無限ループ防止）
+  while (safety++ < 12) {
+    const { data, error } = await client.from('matches').insert(row).select('id').single();
+
+    if (!error && data) return { id: data.id as string };
 
     const msg = String(error?.message || '').toLowerCase();
-    const cant = dropCandidatesInOrder.find(
-      (c) => !tried.includes(c) && (msg.includes(`column "${c}"`) || msg.includes(`"${c}"`))
-    );
-    if (cant) {
-      tried.push(cant);
-      delete (payload as any)[cant];
+
+    // 1) enum/チェック制約: mode 値の不一致
+    if ((/invalid input value for enum/i.test(error?.message || '') || /violates check constraint/i.test(error?.message || ''))
+        && 'mode' in row
+        && modeIdx + 1 < modeAlternatives.length) {
+      modeIdx += 1;
+      row = { ...row, mode: modeAlternatives[modeIdx] };
       continue;
     }
-    throw error ?? new Error('insert failed');
+
+    // 2) 未定義列 → その列を落として再試行
+    //    例: column "status" of relation "matches" does not exist
+    const colNotExist = /column "([^"]+)" .* does not exist/i.exec(error?.message || '');
+    if (colNotExist) {
+      const bad = colNotExist[1];
+      if (bad in row && !triedDrop.has(bad)) {
+        triedDrop.add(bad);
+        const { [bad]: _, ...rest } = row;
+        row = rest;
+        continue;
+      }
+    }
+
+    // 3) NOT NULL 制約 → 推測できる既定値があれば埋めて再試行
+    //    例: null value in column "winner_team_no" violates not-null constraint
+    const notNull = /null value in column "([^"]+)"/i.exec(error?.message || '');
+    if (notNull) {
+      const col = notNull[1];
+      // 既に値があるなら推測不能 → 次へ
+      if (!(col in row) || row[col] == null) {
+        if (col === 'status') { row = { ...row, status: 'finalized' }; continue; }
+        if (col === 'winner_team_no') { row = { ...row, winner_team_no: 1 }; continue; }
+        if (col === 'loser_team_no')  { row = { ...row, loser_team_no: 2 }; continue; }
+        if (col === 'winner_score')   { row = { ...row, winner_score: 15 }; continue; }
+        if (col === 'loser_score')    { row = { ...row, loser_score: 0 }; continue; }
+        // reporter_id / created_by / author_id 系は reporter_id を流用できることが多い
+        if (/(reporter|created|author)_?id/i.test(col) && initialRow.reporter_id) {
+          row = { ...row, [col]: initialRow.reporter_id };
+          continue;
+        }
+      }
+    }
+
+    // 4) その他のエラーはそのまま投げる
+    throw error;
   }
-  throw new Error('insert failed after fallback');
+
+  throw new Error('insert failed after multiple fallbacks');
 }
 
-/** match_teams が無い場合のフォールバック（matches に直置き） */
+/** match_teams が無い/列が無い場合のフォールバック（matches に直置き） */
 async function fallbackWriteTeamsIntoMatches(
   client: any,
   matchId: string,
   winner_team_id: string,
   loser_team_id: string
 ) {
-  // 両方まとめて
-  let u = await client.from('matches')
-    .update({ winner_team_id, loser_team_id } as any)
-    .eq('id', matchId);
+  let u = await client.from('matches').update({ winner_team_id, loser_team_id } as any).eq('id', matchId);
   if (!u.error) return true;
-
-  // 片側ずつ
   await client.from('matches').update({ winner_team_id } as any).eq('id', matchId);
   await client.from('matches').update({ loser_team_id } as any).eq('id', matchId);
   return true;
@@ -193,9 +214,9 @@ export async function POST(req: NextRequest) {
     const cookieStore = cookies();
     const userClient = createServerClient(url, anon, {
       cookies: {
-        get(name: string) { return cookieStore.get(name)?.value; },
-        set(name: string, value: string, options?: any) { cookieStore.set({ name, value, ...(options || {}) } as any); },
-        remove(name: string, options?: any) { cookieStore.set({ name, value: '', ...(options || {}) } as any); },
+        get: (n: string) => cookieStore.get(n)?.value,
+        set: (n: string, v: string, o?: any) => cookieStore.set({ name: n, value: v, ...(o || {}) } as any),
+        remove: (n: string, o?: any) => cookieStore.set({ name: n, value: '', ...(o || {}) } as any),
       },
     } as any);
 
@@ -205,10 +226,7 @@ export async function POST(req: NextRequest) {
     }
     const reporter_id = userData.user.id;
 
-    const hasAdmin = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const db = hasAdmin ? supabaseAdmin : (userClient as any);
-
-    // 必要なら reporter の players 行を用意（service-role がある時のみ）
+    // players レコードは service-role がある時だけ補完
     await ensureReporterPlayerIfAdmin(
       reporter_id,
       (userData.user.user_metadata?.name as string | undefined) ||
@@ -217,8 +235,9 @@ export async function POST(req: NextRequest) {
     );
 
     const admin = await isAdminPlayer(reporter_id);
+    const db = hasSrv ? supabaseAdmin : (userClient as any);
 
-    // 入力
+    // 入力取得
     const body = (await req.json().catch(() => null)) as Partial<Body> | null;
     if (!body || !body.mode) {
       return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
@@ -245,7 +264,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一プレイヤーは選べません。' }, { status: 400 });
       }
 
-      // 一般ユーザーは自分が出場した試合のみ登録可（admin は除外）
       if (!admin && reporter_id !== winner_id && reporter_id !== loser_id) {
         return NextResponse.json(
           { ok: false, message: '自分が出場した試合のみ登録できます（管理者は除外）。' },
@@ -253,7 +271,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // レーティング更新用データ（失敗しても試合登録は続行）
+      // レーティング更新用の現値（service-role が無くても SELECT は通ることが多い）
       let w: any = null, l: any = null;
       try {
         const { data: players } = await db
@@ -264,37 +282,27 @@ export async function POST(req: NextRequest) {
         l = players?.find((p: any) => p.id === loser_id);
       } catch { /* noop */ }
 
-      const candidate = {
-        mode: 'player',
-        status: 'finalized',     // 無ければ落とす
+      const initialRow = {
+        mode: 'player',         // enum NG の場合は 'singles' → 'single' へ自動で切替
+        status: 'finalized',
         match_date,
-        reporter_id,             // 無ければ落とす
+        reporter_id,
         winner_id,
         loser_id,
-        winner_score,            // 無ければ落とす
+        winner_score,
         loser_score,
-        winner_team_no: 0,       // 無ければ落とす
-        loser_team_no: 0,        // 無ければ落とす
-        venue,                   // 無ければ落とす
-        notes,                   // 無ければ落とす
+        winner_team_no: 0,
+        loser_team_no: 0,
+        venue,
+        notes,
       };
 
-      const dropCols = [
-        'status',
-        'reporter_id',
-        'winner_team_no',
-        'loser_team_no',
-        'winner_score',
-        'venue',
-        'notes',
-      ];
-
       try {
-        const ins = await tryInsertWithFallback(db, 'matches', candidate, dropCols, 'id');
+        const ins = await smartInsertMatches(db, initialRow, ['player', 'singles', 'single']);
 
-        // レーティング反映（service-role があって players 更新可の時だけ）
+        // レーティング反映（service-role がある時のみ）
         const apply = (body as SinglesPayload).apply_rating ?? true;
-        if (apply && hasAdmin && w && l) {
+        if (apply && hasSrv && w && l) {
           const diff = 15 - loser_score;
           const delta = calcDelta(
             toInt(w.ranking_points, 0),
@@ -321,15 +329,18 @@ export async function POST(req: NextRequest) {
           if (ul.error) console.warn('[matches API] loser  update warning:', ul.error);
         }
 
-        return NextResponse.json({ ok: true, match_id: ins?.id }, { status: 201 });
+        return NextResponse.json({ ok: true, match_id: ins.id }, { status: 201 });
       } catch (e: any) {
         const msg = String(e?.message || e || '');
+        // RLS
         if (/row-level security|rls/i.test(msg)) {
-          return NextResponse.json({ ok: false, message: 'データベースの権限（RLS）で拒否されました。挿入ポリシーをご確認ください。' }, { status: 403 });
+          return NextResponse.json({ ok: false, message: 'DB 権限（RLS）で拒否されました。INSERT ポリシーをご確認ください。' }, { status: 403 });
         }
-        if (/relation .* does not exist|column .* does not exist|undefined column/i.test(msg)) {
-          return NextResponse.json({ ok: false, message: `スキーマが一致しません: ${msg}` }, { status: 400 });
+        // 典型的なスキーマ系メッセージをそのまま提示
+        if (/relation .* does not exist|column .* does not exist|undefined column|invalid input value for enum|violates check constraint|null value in column/i.test(msg)) {
+          return NextResponse.json({ ok: false, message: `スキーマ差異の可能性: ${msg}` }, { status: 400 });
         }
+        console.error('[matches API] singles insert error:', e);
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${msg || '不明なエラー'}` }, { status: 400 });
       }
     }
@@ -345,8 +356,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一チームは選べません。' }, { status: 400 });
       }
 
-      // service-role がある時だけ所属チェックを厳密に
-      if (hasAdmin && !admin) {
+      if (hasSrv && !admin) {
         const ok =
           (await isMemberOfTeam(reporter_id, winner_team_id)) ||
           (await isMemberOfTeam(reporter_id, loser_team_id));
@@ -358,8 +368,8 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const candidate = {
-        mode: 'teams',
+      const initialRow = {
+        mode: 'teams',          // enum NG の場合は 'team' に自動切替
         status: 'finalized',
         match_date,
         reporter_id,
@@ -367,39 +377,27 @@ export async function POST(req: NextRequest) {
         loser_score,
         winner_team_no: 1,
         loser_team_no: 2,
-        // matches に team_id が存在するスキーマ向けの冗長カラム（無ければ落とす）
+        // “matches に team_id カラムがある” スキーマ向け冗長カラム（無ければ落とされる）
         winner_team_id,
         loser_team_id,
         venue,
         notes,
       };
 
-      const dropCols = [
-        'status',
-        'reporter_id',
-        'winner_team_no',
-        'loser_team_no',
-        'winner_team_id',
-        'loser_team_id',
-        'venue',
-        'notes',
-      ];
-
       try {
-        const ins = await tryInsertWithFallback(db, 'matches', candidate, dropCols, 'id');
+        const ins = await smartInsertMatches(db, initialRow, ['teams', 'team']);
 
-        // match_teams があるなら 2 行追加（service-role が無い場合はスキップ）
-        if (hasAdmin) {
+        // match_teams がある場合は 2 行 INSERT（service-role が無ければスキップ）
+        if (hasSrv) {
           const mt = await supabaseAdmin.from('match_teams').insert([
             { match_id: ins.id, team_id: winner_team_id, team_no: 1 } as any,
             { match_id: ins.id, team_id: loser_team_id,  team_no: 2 } as any,
           ]);
           if (mt.error) {
-            if (isPgCode(mt.error, '42P01') || isPgCode(mt.error, '42703')) {
-              // テーブル/列が無い → matches 側に直置き（ユーザークライアントで試す）
+            // テーブル/列が無い → matches 側に直置き（ユーザークライアントで）
+            if (/42P01|42703/.test(String(mt.error.code)) || /does not exist|undefined column/i.test(mt.error.message)) {
               await fallbackWriteTeamsIntoMatches(db, ins.id, winner_team_id, loser_team_id);
             } else {
-              // それ以外はロールバック（整合性重視）
               await supabaseAdmin.from('matches').delete().eq('id', ins.id);
               return NextResponse.json(
                 { ok: false, message: `チーム割当の登録に失敗しました: ${mt.error.message}` },
@@ -408,19 +406,20 @@ export async function POST(req: NextRequest) {
             }
           }
         } else {
-          // admin 無い環境では、matches に直置きをベストエフォートで試行（失敗しても致命ではない）
+          // 管理鍵が無い環境は matches に直置きをベストエフォート（失敗しても致命ではない）
           await fallbackWriteTeamsIntoMatches(db, ins.id, winner_team_id, loser_team_id);
         }
 
-        return NextResponse.json({ ok: true, match_id: ins?.id }, { status: 201 });
+        return NextResponse.json({ ok: true, match_id: ins.id }, { status: 201 });
       } catch (e: any) {
         const msg = String(e?.message || e || '');
         if (/row-level security|rls/i.test(msg)) {
-          return NextResponse.json({ ok: false, message: 'データベースの権限（RLS）で拒否されました。挿入ポリシーをご確認ください。' }, { status: 403 });
+          return NextResponse.json({ ok: false, message: 'DB 権限（RLS）で拒否されました。INSERT ポリシーをご確認ください。' }, { status: 403 });
         }
-        if (/relation .* does not exist|column .* does not exist|undefined column/i.test(msg)) {
-          return NextResponse.json({ ok: false, message: `スキーマが一致しません: ${msg}` }, { status: 400 });
+        if (/relation .* does not exist|column .* does not exist|undefined column|invalid input value for enum|violates check constraint|null value in column/i.test(msg)) {
+          return NextResponse.json({ ok: false, message: `スキーマ差異の可能性: ${msg}` }, { status: 400 });
         }
+        console.error('[matches API] teams insert error:', e);
         return NextResponse.json({ ok: false, message: `登録に失敗しました: ${msg || '不明なエラー'}` }, { status: 400 });
       }
     }
