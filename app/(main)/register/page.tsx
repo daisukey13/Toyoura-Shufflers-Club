@@ -9,7 +9,7 @@ import {
   FaGamepad, FaCheckCircle, FaExclamationCircle,
   FaSpinner, FaLock, FaImage
 } from 'react-icons/fa';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase/client';
 import AvatarSelector from '@/components/AvatarSelector';
 import TurnstileWidget from '@/components/TurnstileWidget';
 
@@ -36,9 +36,8 @@ const PASSCODE = process.env.NEXT_PUBLIC_SIGNUP_PASSCODE || '';
 const RATING_DEFAULT = Number(process.env.NEXT_PUBLIC_RATING_DEFAULT ?? 1000);
 const HANDICAP_DEFAULT = Number(process.env.NEXT_PUBLIC_HANDICAP_DEFAULT ?? 30);
 
-// players_private に入れる想定の型（SDK の厳しいジェネリクスを避けるためローカルで定義）
+// players_private への挿入用（ジェネリクス衝突回避のためローカル型）
 type PlayersPrivateInsert = {
-  // どれが主キーでも通るようにユニオン的に持たせておく（実際に使うのは 1 つ）
   player_id?: string;
   id?: string;
   user_id?: string;
@@ -51,14 +50,18 @@ type PlayersPrivateInsert = {
 export default function RegisterPage() {
   const router = useRouter();
 
+  // 招待コードロック
   const [unlocked, setUnlocked] = useState<boolean>(PASSCODE.length === 0);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState<string | null>(null);
 
+  // Turnstile
   const [tsToken, setTsToken] = useState<string | undefined>();
   const [tsError, setTsError] = useState<string | null>(null);
+  const [showTurnstile, setShowTurnstile] = useState(false); // マウント後に表示（SSRミスマッチ対策）
 
   useEffect(() => {
+    setShowTurnstile(true);
     try {
       sessionStorage.removeItem('regUnlocked');
       localStorage.removeItem('regUnlocked');
@@ -82,6 +85,8 @@ export default function RegisterPage() {
   const [handleNameError, setHandleNameError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [checkingHandleName, setCheckingHandleName] = useState(false);
+
+  // ---- helpers -------------------------------------------------------------
 
   async function ensureHandleUnique(handle: string) {
     const { data, error } = await supabase
@@ -126,6 +131,7 @@ export default function RegisterPage() {
     }
   }, [formData.password, formData.passwordConfirm]);
 
+  // パスコード送信
   const onSubmitPasscode = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setPasscodeError(null);
@@ -143,6 +149,7 @@ export default function RegisterPage() {
     }
   };
 
+  // Turnstile 検証（サーバの検証エンドポイントに投げる）
   async function verifyTurnstileToken(token?: string) {
     setTsError(null);
     if (!token) {
@@ -167,6 +174,7 @@ export default function RegisterPage() {
     }
   }
 
+  // 登録送信
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!unlocked) return;
@@ -184,6 +192,7 @@ export default function RegisterPage() {
       return;
     }
 
+    // Turnstile 必須
     const humanOK = await verifyTurnstileToken(tsToken);
     if (!humanOK) return;
 
@@ -196,7 +205,7 @@ export default function RegisterPage() {
         return;
       }
 
-      // 1) Auth
+      // 1) Auth ユーザー作成
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email.trim(),
         password: formData.password.trim(),
@@ -205,7 +214,7 @@ export default function RegisterPage() {
       if (authError || !authData?.user) throw authError ?? new Error('ユーザー作成に失敗しました');
       const userId = authData.user.id;
 
-      // 2) players
+      // 2) 公開 players
       const publicRow = {
         id: userId,
         handle_name: formData.handle_name,
@@ -224,7 +233,7 @@ export default function RegisterPage() {
         if (error) throw error;
       }
 
-      // 3) players_private — SDK 型衝突を避けてジェネリクス指定をやめる
+      // 3) 非公開 players_private（主キー候補を順に試行）
       const tryKeys: Array<'player_id' | 'id' | 'user_id' | 'auth_user_id'> = [
         'player_id', 'id', 'user_id', 'auth_user_id',
       ];
@@ -238,7 +247,7 @@ export default function RegisterPage() {
           phone: formData.phone.trim(),
         } as PlayersPrivateInsert;
 
-        // ← ここがポイント：from/upsert にジェネリクスを付けず any で通す
+        // SDK の厳密型を避けて any で upsert
         const table = supabase.from('players_private');
         const { error } = await (table as any).upsert(
           base as any,
@@ -247,7 +256,6 @@ export default function RegisterPage() {
         if (!error) { saved = true; break; }
         lastErr = error;
 
-        // スキーマ未整備や一意制約未設定などの典型エラーだけループ継続
         if (!/does not exist|no unique|exclusion|schema cache/i.test(String(error?.message))) {
           break;
         }
@@ -279,6 +287,8 @@ export default function RegisterPage() {
     }
   };
 
+  // ---- UI ------------------------------------------------------------------
+
   return (
     <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-8">
       <div className="container mx-auto px-4 py-4 sm:py-8">
@@ -296,7 +306,7 @@ export default function RegisterPage() {
         </div>
 
         <div className="max-w-3xl mx-auto">
-          {/* パスコード */}
+          {/* パスコード（ロック時のみ表示） */}
           {!unlocked && (
             <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 mb-4 sm:mb-6">
               <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2 mb-3">
@@ -324,7 +334,7 @@ export default function RegisterPage() {
             </div>
           )}
 
-          {/* 登録フォーム */}
+          {/* 登録フォーム（解錠後のみ描画） */}
           {unlocked && (
             <form onSubmit={onSubmit} className="space-y-4 sm:space-y-8">
               {/* 基本情報 */}
@@ -413,6 +423,7 @@ export default function RegisterPage() {
                       passwordError && formData.password ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                     }`}
                     placeholder="パスワードを入力"
+                    autoComplete="new-password"
                   />
                 </div>
 
@@ -430,6 +441,7 @@ export default function RegisterPage() {
                       passwordError && formData.passwordConfirm ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                     }`}
                     placeholder="パスワードを再入力"
+                    autoComplete="new-password"
                   />
                   {passwordError && <p className="mt-1 text-sm text-red-400">{passwordError}</p>}
                 </div>
@@ -437,7 +449,7 @@ export default function RegisterPage() {
 
               {/* 連絡先 + アバター */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
                   <FaPhone className="text-purple-400" />
                   連絡先情報 / アバター
                 </h2>
@@ -454,6 +466,7 @@ export default function RegisterPage() {
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
                     placeholder="例: 090-1234-5678"
+                    autoComplete="tel"
                   />
                 </div>
 
@@ -475,6 +488,7 @@ export default function RegisterPage() {
                   </select>
                 </div>
 
+                {/* アバター選択 */}
                 <div>
                   <label className="block text-sm font-medium text-purple-300 mb-2 flex items-center gap-2">
                     <FaImage className="text-purple-400" />
@@ -515,16 +529,15 @@ export default function RegisterPage() {
                 </label>
               </div>
 
-              {/* Turnstile */}
+              {/* Turnstile（人間チェック） */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6">
                 <h3 className="text-white font-semibold mb-2 flex items-center gap-2">
                   <FaLock className="text-purple-400" />
                   セキュリティチェック
                 </h3>
-                <TurnstileWidget
-                  siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
-                  onVerify={(token: string) => setTsToken(token)}
-                />
+                {showTurnstile && (
+                  <TurnstileWidget onVerify={(token: string) => setTsToken(token)} />
+                )}
                 {tsError && <p className="mt-2 text-sm text-red-400">{tsError}</p>}
               </div>
 
