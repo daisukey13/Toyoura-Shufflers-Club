@@ -21,6 +21,18 @@ type Player = {
 };
 type PlayerAdminRow = { id: string; is_admin: boolean | null };
 
+type ApiSuccess = {
+  ok: true;
+  match_id: string;
+  winner_id: string;
+  loser_id: string;
+  apply_rating: boolean;
+  deltas: null | {
+    winner: { points: number; handicap: number };
+    loser:  { points: number; handicap: number };
+  };
+};
+
 /* ───────────────────────────── Helpers ───────────────────────────── */
 async function parseRestError(res: Response) {
   let msg = `HTTP ${res.status}`;
@@ -114,9 +126,25 @@ export default function SinglesRegisterPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [result, setResult] = useState<ApiSuccess | null>(null);
   const submittingRef = useRef(false);
 
   const opponents = (players as Player[]).filter(p => p.id !== me?.id);
+  const nameById = (id: string) =>
+    (players as Player[]).find(p => p.id === id)?.handle_name || `${id?.slice(0, 8)}…`;
+
+  const resetForm = () => {
+    setMatchDate(nowLocalDatetime());
+    setOpponentId('');
+    setIWon(true);
+    setLoserScore(0);
+    setAdminMode(false);
+    setWinnerIdAdmin('');
+    setLoserIdAdmin('');
+    setSuccess(false);
+    setError('');
+    setResult(null);
+  };
 
   // 送信
   const handleSubmit = async (e: React.FormEvent) => {
@@ -126,6 +154,7 @@ export default function SinglesRegisterPage() {
     setLoading(true);
     setError('');
     setSuccess(false);
+    setResult(null);
 
     try {
       if (authed !== true || !me?.id) throw new Error('ログインが必要です');
@@ -185,8 +214,9 @@ export default function SinglesRegisterPage() {
         }
       }
 
+      const j = (await res.json()) as ApiSuccess;
+      setResult(j);
       setSuccess(true);
-      setTimeout(() => { router.push('/matches'); }, 700);
     } catch (err: any) {
       setError(err?.message || '登録に失敗しました');
     } finally {
@@ -251,9 +281,52 @@ export default function SinglesRegisterPage() {
           <p className="text-red-300 text-sm">{error}</p>
         </div>
       )}
-      {success && (
-        <div className="glass-card rounded-md p-3 mb-4 border border-green-500/40 bg-green-500/10" aria-live="polite">
-          <p className="text-green-300 text-sm">🎉 登録しました。まもなく一覧へ移動します…</p>
+      {success && result && (
+        <div className="glass-card rounded-md p-4 mb-6 border border-green-500/40 bg-green-500/10" aria-live="polite">
+          <p className="text-green-300 font-semibold mb-2">🎉 登録しました</p>
+          <div className="text-sm text-green-100/90">
+            <div className="mb-1">
+              勝者 <span className="font-semibold text-green-300">{nameById(result.winner_id)}</span> ／
+              敗者 <span className="font-semibold text-red-300">{nameById(result.loser_id)}</span>
+            </div>
+            {result.deltas ? (
+              <>
+                <div className="mt-2">
+                  <span className="opacity-80">ランキングポイント：</span>
+                  <span className="ml-1">勝者 <b>+{result.deltas.winner.points}</b></span>
+                  <span className="ml-3">敗者 <b>{result.deltas.loser.points}</b></span>
+                </div>
+                <div className="mt-1">
+                  <span className="opacity-80">ハンディキャップ：</span>
+                  <span className="ml-1">勝者 <b>{result.deltas.winner.handicap >= 0 ? `+${result.deltas.winner.handicap}` : result.deltas.winner.handicap}</b></span>
+                  <span className="ml-3">敗者 <b>{result.deltas.loser.handicap >= 0 ? `+${result.deltas.loser.handicap}` : result.deltas.loser.handicap}</b></span>
+                </div>
+                <div className="mt-2 text-xs text-green-200/80">
+                  レーティング反映: {result.apply_rating ? '適用済み' : '未適用（権限や設定により今回は反映されていません）'}
+                </div>
+              </>
+            ) : (
+              <div className="mt-2 text-xs text-green-200/80">
+                今回はレーティング変動の対象外です。
+              </div>
+            )}
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href="/matches"
+              className="px-4 py-2 rounded-lg bg-green-600/80 hover:bg-green-600 text-white text-sm"
+            >
+              試合一覧へ
+            </Link>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm"
+            >
+              続けて登録する
+            </button>
+          </div>
         </div>
       )}
 

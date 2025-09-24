@@ -124,13 +124,11 @@ async function smartInsertMatches(
   initialRow: Record<string, any>,
   modeAlternatives: string[],   // 例: ['player','singles','single']
 ): Promise<{ id: string }> {
-  // 挿入試行のたびに row をコピーして改変
   let row = { ...initialRow };
   let modeIdx = 0;
   const triedDrop = new Set<string>();
   let safety = 0;
 
-  // 最多 12 回程度で打ち切り（無限ループ防止）
   while (safety++ < 12) {
     const { data, error } = await client.from('matches').insert(row).select('id').single();
 
@@ -148,7 +146,6 @@ async function smartInsertMatches(
     }
 
     // 2) 未定義列 → その列を落として再試行
-    //    例: column "status" of relation "matches" does not exist
     const colNotExist = /column "([^"]+)" .* does not exist/i.exec(error?.message || '');
     if (colNotExist) {
       const bad = colNotExist[1];
@@ -161,18 +158,15 @@ async function smartInsertMatches(
     }
 
     // 3) NOT NULL 制約 → 推測できる既定値があれば埋めて再試行
-    //    例: null value in column "winner_team_no" violates not-null constraint
     const notNull = /null value in column "([^"]+)"/i.exec(error?.message || '');
     if (notNull) {
       const col = notNull[1];
-      // 既に値があるなら推測不能 → 次へ
       if (!(col in row) || row[col] == null) {
-        if (col === 'status') { row = { ...row, status: 'finalized' }; continue; }
-        if (col === 'winner_team_no') { row = { ...row, winner_team_no: 1 }; continue; }
-        if (col === 'loser_team_no')  { row = { ...row, loser_team_no: 2 }; continue; }
-        if (col === 'winner_score')   { row = { ...row, winner_score: 15 }; continue; }
-        if (col === 'loser_score')    { row = { ...row, loser_score: 0 }; continue; }
-        // reporter_id / created_by / author_id 系は reporter_id を流用できることが多い
+        if (col === 'status')       { row = { ...row, status: 'finalized' }; continue; }
+        if (col === 'winner_team_no'){ row = { ...row, winner_team_no: 1 }; continue; }
+        if (col === 'loser_team_no') { row = { ...row, loser_team_no: 2 }; continue; }
+        if (col === 'winner_score')  { row = { ...row, winner_score: 15 }; continue; }
+        if (col === 'loser_score')   { row = { ...row, loser_score: 0 }; continue; }
         if (/(reporter|created|author)_?id/i.test(col) && initialRow.reporter_id) {
           row = { ...row, [col]: initialRow.reporter_id };
           continue;
@@ -271,7 +265,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // レーティング更新用の現値（service-role が無くても SELECT は通ることが多い）
+      // レーティング計算用に現値を取得（取得できなければ delta は null）
       let w: any = null, l: any = null;
       try {
         const { data: players } = await db
@@ -300,36 +294,59 @@ export async function POST(req: NextRequest) {
       try {
         const ins = await smartInsertMatches(db, initialRow, ['player', 'singles', 'single']);
 
-        // レーティング反映（service-role がある時のみ）
-        const apply = (body as SinglesPayload).apply_rating ?? true;
-        if (apply && hasSrv && w && l) {
+        // delta を計算（元値がない/取得不可なら null）
+        let deltas: { winner: { points: number; handicap: number }, loser: { points: number; handicap: number } } | null = null;
+        if (w && l) {
           const diff = 15 - loser_score;
-          const delta = calcDelta(
+          const d = calcDelta(
             toInt(w.ranking_points, 0),
             toInt(l.ranking_points, 0),
             toInt(w.handicap, 0),
             toInt(l.handicap, 0),
             diff
           );
+          deltas = {
+            winner: { points: d.winnerPointsChange, handicap: d.winnerHandicapChange },
+            loser:  { points: d.loserPointsChange,  handicap: d.loserHandicapChange  },
+          };
+        }
+
+        // レーティング反映（service-role があり、apply=true かつ元値がある場合のみ実施）
+        const applyRequested = (body as SinglesPayload).apply_rating ?? true;
+        let applied = false;
+        if (hasSrv && applyRequested && w && l) {
+          const d = deltas!;
           const [uw, ul] = await Promise.all([
             supabaseAdmin.from('players').update({
-              ranking_points: clamp(toInt(w.ranking_points, 0) + delta.winnerPointsChange, 0, 99999),
-              handicap: clamp(toInt(w.handicap, 0) + delta.winnerHandicapChange, 0, 50),
+              ranking_points: clamp(toInt(w.ranking_points, 0) + d.winner.points, 0, 99999),
+              handicap: clamp(toInt(w.handicap, 0) + d.winner.handicap, 0, 50),
               matches_played: toInt(w.matches_played, 0) + 1,
               wins: toInt(w.wins, 0) + 1,
             }).eq('id', winner_id),
             supabaseAdmin.from('players').update({
-              ranking_points: clamp(toInt(l.ranking_points, 0) + delta.loserPointsChange, 0, 99999),
-              handicap: clamp(toInt(l.handicap, 0) + delta.loserHandicapChange, 0, 50),
+              ranking_points: clamp(toInt(l.ranking_points, 0) + d.loser.points, 0, 99999),
+              handicap: clamp(toInt(l.handicap, 0) + d.loser.handicap, 0, 50),
               matches_played: toInt(l.matches_played, 0) + 1,
               losses: toInt(l.losses, 0) + 1,
             }).eq('id', loser_id),
           ]);
           if (uw.error) console.warn('[matches API] winner update warning:', uw.error);
           if (ul.error) console.warn('[matches API] loser  update warning:', ul.error);
+          applied = !uw.error && !ul.error;
         }
 
-        return NextResponse.json({ ok: true, match_id: ins.id }, { status: 201 });
+        // レスポンスに delta と適用可否を含める
+        return NextResponse.json(
+          {
+            ok: true,
+            match_id: ins.id,
+            winner_id,
+            loser_id,
+            apply_rating: applied,
+            deltas, // 取得不可なら null
+          },
+          { status: 201 }
+        );
       } catch (e: any) {
         const msg = String(e?.message || e || '');
         // RLS
@@ -410,7 +427,7 @@ export async function POST(req: NextRequest) {
           await fallbackWriteTeamsIntoMatches(db, ins.id, winner_team_id, loser_team_id);
         }
 
-        return NextResponse.json({ ok: true, match_id: ins.id }, { status: 201 });
+        return NextResponse.json({ ok: true, match_id: ins.id, deltas: null }, { status: 201 });
       } catch (e: any) {
         const msg = String(e?.message || e || '');
         if (/row-level security|rls/i.test(msg)) {
