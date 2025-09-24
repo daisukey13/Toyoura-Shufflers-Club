@@ -57,6 +57,12 @@ function nowLocalDatetime() {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   return d.toISOString().slice(0, 16);
 }
+/** 正負記号つき表示（0 は ±0） */
+function fmtSigned(n: number) {
+  if (n > 0) return `+${n}`;
+  if (n < 0) return `${n}`;
+  return '±0';
+}
 
 /* ───────────────────────────── Page ───────────────────────────── */
 export default function SinglesRegisterPage() {
@@ -293,13 +299,13 @@ export default function SinglesRegisterPage() {
               <>
                 <div className="mt-2">
                   <span className="opacity-80">ランキングポイント：</span>
-                  <span className="ml-1">勝者 <b>+{result.deltas.winner.points}</b></span>
-                  <span className="ml-3">敗者 <b>{result.deltas.loser.points}</b></span>
+                  <span className="ml-1">勝者 <b>{fmtSigned(result.deltas.winner.points)}</b></span>
+                  <span className="ml-3">敗者 <b>{fmtSigned(result.deltas.loser.points)}</b></span>
                 </div>
                 <div className="mt-1">
                   <span className="opacity-80">ハンディキャップ：</span>
-                  <span className="ml-1">勝者 <b>{result.deltas.winner.handicap >= 0 ? `+${result.deltas.winner.handicap}` : result.deltas.winner.handicap}</b></span>
-                  <span className="ml-3">敗者 <b>{result.deltas.loser.handicap >= 0 ? `+${result.deltas.loser.handicap}` : result.deltas.loser.handicap}</b></span>
+                  <span className="ml-1">勝者 <b>{fmtSigned(result.deltas.winner.handicap)}</b></span>
+                  <span className="ml-3">敗者 <b>{fmtSigned(result.deltas.loser.handicap)}</b></span>
                 </div>
                 <div className="mt-2 text-xs text-green-200/80">
                   レーティング反映: {result.apply_rating ? '適用済み' : '未適用（権限や設定により今回は反映されていません）'}
