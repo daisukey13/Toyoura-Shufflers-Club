@@ -9,28 +9,26 @@ export const dynamic = 'force-dynamic';
 
 /* ===================== Types ===================== */
 type SinglesPayload = {
-  mode: string;              // 'singles' | 'single' | 'player' など
+  mode: string;
   match_date: string;
   winner_id: string;
   loser_id: string;
-  winner_score?: number;     // 省略時 15
-  loser_score: number;       // 0..14
+  winner_score?: number;
+  loser_score: number;
   venue?: string | null;
   notes?: string | null;
-  apply_rating?: boolean;    // 省略時 true
+  apply_rating?: boolean;
 };
-
 type TeamsPayload = {
-  mode: string;              // 'teams' | 'team' など
+  mode: string;
   match_date: string;
   winner_team_id: string;
   loser_team_id: string;
-  winner_score?: number;     // 省略時 15
-  loser_score: number;       // 0..14
+  winner_score?: number;
+  loser_score: number;
   venue?: string | null;
   notes?: string | null;
 };
-
 type Body = SinglesPayload | TeamsPayload;
 
 /* ===================== Helpers ===================== */
@@ -41,34 +39,37 @@ const toInt = (v: unknown, fb = 0) => {
 };
 const hasSrv = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-/** ELO風の変動（個人戦のみ） */
+/** ELOライク（勝者15固定、敗者0..14 の点差を利用） */
 function calcDelta(
   wPts: number, lPts: number, wH: number, lH: number, scoreDiff: number
 ) {
   const K = 32;
   const expW = 1 / (1 + Math.pow(10, (lPts - wPts) / 400));
-  const diffMul = 1 + scoreDiff / 30;          // 点差補正（0〜15 → 1.0〜1.5）
-  const hcMul = 1 + (wH - lH) / 50;            // ハンデ差補正
+  const diffMul = 1 + scoreDiff / 30;
+  const hcMul = 1 + (wH - lH) / 50;
+
   const wChange = K * (1 - expW) * diffMul * hcMul;
   const lChange = -K * expW * diffMul;
-  const wHc = scoreDiff >= 10 ? -1 : 0;        // コールド勝ち的に HC 微調整
+
+  const wHc = scoreDiff >= 10 ? -1 : 0;
   const lHc = scoreDiff >= 10 ?  1 : 0;
 
   return {
     winnerPointsChange: Math.round(wChange),
-    loserPointsChange:  Math.round(lChange),
+    loserPointsChange : Math.round(lChange),
     winnerHandicapChange: wHc,
-    loserHandicapChange:  lHc,
+    loserHandicapChange : lHc,
   };
 }
 
-/** reporter が players に居ない場合は（service-role のときだけ）補完 */
+/** reporter 補完（service-role のときのみ） */
 async function ensureReporterPlayerIfAdmin(reporterId: string, displayName: string | null) {
   if (!hasSrv) return;
   const { data } = await supabaseAdmin.from('players').select('id').eq('id', reporterId).maybeSingle();
   if (data) return;
 
-  const handle_name = (displayName || '').trim() || `user_${reporterId.slice(0, 8)}`;
+  const baseName = (displayName || '').trim();
+  const handle_name = baseName || `user_${reporterId.slice(0, 8)}`;
   const { error } = await supabaseAdmin.from('players').upsert(
     {
       id: reporterId,
@@ -100,79 +101,170 @@ async function isMemberOfTeam(playerId: string, teamId: string): Promise<boolean
     { table: 'team_players',  playerCol: 'player_id', teamCol: 'team_id' },
     { table: 'memberships',   playerCol: 'player_id', teamCol: 'team_id' },
   ] as const;
-
   for (const c of candidates) {
     const { data, error } = await supabaseAdmin
       .from(c.table)
-      .select('team_id')
-      .eq(c.playerCol, playerId)
-      .eq(c.teamCol, teamId)
-      .limit(1);
+      .select('team_id').eq(c.playerCol, playerId).eq(c.teamCol, teamId).limit(1);
     if (!error && data && data.length > 0) return true;
   }
   return false;
 }
 
-/** スキーマ差異に強い “スマート挿入”（列欠如・NOT NULL・enum 違反に順次フォールバック） */
+/** スキーマ差異に強い INSERT（列欠如/enum/NOT NULL を順次吸収） */
 async function smartInsertMatches(
   client: any,
   initialRow: Record<string, any>,
-  modeAlternatives: string[],   // 例: ['player','singles','single']
+  modeAlternatives: string[],
 ): Promise<{ id: string }> {
   let row = { ...initialRow };
   let modeIdx = 0;
   const triedDrop = new Set<string>();
-  let safety = 0;
+  let guard = 0;
 
-  while (safety++ < 12) {
+  while (guard++ < 12) {
     const { data, error } = await client.from('matches').insert(row).select('id').single();
     if (!error && data) return { id: data.id as string };
 
-    const msg = String(error?.message || '');
+    const m = String(error?.message || '');
 
-    // enum/チェック制約: mode 値の不一致
-    if ((/invalid input value for enum/i.test(msg) || /violates check constraint/i.test(msg))
-        && 'mode' in row
-        && modeIdx + 1 < modeAlternatives.length) {
+    // enum/チェック
+    if ((/invalid input value for enum|violates check constraint/i.test(m))
+      && 'mode' in row && modeIdx + 1 < modeAlternatives.length) {
       modeIdx += 1;
       row = { ...row, mode: modeAlternatives[modeIdx] };
       continue;
     }
 
-    // 未定義列 → その列を落として再試行
-    const colNotExist = /column "([^"]+)" .* does not exist/i.exec(msg);
+    // 未定義列 → 除去
+    const colNotExist = /column "([^"]+)" .* does not exist/i.exec(m);
     if (colNotExist) {
       const bad = colNotExist[1];
       if (bad in row && !triedDrop.has(bad)) {
         triedDrop.add(bad);
-        const { [bad]: _omit, ...rest } = row;
+        const { [bad]: _, ...rest } = row;
         row = rest;
         continue;
       }
     }
 
-    // NOT NULL 制約 → 推測既定値で再試行
-    const notNull = /null value in column "([^"]+)"/i.exec(msg);
+    // NOT NULL
+    const notNull = /null value in column "([^"]+)"/i.exec(m);
     if (notNull) {
       const col = notNull[1];
       if (!(col in row) || row[col] == null) {
         if (col === 'status')        { row = { ...row, status: 'finalized' }; continue; }
-        if (col === 'winner_team_no'){ row = { ...row, winner_team_no: 1 }; continue; }
-        if (col === 'loser_team_no') { row = { ...row, loser_team_no: 2 }; continue; }
-        if (col === 'winner_score')  { row = { ...row, winner_score: 15 }; continue; }
-        if (col === 'loser_score')   { row = { ...row, loser_score: 0 }; continue; }
+        if (col === 'winner_team_no'){ row = { ...row, winner_team_no: 1 };  continue; }
+        if (col === 'loser_team_no') { row = { ...row, loser_team_no: 2 };   continue; }
+        if (col === 'winner_score')  { row = { ...row, winner_score: 15 };   continue; }
+        if (col === 'loser_score')   { row = { ...row, loser_score: 0 };     continue; }
         if (/(reporter|created|author)_?id/i.test(col) && initialRow.reporter_id) {
-          row = { ...row, [col]: initialRow.reporter_id };
-          continue;
+          row = { ...row, [col]: initialRow.reporter_id }; continue;
         }
       }
     }
 
-    // その他はそのまま投げる
     throw error;
   }
-
   throw new Error('insert failed after multiple fallbacks');
+}
+
+/** 未定義列を自動で落としながら UPDATE する */
+async function softUpdate(
+  client: any,
+  table: string,
+  patch: Record<string, any>,
+  filters: Array<{ col: string, val: any }>
+) {
+  let body = { ...patch };
+  let guard = 0;
+
+  while (Object.keys(body).length > 0 && guard++ < 12) {
+    let q = client.from(table).update(body);
+    for (const f of filters) q = q.eq(f.col, f.val);
+    const { error } = await q;
+    if (!error) return true;
+
+    const m = String(error?.message || '');
+    const colNotExist = /column "([^"]+)" .* does not exist/i.exec(m);
+    if (colNotExist) {
+      delete body[colNotExist[1]];
+      continue;
+    }
+    // 列が全滅するまで繰り返し、他のエラーは伝播させない
+    break;
+  }
+  return false;
+}
+
+/** match_players の delta を優先保存、ダメなら matches 側に保存 */
+async function persistDeltas(
+  client: any,
+  params: {
+    match_id: string;
+    winner_id: string;
+    loser_id: string;
+    winnerSide?: number; // 既定: 1
+    loserSide?: number;  // 既定: 2
+    winner: { points: number; handicap: number };
+    loser:  { points: number; handicap: number };
+    ratingApplied: boolean;
+  }
+) {
+  const { match_id, winner_id, loser_id, winner, loser, ratingApplied } = params;
+  const side1 = params.winnerSide ?? 1;
+  const side2 = params.loserSide  ?? 2;
+
+  // 1) match_players を UPDATE（存在しなくても 0 件更新でOK）
+  //    主流: rp_delta / hc_delta
+  const tried1 = await softUpdate(client, 'match_players',
+    { rp_delta: winner.points, hc_delta: winner.handicap },
+    [{ col: 'match_id', val: match_id }, { col: 'player_id', val: winner_id }]
+  );
+  const tried2 = await softUpdate(client, 'match_players',
+    { rp_delta: loser.points, hc_delta: loser.handicap },
+    [{ col: 'match_id', val: match_id }, { col: 'player_id', val: loser_id }]
+  );
+
+  // 別名: ranking_points_delta / handicap_delta
+  if (!tried1) {
+    await softUpdate(client, 'match_players',
+      { ranking_points_delta: winner.points, handicap_delta: winner.handicap },
+      [{ col: 'match_id', val: match_id }, { col: 'player_id', val: winner_id }]
+    );
+  }
+  if (!tried2) {
+    await softUpdate(client, 'match_players',
+      { ranking_points_delta: loser.points, handicap_delta: loser.handicap },
+      [{ col: 'match_id', val: match_id }, { col: 'player_id', val: loser_id }]
+    );
+  }
+
+  // side_no が主キーのスキーマ向け（player_id が無いケース）
+  await softUpdate(client, 'match_players',
+    { rp_delta: winner.points, hc_delta: winner.handicap },
+    [{ col: 'match_id', val: match_id }, { col: 'side_no', val: side1 }]
+  );
+  await softUpdate(client, 'match_players',
+    { rp_delta: loser.points, hc_delta: loser.handicap },
+    [{ col: 'match_id', val: match_id }, { col: 'side_no', val: side2 }]
+  );
+
+  // 2) matches 側にも冗長保存（ビューがこちらを読んでいる環境向け）
+  await softUpdate(client, 'matches', {
+    winner_points_delta: winner.points,
+    loser_points_delta : loser.points,
+    winner_handicap_delta: winner.handicap,
+    loser_handicap_delta : loser.handicap,
+    rating_applied: ratingApplied,
+  }, [{ col: 'id', val: match_id }]);
+
+  // 別名: *_rp_delta / *_hc_delta
+  await softUpdate(client, 'matches', {
+    winner_rp_delta: winner.points,
+    loser_rp_delta : loser.points,
+    winner_hc_delta: winner.handicap,
+    loser_hc_delta : loser.handicap,
+  }, [{ col: 'id', val: match_id }]);
 }
 
 /** match_teams が無い/列が無い場合のフォールバック（matches に直置き） */
@@ -187,40 +279,6 @@ async function fallbackWriteTeamsIntoMatches(
   await client.from('matches').update({ winner_team_id } as any).eq('id', matchId);
   await client.from('matches').update({ loser_team_id } as any).eq('id', matchId);
   return true;
-}
-
-/** 変化量を DB にベストエフォート保存（matches の列 or match_effects テーブル） */
-async function persistDeltas(
-  matchId: string,
-  deltas: { winner: { rp: number; hc: number }, loser: { rp: number; hc: number } },
-  clientForMatchesUpdate: any,   // matches を UPDATE できるクライアント（SR があれば supabaseAdmin）
-) {
-  // 1) matches の列に UPDATE（存在しなければ失敗 → 無視）
-  try {
-    await clientForMatchesUpdate
-      .from('matches')
-      .update({
-        winner_rp_delta: deltas.winner.rp,
-        loser_rp_delta:  deltas.loser.rp,
-        winner_hc_delta: deltas.winner.hc,
-        loser_hc_delta:  deltas.loser.hc,
-      } as any)
-      .eq('id', matchId);
-  } catch { /* ignore */ }
-
-  // 2) match_effects(match_id PK) に upsert（テーブルが無ければ失敗 → 無視）
-  try {
-    const upserter = hasSrv ? supabaseAdmin : clientForMatchesUpdate;
-    await upserter
-      .from('match_effects')
-      .upsert({
-        match_id: matchId,
-        winner_rp_delta: deltas.winner.rp,
-        loser_rp_delta:  deltas.loser.rp,
-        winner_hc_delta: deltas.winner.hc,
-        loser_hc_delta:  deltas.loser.hc,
-      } as any, { onConflict: 'match_id' } as any);
-  } catch { /* ignore */ }
 }
 
 /* ===================== Handler ===================== */
@@ -248,7 +306,6 @@ export async function POST(req: NextRequest) {
     }
     const reporter_id = userData.user.id;
 
-    // players レコードは SR がある時だけ補完
     await ensureReporterPlayerIfAdmin(
       reporter_id,
       (userData.user.user_metadata?.name as string | undefined) ||
@@ -259,13 +316,13 @@ export async function POST(req: NextRequest) {
     const admin = await isAdminPlayer(reporter_id);
     const db = hasSrv ? supabaseAdmin : (userClient as any);
 
-    // 入力取得
+    // 入力
     const body = (await req.json().catch(() => null)) as Partial<Body> | null;
     if (!body || !body.mode) {
       return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
     }
 
-    const rawMode   = String(body.mode).trim();
+    const rawMode = String(body.mode).trim();
     const match_date = String(body.match_date || '').trim();
     if (!match_date) {
       return NextResponse.json({ ok: false, message: '試合日時が未指定です。' }, { status: 400 });
@@ -293,7 +350,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // レーティング計算用に現値を取得（取得できなければ delta は 0）
+      // レーティング計算用の現値（取れなければ後で delta=null を返すだけ）
       let w: any = null, l: any = null;
       try {
         const { data: players } = await db
@@ -320,11 +377,13 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        // 1) 登録
         const ins = await smartInsertMatches(db, initialRow, ['player', 'singles', 'single']);
 
-        // 2) 変化量の計算
-        let deltas = { winner: { rp: 0, hc: 0 }, loser: { rp: 0, hc: 0 } };
+        // delta 計算
+        let deltas:
+          | { winner: { points: number; handicap: number }, loser: { points: number; handicap: number } }
+          | null = null;
+
         if (w && l) {
           const diff = 15 - loser_score;
           const d = calcDelta(
@@ -335,25 +394,26 @@ export async function POST(req: NextRequest) {
             diff
           );
           deltas = {
-            winner: { rp: d.winnerPointsChange, hc: d.winnerHandicapChange },
-            loser:  { rp: d.loserPointsChange,  hc: d.loserHandicapChange  },
+            winner: { points: d.winnerPointsChange, handicap: d.winnerHandicapChange },
+            loser : { points: d.loserPointsChange , handicap: d.loserHandicapChange  },
           };
         }
 
-        // 3) players へ反映（SR があり apply=true かつ現値あり）
-        const applyRequested = (body as SinglesPayload).apply_rating ?? true;
+        // 反映（service-role のときのみ）
+        const applyReq = (body as SinglesPayload).apply_rating ?? true;
         let applied = false;
-        if (hasSrv && applyRequested && w && l) {
+        if (hasSrv && applyReq && w && l && deltas) {
+          const d = deltas;
           const [uw, ul] = await Promise.all([
             supabaseAdmin.from('players').update({
-              ranking_points: clamp(toInt(w.ranking_points, 0) + deltas.winner.rp, 0, 99999),
-              handicap:       clamp(toInt(w.handicap, 0)       + deltas.winner.hc, 0, 50),
+              ranking_points: clamp(toInt(w.ranking_points, 0) + d.winner.points, 0, 99999),
+              handicap:       clamp(toInt(w.handicap, 0) + d.winner.handicap, 0, 50),
               matches_played: toInt(w.matches_played, 0) + 1,
               wins:           toInt(w.wins, 0) + 1,
             }).eq('id', winner_id),
             supabaseAdmin.from('players').update({
-              ranking_points: clamp(toInt(l.ranking_points, 0) + deltas.loser.rp, 0, 99999),
-              handicap:       clamp(toInt(l.handicap, 0)       + deltas.loser.hc, 0, 50),
+              ranking_points: clamp(toInt(l.ranking_points, 0) + d.loser.points, 0, 99999),
+              handicap:       clamp(toInt(l.handicap, 0) + d.loser.handicap, 0, 50),
               matches_played: toInt(l.matches_played, 0) + 1,
               losses:         toInt(l.losses, 0) + 1,
             }).eq('id', loser_id),
@@ -361,14 +421,31 @@ export async function POST(req: NextRequest) {
           if (uw.error) console.warn('[matches API] winner update warning:', uw.error);
           if (ul.error) console.warn('[matches API] loser  update warning:', ul.error);
           applied = !uw.error && !ul.error;
-
-          // 4) 変化量を DB に保存（ベストエフォート）
-          try { await persistDeltas(ins.id, deltas, db); } catch { /* ignore */ }
         }
 
-        // 5) 変化量つきで返却（フロントで ± 表示）
+        // ★ 変化量を DB に保存（どこかには必ず残す）
+        if (deltas) {
+          await persistDeltas(
+            hasSrv ? supabaseAdmin : db,
+            {
+              match_id: ins.id,
+              winner_id,
+              loser_id,
+              winner: deltas.winner,
+              loser:  deltas.loser,
+              ratingApplied: applied,
+            }
+          );
+        } else {
+          // 元値が取れず delta 不明でも、rating_applied=false 等だけ matches に残せるなら残す
+          await softUpdate(hasSrv ? supabaseAdmin : db, 'matches',
+            { rating_applied: false },
+            [{ col: 'id', val: ins.id }]
+          );
+        }
+
         return NextResponse.json(
-          { ok: true, match_id: ins.id, apply_rating: applied, deltas },
+          { ok: true, match_id: ins.id, winner_id, loser_id, apply_rating: !!deltas && hasSrv ? applied : false, deltas: deltas ?? null },
           { status: 201 }
         );
       } catch (e: any) {
@@ -395,20 +472,15 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一チームは選べません。' }, { status: 400 });
       }
 
-      if (hasSrv && !admin) {
-        const ok =
-          (await isMemberOfTeam(reporter_id, winner_team_id)) ||
-          (await isMemberOfTeam(reporter_id, loser_team_id));
-        if (!ok) {
-          return NextResponse.json(
-            { ok: false, message: '所属チームの試合のみ登録できます（管理者は除外）。' },
-            { status: 403 }
-          );
-        }
+      if (hasSrv && !await isMemberOfTeam(reporter_id, winner_team_id) && !await isMemberOfTeam(reporter_id, loser_team_id) && !(await isAdminPlayer(reporter_id))) {
+        return NextResponse.json(
+          { ok: false, message: '所属チームの試合のみ登録できます（管理者は除外）。' },
+          { status: 403 }
+        );
       }
 
       const initialRow = {
-        mode: 'teams',          // enum NG の場合は 'team' に自動切替
+        mode: 'teams',
         status: 'finalized',
         match_date,
         reporter_id,
@@ -416,7 +488,6 @@ export async function POST(req: NextRequest) {
         loser_score,
         winner_team_no: 1,
         loser_team_no: 2,
-        // matches に team_id カラムがあるスキーマ向け（無ければ smartInsert 側で落ちる）
         winner_team_id,
         loser_team_id,
         venue,
@@ -426,7 +497,6 @@ export async function POST(req: NextRequest) {
       try {
         const ins = await smartInsertMatches(db, initialRow, ['teams', 'team']);
 
-        // match_teams がある場合は 2 行 INSERT（SR が無ければスキップ）
         if (hasSrv) {
           const mt = await supabaseAdmin.from('match_teams').insert([
             { match_id: ins.id, team_id: winner_team_id, team_no: 1 } as any,
