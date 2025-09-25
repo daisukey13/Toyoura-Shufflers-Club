@@ -39,14 +39,14 @@ const toInt = (v: unknown, fb = 0) => {
 };
 const hasSrv = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-/** ELOライク（勝者15固定、敗者0..14 の点差を利用） */
+/** ELO ライク（勝者 15 固定、敗者 0..14 の点差を利用） */
 function calcDelta(
   wPts: number, lPts: number, wH: number, lH: number, scoreDiff: number
 ) {
   const K = 32;
   const expW = 1 / (1 + Math.pow(10, (lPts - wPts) / 400));
   const diffMul = 1 + scoreDiff / 30;
-  const hcMul = 1 + (wH - lH) / 50;
+  const hcMul   = 1 + (wH - lH) / 50;
 
   const wChange = K * (1 - expW) * diffMul * hcMul;
   const lChange = -K * expW * diffMul;
@@ -110,7 +110,7 @@ async function isMemberOfTeam(playerId: string, teamId: string): Promise<boolean
   return false;
 }
 
-/** スキーマ差異に強い INSERT（列欠如/enum/NOT NULL を順次吸収） */
+/** 未知カラムを自動で落としながら INSERT する（matches 用） */
 async function smartInsertMatches(
   client: any,
   initialRow: Record<string, any>,
@@ -196,6 +196,88 @@ async function softUpdate(
   return false;
 }
 
+/** 未知カラムを落としつつ、重複なら成功扱いで INSERT する（レコードが無い場合の match_players 作成に使用） */
+async function looseInsert(
+  client: any,
+  table: string,
+  row: Record<string, any>
+): Promise<boolean> {
+  let body = { ...row };
+  let guard = 0;
+  while (guard++ < 12) {
+    const { error } = await client.from(table).insert(body).single();
+    if (!error) return true;
+
+    const msg = String(error?.message || '');
+    // テーブルなし
+    if (/relation .* does not exist/i.test(msg)) return false;
+    // 重複 → 既にあるとみなし成功
+    if (/duplicate key value|already exists|23505/i.test(msg)) return true;
+
+    // 未定義列 → 落とす
+    const m1 = /column "([^"]+)" .* does not exist/i.exec(msg);
+    if (m1) {
+      delete body[m1[1]];
+      continue;
+    }
+    // enum/チェック → その列を落とす
+    const m2 = /invalid input value for enum|violates check constraint/i.test(msg);
+    if (m2) {
+      // result など列名が取れない場合もあるため、よくある候補を順次落とす
+      for (const k of ['result', 'is_winner', 'created_at', 'updated_at']) {
+        if (k in body) { delete body[k]; break; }
+      }
+      continue;
+    }
+    // NOT NULL → 時刻系だけ埋める
+    const m3 = /null value in column "([^"]+)"/i.exec(msg);
+    if (m3) {
+      const col = m3[1];
+      if (/(created|updated)_at/i.test(col)) {
+        body[col] = new Date().toISOString();
+        continue;
+      }
+    }
+    // どうしてもダメなら諦める（失敗を返す）
+    return false;
+  }
+  return false;
+}
+
+/** match_players の2行（勝者/敗者）を“必要なら”作成 */
+async function ensureMatchPlayersRows(
+  client: any,
+  params: {
+    match_id: string;
+    winner_id: string;
+    loser_id: string;
+    winner_score: number;
+    loser_score: number;
+  }
+) {
+  const { match_id, winner_id, loser_id, winner_score, loser_score } = params;
+
+  // 既存確認（失敗したらスキップ）
+  try {
+    const { data } = await client
+      .from('match_players')
+      .select('match_id, player_id')
+      .eq('match_id', match_id)
+      .limit(2);
+    if (Array.isArray(data) && data.length >= 2) return; // 既にある
+  } catch { /* noop */ }
+
+  // 代表的なカラムで挿入（未知列は looseInsert が落としてくれる）
+  await looseInsert(client, 'match_players', {
+    match_id, player_id: winner_id, side_no: 1, team_no: 1,
+    result: 'win', is_winner: true, score: winner_score,
+  });
+  await looseInsert(client, 'match_players', {
+    match_id, player_id: loser_id, side_no: 2, team_no: 2,
+    result: 'loss', is_winner: false, score: loser_score,
+  });
+}
+
 /** match_players の delta を優先保存、ダメなら matches 側に保存 */
 async function persistDeltas(
   client: any,
@@ -214,8 +296,7 @@ async function persistDeltas(
   const side1 = params.winnerSide ?? 1;
   const side2 = params.loserSide  ?? 2;
 
-  // 1) match_players を UPDATE（存在しなくても 0 件更新でOK）
-  //    主流: rp_delta / hc_delta
+  // 1) match_players に対して（存在しない列は自動的に落とす）
   const tried1 = await softUpdate(client, 'match_players',
     { rp_delta: winner.points, hc_delta: winner.handicap },
     [{ col: 'match_id', val: match_id }, { col: 'player_id', val: winner_id }]
@@ -225,7 +306,6 @@ async function persistDeltas(
     [{ col: 'match_id', val: match_id }, { col: 'player_id', val: loser_id }]
   );
 
-  // 別名: ranking_points_delta / handicap_delta
   if (!tried1) {
     await softUpdate(client, 'match_players',
       { ranking_points_delta: winner.points, handicap_delta: winner.handicap },
@@ -239,7 +319,7 @@ async function persistDeltas(
     );
   }
 
-  // side_no が主キーのスキーマ向け（player_id が無いケース）
+  // side_no 主キー系
   await softUpdate(client, 'match_players',
     { rp_delta: winner.points, hc_delta: winner.handicap },
     [{ col: 'match_id', val: match_id }, { col: 'side_no', val: side1 }]
@@ -249,7 +329,7 @@ async function persistDeltas(
     [{ col: 'match_id', val: match_id }, { col: 'side_no', val: side2 }]
   );
 
-  // 2) matches 側にも冗長保存（ビューがこちらを読んでいる環境向け）
+  // 2) matches 側にも冗長保存（ビューがこちらを見る構成向け）
   await softUpdate(client, 'matches', {
     winner_points_delta: winner.points,
     loser_points_delta : loser.points,
@@ -399,6 +479,15 @@ export async function POST(req: NextRequest) {
           };
         }
 
+        // match_players 行が無ければ作っておく（あればスキップ）
+        await ensureMatchPlayersRows(db, {
+          match_id: ins.id,
+          winner_id,
+          loser_id,
+          winner_score,
+          loser_score,
+        });
+
         // 反映（service-role のときのみ）
         const applyReq = (body as SinglesPayload).apply_rating ?? true;
         let applied = false;
@@ -445,7 +534,14 @@ export async function POST(req: NextRequest) {
         }
 
         return NextResponse.json(
-          { ok: true, match_id: ins.id, winner_id, loser_id, apply_rating: !!deltas && hasSrv ? applied : false, deltas: deltas ?? null },
+          {
+            ok: true,
+            match_id: ins.id,
+            winner_id,
+            loser_id,
+            apply_rating: hasSrv ? applied : false,
+            deltas: deltas ?? null,
+          },
           { status: 201 }
         );
       } catch (e: any) {
