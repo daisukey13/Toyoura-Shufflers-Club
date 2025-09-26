@@ -1,3 +1,4 @@
+// app/(main)/matches/page.tsx
 'use client';
 
 import {
@@ -26,12 +27,10 @@ import Link from 'next/link';
 import { useFetchMatchesData as useMatchesData } from '@/lib/hooks/useFetchSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
-/* ─────────────── （必要なら残す）大画面の仮想スクロール ───────────────
-   ※ ページャと併用してもOK。ページ内の5件だけを仮想化しても効果は薄いので
-   実用上は常時オフでも問題ありません。必要なら useVirtual を true に。 */
+/* ─────────────── （必要なら残す）大画面の仮想スクロール ─────────────── */
 const VirtualList = lazy(() => import('@/components/VirtualList'));
 
-/* ─────────────── REST (チームメンバー取得に使用) ─────────────── */
+/* ─────────────── REST (チームメンバー / プレイヤー現在値 取得) ─────────────── */
 const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 async function restGet<T = any>(path: string) {
@@ -47,7 +46,7 @@ async function restGet<T = any>(path: string) {
   return (await res.json()) as T;
 }
 
-/* ─────────────── 画面幅フラグ（sm < 640px） ─────────────── */
+/* ─────────────── 画面幅フラグ ─────────────── */
 function useIsSmallScreen() {
   const [small, setSmall] = useState(false);
   useEffect(() => {
@@ -65,7 +64,7 @@ function useIsSmallScreen() {
   return small;
 }
 
-/** match_details ビュー想定の型（個人戦/団体戦の両方を吸収） */
+/* ─────────────── 型（ビューの名前差異も吸収） ─────────────── */
 interface MatchDetails {
   id: string;
   match_date: string;
@@ -75,18 +74,37 @@ interface MatchDetails {
   winner_name?: string | null;
   winner_avatar?: string | null;
   winner_avatar_url?: string | null;
+
+  // 現在値（ビューにあれば使用。無ければRESTで補完）
   winner_current_points?: number | null;
   winner_current_handicap?: number | null;
+
+  // RP変化（ビュー/テーブルによって列名が異なるため別名を網羅）
   winner_points_change?: number | null;
+  winner_points_delta?: number | null;
+  winner_rp_delta?: number | null;
+
+  // HC変化（別名を網羅）
+  winner_handicap_change?: number | null;
+  winner_handicap_delta?: number | null;
+  winner_hc_delta?: number | null;
 
   loser_id?: string | null;
   loser_name?: string | null;
   loser_avatar?: string | null;
   loser_avatar_url?: string | null;
   loser_score: number | null;
+
   loser_current_points?: number | null;
   loser_current_handicap?: number | null;
+
   loser_points_change?: number | null;
+  loser_points_delta?: number | null;
+  loser_rp_delta?: number | null;
+
+  loser_handicap_change?: number | null;
+  loser_handicap_delta?: number | null;
+  loser_hc_delta?: number | null;
 
   winner_team_id?: string | null;
   winner_team_name?: string | null;
@@ -105,16 +123,20 @@ type MemberProfile = {
   avatar_url?: string | null;
 };
 
-/* 画像の遅延読み込み（next/image を使わず最軽量） */
-const LazyImage = ({
-  src,
-  alt,
-  className,
-}: {
-  src?: string | null;
-  alt: string;
-  className: string;
-}) => (
+type PlayerNow = { id: string; ranking_points: number | null; handicap: number | null };
+
+/* ─────────────── 小ユーティリティ ─────────────── */
+const isFiniteNum = (v: any): v is number => typeof v === 'number' && Number.isFinite(v);
+const pickNumber = (...vals: Array<number | null | undefined>) =>
+  vals.find(isFiniteNum) as number | undefined;
+const signed = (n?: number | null) =>
+  !isFiniteNum(n) || n === 0 ? '0' : (n! > 0 ? `+${n}` : `${n}`);
+
+const colorByDelta = (n?: number | null) =>
+  !isFiniteNum(n) || n === 0 ? 'text-gray-400' : n! > 0 ? 'text-green-400' : 'text-red-400';
+
+/* 画像の遅延読み込み */
+const LazyImage = ({ src, alt, className }: { src?: string | null; alt: string; className: string }) => (
   // eslint-disable-next-line @next/next/no-img-element
   <img
     src={src || '/default-avatar.png'}
@@ -122,14 +144,11 @@ const LazyImage = ({
     className={className}
     loading="lazy"
     decoding="async"
-    onError={(e) => {
-      (e.target as HTMLImageElement).src = '/default-avatar.png';
-    }}
+    onError={(e) => { (e.target as HTMLImageElement).src = '/default-avatar.png'; }}
   />
 );
 
 /* ─────────────── 共通UI ─────────────── */
-
 const ModeChip = ({ mode }: { mode?: MatchDetails['mode'] }) => {
   const isTeams = mode === 'teams';
   return (
@@ -147,19 +166,11 @@ const ModeChip = ({ mode }: { mode?: MatchDetails['mode'] }) => {
   );
 };
 
-const ScoreDiffPill = ({
-  diff,
-  highlight,
-}: {
-  diff: number;
-  highlight?: 'upset';
-}) => {
+const ScoreDiffPill = ({ diff, highlight }: { diff: number; highlight?: 'upset' }) => {
   const color =
-    diff >= 10
-      ? 'from-red-500 to-red-600'
-      : diff >= 5
-      ? 'from-orange-500 to-orange-600'
-      : 'from-blue-500 to-blue-600';
+    diff >= 10 ? 'from-red-500 to-red-600'
+    : diff >= 5 ? 'from-orange-500 to-orange-600'
+    : 'from-blue-500 to-blue-600';
   return (
     <div
       className={`inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 rounded-full shadow-lg ${
@@ -179,18 +190,8 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
     const date = new Date(m.match_date);
     const today = new Date();
     const sameDay = date.toDateString() === today.toDateString();
-    if (sameDay)
-      return `今日 ${date.toLocaleTimeString('ja-JP', {
-        hour: '2-digit',
-        minute: '2-digit',
-      })}`;
-    return date.toLocaleString('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    if (sameDay) return `今日 ${date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
+    return date.toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   }, [m.match_date]);
 
   return (
@@ -198,9 +199,7 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
       {m.is_tournament && m.tournament_name && (
         <span className="px-2 sm:px-3 py-1 rounded-full bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 text-yellow-400 flex items-center gap-1">
           <FaMedal className="text-xs" />
-          <span className="truncate max-w-[150px] sm:max-w-none">
-            {m.tournament_name}
-          </span>
+          <span className="truncate max-w-[150px] sm:max-w-none">{m.tournament_name}</span>
         </span>
       )}
       <ModeChip mode={m.mode} />
@@ -211,9 +210,7 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
       {m.venue && (
         <span className="text-gray-400 flex items-center gap-1">
           <FaMapMarkerAlt className="text-xs" />
-          <span className="truncate max-w-[100px] sm:max-w-none">
-            {m.venue}
-          </span>
+          <span className="truncate max-w-[100px] sm:max-w-none">{m.venue}</span>
         </span>
       )}
     </div>
@@ -222,33 +219,45 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
 
 /* ─────────────── 個人戦カード ─────────────── */
 
-const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
+const SinglesCard = memo(function SinglesCard({
+  m,
+  nowByPlayer,
+}: {
+  m: MatchDetails;
+  nowByPlayer: Record<string, PlayerNow>;
+}) {
   const loserScore = m.loser_score ?? 0;
   const scoreDiff = 15 - loserScore;
 
   const wAvatar = m.winner_avatar ?? m.winner_avatar_url;
   const lAvatar = m.loser_avatar ?? m.loser_avatar_url;
 
+  // upset ハイライト
   const isUpset = useMemo(() => {
-    const wp = m.winner_current_points ?? null;
-    const lp = m.loser_current_points ?? null;
-    const wh = m.winner_current_handicap ?? null;
-    const lh = m.loser_current_handicap ?? null;
-    if (wp == null || lp == null || wh == null || lh == null) return false;
+    const wp = pickNumber(m.winner_current_points, nowByPlayer[m.winner_id || '']?.ranking_points);
+    const lp = pickNumber(m.loser_current_points, nowByPlayer[m.loser_id || '']?.ranking_points);
+    const wh = pickNumber(m.winner_current_handicap, nowByPlayer[m.winner_id || '']?.handicap);
+    const lh = pickNumber(m.loser_current_handicap, nowByPlayer[m.loser_id || '']?.handicap);
+    if (!isFiniteNum(wp) || !isFiniteNum(lp) || !isFiniteNum(wh) || !isFiniteNum(lh)) return false;
     return wp < lp - 100 || wh > lh + 5;
-  }, [
-    m.winner_current_points,
-    m.loser_current_points,
-    m.winner_current_handicap,
-    m.loser_current_handicap,
-  ]);
+  }, [m, nowByPlayer]);
+
+  // 現在値（ビュー優先 → REST補完）
+  const wRP = pickNumber(m.winner_current_points, nowByPlayer[m.winner_id || '']?.ranking_points) ?? 0;
+  const wHC = pickNumber(m.winner_current_handicap, nowByPlayer[m.winner_id || '']?.handicap) ?? 0;
+  const lRP = pickNumber(m.loser_current_points,  nowByPlayer[m.loser_id  || '']?.ranking_points) ?? 0;
+  const lHC = pickNumber(m.loser_current_handicap, nowByPlayer[m.loser_id  || '']?.handicap) ?? 0;
+
+  // 変化値（ビュー名/テーブル名の差異を吸収）
+  const wRPd = pickNumber(m.winner_points_change, m.winner_points_delta, m.winner_rp_delta) ?? 0;
+  const lRPd = pickNumber(m.loser_points_change,  m.loser_points_delta,  m.loser_rp_delta)  ?? 0;
+  const wHCd = pickNumber(m.winner_handicap_change, m.winner_handicap_delta, m.winner_hc_delta) ?? 0;
+  const lHCd = pickNumber(m.loser_handicap_change,  m.loser_handicap_delta,  m.loser_hc_delta)  ?? 0;
 
   return (
     <div
       className={`bg-gray-900/60 backdrop-blur-md rounded-xl p-4 sm:p-6 border transition-all relative ${
-        isUpset
-          ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10'
-          : 'border-purple-500/30 hover:border-purple-400/50'
+        isUpset ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10' : 'border-purple-500/30 hover:border-purple-400/50'
       }`}
     >
       {isUpset && (
@@ -276,78 +285,50 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
               <LazyImage
                 src={wAvatar}
                 alt={m.winner_name || ''}
-                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${
-                  isUpset ? 'border-yellow-500/50' : 'border-green-500/50'
-                }`}
+                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${isUpset ? 'border-yellow-500/50' : 'border-green-500/50'}`}
               />
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.winner_name}
-                </p>
-                <p
-                  className={`text-xs sm:text-sm ${
-                    isUpset ? 'text-yellow-400' : 'text-green-400'
-                  }`}
-                >
-                  勝利
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.winner_name}</p>
+                <p className={`${isUpset ? 'text-yellow-400' : 'text-green-400'} text-xs sm:text-sm`}>勝利</p>
                 <div className="flex gap-3 text-xs text-gray-400">
-                  <span>RP: {m.winner_current_points ?? 0}</span>
-                  <span>HC: {m.winner_current_handicap ?? 0}</span>
+                  <span>RP: {wRP}</span>
+                  <span>HC: {wHC}</span>
                 </div>
               </div>
               <div className="text-right">
                 <p className="text-xl sm:text-2xl font-bold text-white">15</p>
-                <p
-                  className={`text-xs sm:text-sm font-medium ${
-                    (m.winner_points_change ?? 0) > 0
-                      ? 'text-green-400'
-                      : 'text-red-400'
-                  }`}
-                >
-                  {(m.winner_points_change ?? 0) > 0 ? '+' : ''}
-                  {m.winner_points_change ?? 0}pt
-                </p>
+                <div className="mt-0.5 text-[11px] sm:text-xs leading-4">
+                  <div className={colorByDelta(wRPd)}>ΔRP {signed(wRPd)}pt</div>
+                  <div className={colorByDelta(wHCd)}>ΔHC {signed(wHCd)}</div>
+                </div>
               </div>
             </div>
           </Link>
 
           {/* VS */}
           <div className="text-center my-2 sm:my-0">
-            <ScoreDiffPill
-              diff={scoreDiff}
-              highlight={isUpset ? 'upset' : undefined}
-            />
-            <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">
-              点差: {scoreDiff}
-            </p>
+            <ScoreDiffPill diff={scoreDiff} highlight={isUpset ? 'upset' : undefined} />
+            <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">点差: {scoreDiff}</p>
           </div>
 
           {/* 敗者 */}
           <Link href={`/players/${m.loser_id ?? ''}`} prefetch={false} className="group">
             <div className="flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 group-hover:border-red-400/50 transition-all">
-              <LazyImage
-                src={lAvatar}
-                alt={m.loser_name || ''}
-                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-red-500/50"
-              />
+              <LazyImage src={lAvatar} alt={m.loser_name || ''} className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-red-500/50" />
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.loser_name}
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.loser_name}</p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
                 <div className="flex gap-3 text-xs text-gray-400">
-                  <span>RP: {m.loser_current_points ?? 0}</span>
-                  <span>HC: {m.loser_current_handicap ?? 0}</span>
+                  <span>RP: {lRP}</span>
+                  <span>HC: {lHC}</span>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-xl sm:text-2xl font-bold text-white">
-                  {loserScore}
-                </p>
-                <p className="text-xs sm:text-sm text-red-400 font-medium">
-                  {m.loser_points_change ?? 0}pt
-                </p>
+                <p className="text-xl sm:text-2xl font-bold text-white">{loserScore}</p>
+                <div className="mt-0.5 text-[11px] sm:text-xs leading-4">
+                  <div className={colorByDelta(lRPd)}>ΔRP {signed(lRPd)}pt</div>
+                  <div className={colorByDelta(lHCd)}>ΔHC {signed(lHCd)}</div>
+                </div>
               </div>
             </div>
           </Link>
@@ -363,7 +344,7 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
   );
 });
 
-/* ─────────────── 団体戦カード（チームのメンバー表示付き） ─────────────── */
+/* ─────────────── 団体戦カード ─────────────── */
 
 function TeamMembersRow({ members }: { members: MemberProfile[] }) {
   if (!members?.length) return null;
@@ -372,15 +353,9 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
 
   return (
     <div className="mt-1">
-      {/* アバター重ね表示 */}
       <div className="flex -space-x-3">
         {shown.map((p) => (
-          <Link
-            key={p.id}
-            href={`/players/${p.id}`}
-            prefetch={false}
-            title={p.handle_name}
-          >
+          <Link key={p.id} href={`/players/${p.id}`} prefetch={false} title={p.handle_name}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={p.avatar_url || '/default-avatar.png'}
@@ -388,9 +363,7 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
               className="w-7 h-7 rounded-full border-2 border-gray-900 object-cover"
               loading="lazy"
               decoding="async"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = '/default-avatar.png';
-              }}
+              onError={(e) => { (e.target as HTMLImageElement).src = '/default-avatar.png'; }}
             />
           </Link>
         ))}
@@ -400,7 +373,6 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
           </div>
         )}
       </div>
-      {/* 名前リスト（小さく・折り返し） */}
       <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">
         {members.map((m) => m.handle_name).join(' / ')}
       </div>
@@ -418,12 +390,8 @@ const TeamsCard = memo(function TeamsCard({
   const loserScore = m.loser_score ?? 0;
   const scoreDiff = 15 - loserScore;
 
-  const winnerMembers = m.winner_team_id
-    ? membersByTeam[m.winner_team_id] ?? []
-    : [];
-  const loserMembers = m.loser_team_id
-    ? membersByTeam[m.loser_team_id] ?? []
-    : [];
+  const winnerMembers = m.winner_team_id ? membersByTeam[m.winner_team_id] ?? [] : [];
+  const loserMembers  = m.loser_team_id  ? membersByTeam[m.loser_team_id]  ?? [] : [];
 
   return (
     <div className="bg-gray-900/60 backdrop-blur-md rounded-xl p-4 sm:p-6 border border-purple-500/30 hover:border-purple-400/50 transition-all">
@@ -432,19 +400,13 @@ const TeamsCard = memo(function TeamsCard({
       <div className="grid grid-cols-1 gap-3 sm:gap-4">
         <div className="sm:grid sm:grid-cols-3 sm:items-center gap-3 sm:gap-4">
           {/* 勝利チーム */}
-          <Link
-            href={`/teams/${m.winner_team_id ?? ''}`}
-            prefetch={false}
-            className="group"
-          >
+          <Link href={`/teams/${m.winner_team_id ?? ''}`} prefetch={false} className="group">
             <div className="flex-1 flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/30 group-hover:border-green-400/50 transition-all">
               <span className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-yellow-500/20 border-2 border-yellow-400/40 flex items-center justify-center">
                 <FaUsers className="text-yellow-300" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.winner_team_name ?? '—'}
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.winner_team_name ?? '—'}</p>
                 <p className="text-xs sm:text-sm text-green-400">勝利</p>
                 <TeamMembersRow members={winnerMembers} />
               </div>
@@ -457,32 +419,22 @@ const TeamsCard = memo(function TeamsCard({
           {/* VS */}
           <div className="text-center my-2 sm:my-0">
             <ScoreDiffPill diff={scoreDiff} />
-            <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">
-              点差: {scoreDiff}
-            </p>
+            <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">点差: {scoreDiff}</p>
           </div>
 
           {/* 敗北チーム */}
-          <Link
-            href={`/teams/${m.loser_team_id ?? ''}`}
-            prefetch={false}
-            className="group"
-          >
+          <Link href={`/teams/${m.loser_team_id ?? ''}`} prefetch={false} className="group">
             <div className="flex-1 flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 group-hover:border-red-400/50 transition-all">
               <span className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gray-600/30 border-2 border-purple-400/30 flex items-center justify-center">
                 <FaUsers className="text-purple-200" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.loser_team_name ?? '—'}
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.loser_team_name ?? '—'}</p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
                 <TeamMembersRow members={loserMembers} />
               </div>
               <div className="ml-auto text-right">
-                <p className="text-xl sm:text-2xl font-bold text-white">
-                  {loserScore}
-                </p>
+                <p className="text-xl sm:text-2xl font-bold text-white">{loserScore}</p>
               </div>
             </div>
           </Link>
@@ -505,9 +457,7 @@ const PER_PAGE = 5;
 function usePagination(total: number) {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
-
   const safeSet = (n: number) => setPage(Math.min(Math.max(1, n), totalPages));
-
   return { page, setPage: safeSet, totalPages };
 }
 
@@ -520,11 +470,10 @@ function Pager({
   totalPages: number;
   onChange: (p: number) => void;
 }) {
-  // 例: 1 ... 4 5 [6] 7 8 ... 20
   const range = useMemo(() => {
     const arr: (number | '...')[] = [];
     const push = (v: number | '...') => arr.push(v);
-    const window = 1; // 現在の前後
+    const window = 1;
     const first = 1;
     const last = totalPages;
 
@@ -532,7 +481,6 @@ function Pager({
       for (let i = 1; i <= last; i++) push(i);
       return arr;
     }
-
     push(first);
     if (page - window > first + 1) push('...');
     for (let i = Math.max(first + 1, page - window); i <= Math.min(last - 1, page + window); i++) {
@@ -556,9 +504,7 @@ function Pager({
 
       {range.map((v, i) =>
         v === '...' ? (
-          <span key={`e-${i}`} className="px-2 text-gray-500">
-            …
-          </span>
+          <span key={`e-${i}`} className="px-2 text-gray-500">…</span>
         ) : (
           <button
             key={v}
@@ -597,11 +543,10 @@ export default function MatchesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
 
-  // 検索・絞り込み（個人戦/団体戦共通）
+  // 検索・絞り込み
   const filteredSortedMatches = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const now = new Date();
-
     const filtered = (matches as MatchDetails[]).filter((m) => {
       const searchHit =
         !term ||
@@ -623,53 +568,39 @@ export default function MatchesPage() {
       return searchHit && typeHit && dateHit;
     });
 
-    // 最新→過去（時系列降順）
     filtered.sort((a, b) => +new Date(b.match_date) - +new Date(a.match_date));
     return filtered;
   }, [matches, searchTerm, filter, dateFilter]);
 
-  /* ── ページャ（5件/ページ） ── */
+  /* ページャ（5件/ページ） */
   const { page, setPage, totalPages } = usePagination(filteredSortedMatches.length);
 
-  // フィルタ変更時は1ページ目へ
-  useEffect(() => {
-    setPage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm, filter, dateFilter]);
+  useEffect(() => { setPage(1); /* フィルタ変更時に先頭へ */ }, [searchTerm, filter, dateFilter]); // eslint-disable-line
 
   const pagedMatches = useMemo(
     () => filteredSortedMatches.slice((page - 1) * PER_PAGE, page * PER_PAGE),
     [filteredSortedMatches, page]
   );
 
-  /* ── 表示中の試合に出てくるチームのメンバーを取得 ── */
+  /* ── 表示中の試合のチームメンバー取得 ── */
   const [membersByTeam, setMembersByTeam] = useState<Record<string, MemberProfile[]>>({});
   const visibleTeamIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const m of pagedMatches) {
-      if (m.winner_team_id) ids.add(m.winner_team_id);
-      if (m.loser_team_id) ids.add(m.loser_team_id);
-    }
+    for (const m of pagedMatches) { if (m.winner_team_id) ids.add(m.winner_team_id); if (m.loser_team_id) ids.add(m.loser_team_id); }
     return Array.from(ids);
   }, [pagedMatches]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (visibleTeamIds.length === 0) {
-        if (!cancelled) setMembersByTeam({});
-        return;
-      }
+      if (visibleTeamIds.length === 0) { if (!cancelled) setMembersByTeam({}); return; }
       try {
         const inTeams = visibleTeamIds.map((id) => `"${id}"`).join(',');
         const tm = await restGet<{ team_id: string; player_id: string }[]>(
           `/rest/v1/team_members?team_id=in.(${inTeams})&select=team_id,player_id`
         );
         const pids = Array.from(new Set(tm.map((r) => r.player_id)));
-        if (pids.length === 0) {
-          if (!cancelled) setMembersByTeam({});
-          return;
-        }
+        if (pids.length === 0) { if (!cancelled) setMembersByTeam({}); return; }
         const inPlayers = pids.map((id) => `"${id}"`).join(',');
         const players = await restGet<MemberProfile[]>(
           `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url`
@@ -681,28 +612,40 @@ export default function MatchesPage() {
           if (!p) continue;
           (grouped[r.team_id] ||= []).push(p);
         }
-        for (const k of Object.keys(grouped)) {
-          grouped[k] = grouped[k].sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'));
-        }
+        for (const k of Object.keys(grouped)) grouped[k] = grouped[k].sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'));
         if (!cancelled) setMembersByTeam(grouped);
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [visibleTeamIds]);
 
-  // 統計（全体）
-  const stats = useMemo(() => {
-    const arr = matches as MatchDetails[];
-    const totalMatches = arr.length;
-    const todayMatches = arr.filter((m) => new Date(m.match_date).toDateString() === new Date().toDateString()).length;
-    const tournamentMatches = arr.filter((m) => !!m.is_tournament).length;
-    const avgScoreDiff = arr.length > 0 ? arr.reduce((s, m) => s + (15 - (m.loser_score ?? 0)), 0) / arr.length : 0;
-    return { totalMatches, todayMatches, tournamentMatches, avgScoreDiff };
-  }, [matches]);
+  /* ── 表示中の試合に登場するプレイヤーの現在RP/HCを補完 ── */
+  const [nowByPlayer, setNowByPlayer] = useState<Record<string, PlayerNow>>({});
+  const visiblePlayerIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of pagedMatches) {
+      if (m.winner_id) ids.add(m.winner_id);
+      if (m.loser_id)  ids.add(m.loser_id);
+    }
+    return Array.from(ids);
+  }, [pagedMatches]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (visiblePlayerIds.length === 0) { if (!cancelled) setNowByPlayer({}); return; }
+      try {
+        const inPlayers = visiblePlayerIds.map((id) => `"${id}"`).join(',');
+        const rows = await restGet<PlayerNow[]>(
+          `/rest/v1/players?id=in.(${inPlayers})&select=id,ranking_points,handicap`
+        );
+        const map: Record<string, PlayerNow> = {};
+        for (const r of rows) map[r.id] = r;
+        if (!cancelled) setNowByPlayer(map);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [visiblePlayerIds]);
 
   // 仮想化はオフ（ページャ優先）
   const useVirtual = false;
@@ -714,11 +657,21 @@ export default function MatchesPage() {
       return isTeams ? (
         <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
       ) : (
-        <SinglesCard key={m.id} m={m} />
+        <SinglesCard key={m.id} m={m} nowByPlayer={nowByPlayer} />
       );
     },
-    [pagedMatches, membersByTeam]
+    [pagedMatches, membersByTeam, nowByPlayer]
   );
+
+  // 統計（全体）
+  const stats = useMemo(() => {
+    const arr = matches as MatchDetails[];
+    const totalMatches = arr.length;
+    const todayMatches = arr.filter((m) => new Date(m.match_date).toDateString() === new Date().toDateString()).length;
+    const tournamentMatches = arr.filter((m) => !!m.is_tournament).length;
+    const avgScoreDiff = arr.length > 0 ? arr.reduce((s, m) => s + (15 - (m.loser_score ?? 0)), 0) / arr.length : 0;
+    return { totalMatches, todayMatches, tournamentMatches, avgScoreDiff };
+  }, [matches]);
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
@@ -837,7 +790,7 @@ export default function MatchesPage() {
                   return isTeams ? (
                     <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
                   ) : (
-                    <SinglesCard key={m.id} m={m} />
+                    <SinglesCard key={m.id} m={m} nowByPlayer={nowByPlayer} />
                   );
                 })}
               </div>

@@ -1,7 +1,7 @@
 // next.config.js
 /** @type {import('next').NextConfig} */
 
-// ---- Security Headers (CSP tuned for Supabase + Cloudflare Turnstile + fonts) ----
+// ---- Security Headers (CSP for Supabase + Cloudflare Turnstile + Cloudflare Insights) ----
 const securityHeaders = [
   {
     key: 'Content-Security-Policy',
@@ -12,76 +12,76 @@ const securityHeaders = [
       "object-src 'none'",
       "form-action 'self'",
       "frame-ancestors 'self'",
+      'upgrade-insecure-requests',
 
-      // Scripts (Cloudflare Turnstile)
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
+      // --- Scripts ---
+      // Nextのインライン/ハイドレーション, Turnstile, Cloudflare Insights(スクリプトCDN)
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://static.cloudflareinsights.com",
+      // タグ由来のスクリプトにも同じ許可を明示（Chromeの警告回避）
+      "script-src-elem 'self' 'unsafe-inline' https://challenges.cloudflare.com https://static.cloudflareinsights.com",
+      // on* の属性実行は不可（安全強化・任意）
+      "script-src-attr 'none'",
 
-      // Frames (Turnstile widget)
+      // --- Frames (Turnstile widget) ---
       "frame-src 'self' https://challenges.cloudflare.com",
 
-      // Network calls (Supabase APIs/Realtime/Storage + Turnstile)
-      // Realtime は wss を許可
-      "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.net https://challenges.cloudflare.com wss://*.supabase.co wss://*.supabase.in wss://*.supabase.net",
+      // --- Network calls ---
+      // Supabase (REST/Realtime/Storage) + Turnstile 検証 + Insights 送信先
+      "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.net https://challenges.cloudflare.com https://cloudflareinsights.com https://static.cloudflareinsights.com wss://*.supabase.co wss://*.supabase.in wss://*.supabase.net",
 
-      // Images (Supabase public objects, data/blob, Turnstile assets)
-      "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://*.supabase.net https://challenges.cloudflare.com",
+      // --- Images ---
+      // Supabase public objects / data: / blob: / Turnstile / Insights
+      "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://*.supabase.net https://challenges.cloudflare.com https://static.cloudflareinsights.com",
 
-      // Styles (allow inline for Tailwind/Next style tags + optional providers)
+      // --- Styles/Fonts ---
+      // Tailwind/Nextのインラインstyle、Google Fonts、Bootstrap CDN
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://maxcdn.bootstrapcdn.com",
-
-      // Fonts (allow data: and CDN fonts to avoid CSP errors)
+      "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com https://maxcdn.bootstrapcdn.com",
       "font-src 'self' data: https://fonts.gstatic.com https://maxcdn.bootstrapcdn.com",
 
-      // Workers (Next dev / client features)
+      // --- Workers (some Next features/dev) ---
       "worker-src 'self' blob:",
-    ].join('; '),
+
+      // 任意だが noise を減らす
+      "manifest-src 'self'",
+      "media-src 'self' blob: data:",
+      "prefetch-src 'self' https: data:"
+    ].join('; ')
   },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
+  // 互換のため残す（実質は frame-ancestors が有効）
   { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' }
 ];
 
 const nextConfig = {
   reactStrictMode: true,
 
-  // next/image: allow Supabase Storage public bucket images
   images: {
     remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '*.supabase.co',
-        pathname: '/storage/v1/object/public/**',
-      },
-      {
-        protocol: 'https',
-        hostname: '*.supabase.in',
-        pathname: '/storage/v1/object/public/**',
-      },
-      {
-        protocol: 'https',
-        hostname: '*.supabase.net',
-        pathname: '/storage/v1/object/public/**',
-      },
-    ],
+      { protocol: 'https', hostname: '*.supabase.co', pathname: '/storage/v1/object/public/**' },
+      { protocol: 'https', hostname: '*.supabase.in', pathname: '/storage/v1/object/public/**' },
+      { protocol: 'https', hostname: '*.supabase.net', pathname: '/storage/v1/object/public/**' }
+    ]
   },
 
   async headers() {
     return [
       {
         source: '/(.*)',
-        headers: securityHeaders,
-      },
+        headers: securityHeaders
+      }
     ];
   },
 
-  // 旧: /matches/register -> 新: /matches/register/singles に統一
+  // 旧パスを新へ統一
   async redirects() {
     return [
       { source: '/matches/register', destination: '/matches/register/singles', permanent: true },
-      { source: '/matches/register/', destination: '/matches/register/singles', permanent: true },
+      { source: '/matches/register/', destination: '/matches/register/singles', permanent: true }
     ];
-  },
+  }
 };
 
 module.exports = nextConfig;
