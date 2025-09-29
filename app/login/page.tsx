@@ -1,4 +1,3 @@
-// app/(auth)/login/page.tsx
 'use client';
 
 import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
@@ -35,14 +34,13 @@ function Fallback() {
   );
 }
 
-/* ★ 追加：内部パスだけ許可するサニタイズ */
+/** 内部パスだけ許可（/login 自体は不可） */
 function safeInternalPath(p?: string | null): string | null {
   if (!p) return null;
   try {
     const s = decodeURIComponent(p.trim());
-    if (!s || s === '/login') return null;        // /login へは戻さない（ループ防止）
-    if (!s.startsWith('/')) return null;          // 外部URL禁止
-    // 必要ならさらに厳密なホワイトリストに
+    if (!s || s === '/login') return null;
+    if (!s.startsWith('/')) return null;
     return s;
   } catch {
     return null;
@@ -57,15 +55,15 @@ function LoginPageInner() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // ★ 変更：?from または ?redirect を読み、内部パスのみ許可
   const DEFAULT_AFTER_LOGIN = '/mypage';
   const rawRedirect = mounted
     ? (searchParams.get('from') ?? searchParams.get('redirect') ?? '')
     : '';
-  const redirectedFromParam = safeInternalPath(rawRedirect); // null なら使わない
+  const redirectedFromParam = safeInternalPath(rawRedirect);
   const redirectSafe = redirectedFromParam ?? DEFAULT_AFTER_LOGIN;
 
   const [alreadyAuthed, setAlreadyAuthed] = useState<boolean | null>(null);
+  const redirectOnceRef = useRef(false);
 
   const [mode, setMode] = useState<Mode>('email');
   const [email, setEmail] = useState('');
@@ -103,47 +101,51 @@ function LoginPageInner() {
   const tokenTimeRef = useRef<number>(0);
   const TOKEN_TTL_MS = 110 * 1000;
 
-  /** whoami → 既ログイン検出。管理者なら即ダッシュボードへ
-   *  一般ユーザーは「?from/redirect が指定されている場合のみ」即リダイレクト
-   *  （指定が無い通常アクセスでは従来どおりモーダル表示）
-   */
+  /** ★ 既ログイン判定は Supabase のセッションだけで行う（whoami 依存をやめる） */
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
+
     (async () => {
       try {
-        const r = await fetch('/auth/whoami', { cache: 'no-store' });
-        const j = r.ok ? await r.json() : { authenticated: false };
+        const { data } = await supabase.auth.getSession();
         if (cancelled) return;
 
-        if (j?.authenticated) {
-          const { data: gu } = await supabase.auth.getUser();
-          const currentEmail = gu?.user?.email?.toLowerCase() || '';
-          if (currentEmail && isForcedAdmin(currentEmail)) {
-            router.replace('/admin/dashboard');
+        const session = data.session;
+        if (session?.user) {
+          // 管理者は常にダッシュボードへ
+          const mail = session.user.email?.toLowerCase() || '';
+          if (mail && isForcedAdmin(mail)) {
+            if (!redirectOnceRef.current) {
+              redirectOnceRef.current = true;
+              router.replace('/admin/dashboard');
+            }
             return;
           }
-          // ★ 追加：一般ユーザーでも from/redirect があればそちらへ即遷移
-          if (redirectedFromParam) {
+          // 一般ユーザー：from/redirect があれば即そちらへ
+          if (redirectedFromParam && !redirectOnceRef.current) {
+            redirectOnceRef.current = true;
             router.replace(redirectSafe);
             return;
           }
-          setAlreadyAuthed(true); // ← 通常アクセスは従来どおりモーダル表示
+          // 通常アクセスは従来どおりモーダル表示
+          setAlreadyAuthed(true);
           return;
         }
 
+        // 未ログイン → フォーム表示
         setAlreadyAuthed(false);
       } catch {
-        if (!cancelled) setAlreadyAuthed(false);
+        setAlreadyAuthed(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, supabase, isForcedAdmin, router, redirectedFromParam, redirectSafe]);
 
-  /** Turnstile window 参照（型定義の衝突回避のため any で扱う） */
+  /** Turnstile window 参照（anyで扱う） */
   const getT = () =>
     (window as any).turnstile as
       | {
@@ -254,11 +256,11 @@ function LoginPageInner() {
     } catch {}
   };
 
-  /** 成功後の遷移（管理者メールは常にダッシュボード） */
+  /** 成功後の遷移（管理者は常にダッシュボード、一般ユーザーは from/redirect を優先） */
   const afterSuccessRedirect = async (emails: string[]) => {
     const lower = emails.map((e) => (e || '').toLowerCase());
     const isAdmin = lower.some((e) => isForcedAdmin(e));
-    router.replace(isAdmin ? '/admin/dashboard' : redirectSafe); // ★ 修正：from/redirect を優先
+    router.replace(isAdmin ? '/admin/dashboard' : redirectSafe);
   };
 
   /** 最新 Turnstile token */
@@ -331,7 +333,7 @@ function LoginPageInner() {
       tokenTimeRef.current = 0;
       setCfToken('');
 
-      // ★ 入力メール と Supabase 側メール の両方で管理者判定 → 適切にリダイレクト
+      // 入力メール と Supabase 側メール の両方で管理者判定 → 適切に遷移
       const effectiveEmails = [loginEmail, data.user?.email || ''];
       await afterSuccessRedirect(effectiveEmails);
     } catch (err: any) {
@@ -352,8 +354,7 @@ function LoginPageInner() {
   if (!mounted || alreadyAuthed === null) return <Fallback />;
 
   if (alreadyAuthed) {
-    // ★ 既ログインでも from/redirect 指定があれば useEffect 側で即遷移するので
-    // ここに来るのは通常アクセスだけ（従来のモーダル表示を維持）
+    // 既ログイン：通常アクセス時のみモーダル表示（from/redirect 指定時は useEffect 側で即遷移済み）
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
@@ -494,11 +495,12 @@ function LoginPageInner() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">パスワード</label>
+                  {/* ★ タイポ修正：bg紫 → bg-purple */}
                   <input
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 rounded-lg bg紫-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
+                    className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
                     placeholder="••••••••"
                     autoComplete="current-password"
                     required
@@ -521,7 +523,7 @@ function LoginPageInner() {
               disabled={primaryDisabled}
               className="w-full px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
-              {primaryButtonText}
+              {loading ? 'ログイン中…' : 'ログイン'}
             </button>
           </form>
 
