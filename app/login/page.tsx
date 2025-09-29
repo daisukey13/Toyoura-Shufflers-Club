@@ -35,6 +35,20 @@ function Fallback() {
   );
 }
 
+/* ★ 追加：内部パスだけ許可するサニタイズ */
+function safeInternalPath(p?: string | null): string | null {
+  if (!p) return null;
+  try {
+    const s = decodeURIComponent(p.trim());
+    if (!s || s === '/login') return null;        // /login へは戻さない（ループ防止）
+    if (!s.startsWith('/')) return null;          // 外部URL禁止
+    // 必要ならさらに厳密なホワイトリストに
+    return s;
+  } catch {
+    return null;
+  }
+}
+
 function LoginPageInner() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
@@ -43,11 +57,13 @@ function LoginPageInner() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // 既存の redirect クエリは「一般ユーザーのときのみ」使います（管理者は常に /admin/dashboard 優先）
+  // ★ 変更：?from または ?redirect を読み、内部パスのみ許可
   const DEFAULT_AFTER_LOGIN = '/mypage';
-  const redirectQ = mounted ? (searchParams.get('redirect') ?? '') : '';
-  const hasRedirect = !!(redirectQ && redirectQ !== '/login');
-  const redirectSafe = hasRedirect ? redirectQ : DEFAULT_AFTER_LOGIN;
+  const rawRedirect = mounted
+    ? (searchParams.get('from') ?? searchParams.get('redirect') ?? '')
+    : '';
+  const redirectedFromParam = safeInternalPath(rawRedirect); // null なら使わない
+  const redirectSafe = redirectedFromParam ?? DEFAULT_AFTER_LOGIN;
 
   const [alreadyAuthed, setAlreadyAuthed] = useState<boolean | null>(null);
 
@@ -87,7 +103,10 @@ function LoginPageInner() {
   const tokenTimeRef = useRef<number>(0);
   const TOKEN_TTL_MS = 110 * 1000;
 
-  /** whoami → 既ログイン検出。管理者なら即ダッシュボードへ（一般ユーザーは自動遷移しない） */
+  /** whoami → 既ログイン検出。管理者なら即ダッシュボードへ
+   *  一般ユーザーは「?from/redirect が指定されている場合のみ」即リダイレクト
+   *  （指定が無い通常アクセスでは従来どおりモーダル表示）
+   */
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
@@ -96,16 +115,24 @@ function LoginPageInner() {
         const r = await fetch('/auth/whoami', { cache: 'no-store' });
         const j = r.ok ? await r.json() : { authenticated: false };
         if (cancelled) return;
-        setAlreadyAuthed(!!j?.authenticated);
 
         if (j?.authenticated) {
           const { data: gu } = await supabase.auth.getUser();
           const currentEmail = gu?.user?.email?.toLowerCase() || '';
           if (currentEmail && isForcedAdmin(currentEmail)) {
             router.replace('/admin/dashboard');
+            return;
           }
-          // ※ 一般ユーザーはここで自動遷移しない（/mypage に飛ばすレースを防止）
+          // ★ 追加：一般ユーザーでも from/redirect があればそちらへ即遷移
+          if (redirectedFromParam) {
+            router.replace(redirectSafe);
+            return;
+          }
+          setAlreadyAuthed(true); // ← 通常アクセスは従来どおりモーダル表示
+          return;
         }
+
+        setAlreadyAuthed(false);
       } catch {
         if (!cancelled) setAlreadyAuthed(false);
       }
@@ -113,7 +140,8 @@ function LoginPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [mounted, supabase, isForcedAdmin, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, supabase, isForcedAdmin, router, redirectedFromParam, redirectSafe]);
 
   /** Turnstile window 参照（型定義の衝突回避のため any で扱う） */
   const getT = () =>
@@ -230,7 +258,7 @@ function LoginPageInner() {
   const afterSuccessRedirect = async (emails: string[]) => {
     const lower = emails.map((e) => (e || '').toLowerCase());
     const isAdmin = lower.some((e) => isForcedAdmin(e));
-    router.replace(isAdmin ? '/admin/dashboard' : redirectSafe);
+    router.replace(isAdmin ? '/admin/dashboard' : redirectSafe); // ★ 修正：from/redirect を優先
   };
 
   /** 最新 Turnstile token */
@@ -303,7 +331,7 @@ function LoginPageInner() {
       tokenTimeRef.current = 0;
       setCfToken('');
 
-      // ★ 入力メール と Supabase 側メール の両方で管理者判定
+      // ★ 入力メール と Supabase 側メール の両方で管理者判定 → 適切にリダイレクト
       const effectiveEmails = [loginEmail, data.user?.email || ''];
       await afterSuccessRedirect(effectiveEmails);
     } catch (err: any) {
@@ -324,7 +352,8 @@ function LoginPageInner() {
   if (!mounted || alreadyAuthed === null) return <Fallback />;
 
   if (alreadyAuthed) {
-    // 既ログイン時：管理者なら上の useEffect で自動遷移、一般ユーザーは選択肢を表示
+    // ★ 既ログインでも from/redirect 指定があれば useEffect 側で即遷移するので
+    // ここに来るのは通常アクセスだけ（従来のモーダル表示を維持）
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
@@ -469,7 +498,7 @@ function LoginPageInner() {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
+                    className="w-full px-4 py-3 rounded-lg bg紫-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none"
                     placeholder="••••••••"
                     autoComplete="current-password"
                     required
