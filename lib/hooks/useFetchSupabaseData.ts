@@ -6,8 +6,8 @@ import { createClient } from '@/lib/supabase/client';
 
 /**
  * NOTE
- * - 読み取りは基本「公開でもOK」を想定し、読み取り系ラッパの既定 requireAuth は false。
- * - `match_details` は VIEW（読み取り専用）想定。書き込みは `matches` に対して行ってください。
+ * - 公開読み取りは anon キーで行うため、読み取り系ラッパの既定 requireAuth は false。
+ * - 試合は VIEW（読み取り専用）を利用し、書込みは基表へ。
  */
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -23,7 +23,7 @@ type BaseOptions = {
   orderBy?: OrderBy;                // 複数列候補を順に試す
   limit?: number;
   retryCount?: number;              // default: 3
-  retryDelay?: number;              // default: 1000 (指数バックオフ気味に使用)
+  retryDelay?: number;              // default: 1000 (指数バックオフ気味)
   enabled?: boolean;                // default: true
   requireAuth?: boolean;            // default: true（読み取り系ラッパでは false を指定）
   queryParams?: Record<string, string>; // 追加クエリ（eq系など）
@@ -44,7 +44,7 @@ async function getAccessToken(requireAuth: boolean, tries = 3, delayMs = 300) {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token ?? null;
     if (token) return token;
-    if (!requireAuth) return null; // 認証不要なら即 null でOK（Anonキーで読む）
+    if (!requireAuth) return null; // 認証不要なら即 null（Anonキーで読む）
     await new Promise((r) => setTimeout(r, delayMs));
   }
   return null;
@@ -71,7 +71,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
   // フェッチ制御
   const inflightKeyRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const lastKeyRef = useRef<string | null>(null); // StrictMode の二重実行回避（キーが同じ場合のみ抑止）
+  const lastKeyRef = useRef<string | null>(null); // StrictMode の二重実行回避
 
   const { cols: orderCols, asc } = useMemo(() => toOrderColumns(orderBy), [orderBy]);
   const baseKey = useMemo(
@@ -116,7 +116,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
         });
 
         if (!res.ok) {
-          // 列が存在しないなどの 400 は次候補へ
+          // 列不在などの 400 は次候補へ（order列が無い等）
           if (res.status === 400 && col !== '__NO_ORDER__') continue;
           const errorText = await res.text();
           throw new Error(`HTTP ${res.status}: ${errorText}`);
@@ -198,30 +198,30 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
  * =========================================================*/
 
 export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: boolean }) {
+  // players → players_public に切替（UI期待の列名で返る）
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
-    tableName: 'players',
-    select: '*',
-    orderBy: { columns: ['ranking_points', 'id'], ascending: false },
+    tableName: 'players_public',
+    select:
+      'id,display_name,current_points,current_handicap,avatar_url,wins,losses,match_count,created_at,updated_at',
+    orderBy: { columns: ['current_points', 'id'], ascending: false },
     enabled: opts?.enabled ?? true,
     requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
   });
 
-  const filtered = useMemo(
-    () => data.filter((p: any) => p.is_active === true && p.is_deleted !== true),
-    [data]
-  );
-
-  return { players: filtered, loading, error, retrying, refetch };
+  // players_public 側で is_active/is_deleted はフィルタ済み
+  return { players: data, loading, error, retrying, refetch };
 }
 
 export function useFetchMatchesData(
   limit?: number,
   opts?: { enabled?: boolean; requireAuth?: boolean }
 ) {
+  // match_details → match_details_public に切替
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
-    tableName: 'match_details', // VIEW（読み取り専用）
-    select: '*',
-    orderBy: { columns: ['match_date', 'created_at', 'id'], ascending: false }, // 列が無ければ自動で次候補/順不同へ
+    tableName: 'match_details_public',
+    select:
+      'id,match_date,is_tournament,venue,loser_score,winner_id,winner_name,winner_avatar,winner_current_points,winner_current_handicap,winner_points_change,loser_id,loser_name,loser_avatar,loser_current_points,loser_current_handicap,loser_points_change,tournament_name',
+    orderBy: { columns: ['match_date', 'id'], ascending: false },
     limit,
     enabled: opts?.enabled ?? true,
     requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
@@ -328,12 +328,14 @@ export function useFetchPlayerDetail(
 
         if (requireAuth && !token) throw new Error('認証トークンが見つかりません');
 
-        // プレイヤー情報
-        const playerUrl = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}&select=*`;
+        // プレイヤー情報（players_public）
+        const playerUrl =
+          `${SUPABASE_URL}/rest/v1/players_public?id=eq.${playerId}` +
+          `&select=id,display_name,current_points,current_handicap,avatar_url,wins,losses,match_count,created_at,updated_at`;
         const playerRes = await fetch(playerUrl, {
           headers: {
             apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
             'Content-Type': 'application/json',
           },
         });
@@ -342,14 +344,16 @@ export function useFetchPlayerDetail(
         if (!playerData?.[0]) throw new Error('Player not found');
         if (cancelled) return;
 
-        // 試合履歴（VIEW）
+        // 試合履歴（match_details_public）
         const matchUrl =
-          `${SUPABASE_URL}/rest/v1/match_details` +
-          `?or=(winner_id.eq.${playerId},loser_id.eq.${playerId})&order=match_date.desc&limit=50`;
+          `${SUPABASE_URL}/rest/v1/match_details_public` +
+          `?or=(winner_id.eq.${playerId},loser_id.eq.${playerId})` +
+          `&select=id,match_date,is_tournament,venue,loser_score,winner_id,winner_name,winner_avatar,winner_current_points,winner_current_handicap,winner_points_change,loser_id,loser_name,loser_avatar,loser_current_points,loser_current_handicap,loser_points_change,tournament_name` +
+          `&order=match_date.desc&limit=50`;
         const matchesRes = await fetch(matchUrl, {
           headers: {
             apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
             'Content-Type': 'application/json',
           },
         });
@@ -388,12 +392,13 @@ export async function updatePlayer(playerId: string, updates: any) {
     if (!session) throw new Error('ログインが必要です');
     const token = session.access_token;
 
+    // 書込みは基表へ
     const url = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}`;
     const res = await fetch(url, {
       method: 'PATCH',
       headers: {
         apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`, // ★ ユーザーのアクセストークン
+        Authorization: `Bearer ${token}`, // ユーザーのアクセストークン
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
@@ -423,12 +428,12 @@ export async function createMatch(matchData: any) {
     if (!session) throw new Error('ログインが必要です');
     const token = session.access_token;
 
-    const url = `${SUPABASE_URL}/rest/v1/matches`; // ★ VIEW ではなく基表へ
+    const url = `${SUPABASE_URL}/rest/v1/matches`; // VIEW ではなく基表へ
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`, // ★ ユーザーのアクセストークン
+        Authorization: `Bearer ${token}`, // ユーザーのアクセストークン
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
