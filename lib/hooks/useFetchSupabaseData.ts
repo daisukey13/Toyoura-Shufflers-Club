@@ -181,8 +181,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
     return () => {
       abortRef.current?.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, baseKey]);
+  }, [enabled, baseKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refetch = useCallback(() => {
     setLoading(true);
@@ -202,14 +201,20 @@ export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: bo
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
     tableName: 'players_public',
     select:
-      'id,display_name,current_points,current_handicap,avatar_url,wins,losses,match_count,created_at,updated_at',
+      // ★ 追加: is_active, is_deleted を必ず取得（UI 側で再フィルタしているため）
+      'id,display_name,current_points,current_handicap,avatar_url,wins,losses,match_count,created_at,updated_at,is_active,is_deleted',
     orderBy: { columns: ['current_points', 'id'], ascending: false },
     enabled: opts?.enabled ?? true,
     requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
   });
 
-  // players_public 側で is_active/is_deleted はフィルタ済み
-  return { players: data, loading, error, retrying, refetch };
+  // ★ 念のため二重に守る（undefined でも意図通りに通す）
+  const players = useMemo(
+    () => (data ?? []).filter((p: any) => (p?.is_active ?? true) && !(p?.is_deleted ?? false)),
+    [data]
+  );
+
+  return { players, loading, error, retrying, refetch };
 }
 
 export function useFetchMatchesData(
@@ -429,17 +434,17 @@ export async function createMatch(matchData: any) {
     const token = session.access_token;
     const uid   = session.user.id;
 
-    // ★ 最小追加: RLS を確実に通すため reporter_id を自動補完（既にあれば尊重）
+    // 最小追加: RLS を確実に通すため reporter_id を自動補完（既にあれば尊重）
     const payload: any = { ...matchData };
-    if (!payload.reporter_id) payload.reporter_id = uid; // ★
+    if (!payload.reporter_id) payload.reporter_id = uid;
 
-    // ★ 最小チェック: 勝者/敗者の未選択や同一選択の早期エラー
-    if (!payload.winner_id || !payload.loser_id) {        // ★
-      throw new Error('勝者・敗者を選択してください。'); // ★
-    }                                                      // ★
-    if (payload.winner_id === payload.loser_id) {          // ★
-      throw new Error('同一プレイヤー同士の対戦は登録できません。'); // ★
-    }                                                      // ★
+    // 最小チェック
+    if (!payload.winner_id || !payload.loser_id) {
+      throw new Error('勝者・敗者を選択してください。');
+    }
+    if (payload.winner_id === payload.loser_id) {
+      throw new Error('同一プレイヤー同士の対戦は登録できません。');
+    }
 
     const url = `${SUPABASE_URL}/rest/v1/matches`; // VIEW ではなく基表へ
     const res = await fetch(url, {
@@ -450,20 +455,19 @@ export async function createMatch(matchData: any) {
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
-      body: JSON.stringify(payload), // ★ reporter_id を含む
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
       const t = await res.text();
-      // ★ RLS で弾かれたときに原因ヒントを返す（UIはそのまま）
-      if (res.status === 403 && /row-level security|rls/i.test(t)) {     // ★
-        const involved = [payload.reporter_id, payload.winner_id, payload.loser_id]; // ★
+      if (res.status === 403 && /row-level security|rls/i.test(t)) {
+        const involved = [payload.reporter_id, payload.winner_id, payload.loser_id];
         const hint =
           involved.includes(uid)
             ? 'RLS要件は満たしていますが、別の制約（NOT NULL / CHECK など）に当たっています。必須カラムをご確認ください。'
             : `登録者が試合に関与していません。reporter_id を自分のID(${uid})にするか、winner/loser に自分を含めてください。`;
-        throw new Error(`権限エラー: ${hint}`);                              // ★
-      }                                                                     // ★
+        throw new Error(`権限エラー: ${hint}`);
+      }
       throw new Error(`Failed to create match: ${res.status} ${t}`);
     }
 
