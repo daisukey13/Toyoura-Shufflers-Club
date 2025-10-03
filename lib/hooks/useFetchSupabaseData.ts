@@ -427,6 +427,19 @@ export async function createMatch(matchData: any) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('ログインが必要です');
     const token = session.access_token;
+    const uid   = session.user.id;
+
+    // ★ 最小追加: RLS を確実に通すため reporter_id を自動補完（既にあれば尊重）
+    const payload: any = { ...matchData };
+    if (!payload.reporter_id) payload.reporter_id = uid; // ★
+
+    // ★ 最小チェック: 勝者/敗者の未選択や同一選択の早期エラー
+    if (!payload.winner_id || !payload.loser_id) {        // ★
+      throw new Error('勝者・敗者を選択してください。'); // ★
+    }                                                      // ★
+    if (payload.winner_id === payload.loser_id) {          // ★
+      throw new Error('同一プレイヤー同士の対戦は登録できません。'); // ★
+    }                                                      // ★
 
     const url = `${SUPABASE_URL}/rest/v1/matches`; // VIEW ではなく基表へ
     const res = await fetch(url, {
@@ -437,13 +450,23 @@ export async function createMatch(matchData: any) {
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
-      body: JSON.stringify(matchData),
+      body: JSON.stringify(payload), // ★ reporter_id を含む
     });
 
     if (!res.ok) {
       const t = await res.text();
-      throw new Error(`Failed to create match: ${t}`);
+      // ★ RLS で弾かれたときに原因ヒントを返す（UIはそのまま）
+      if (res.status === 403 && /row-level security|rls/i.test(t)) {     // ★
+        const involved = [payload.reporter_id, payload.winner_id, payload.loser_id]; // ★
+        const hint =
+          involved.includes(uid)
+            ? 'RLS要件は満たしていますが、別の制約（NOT NULL / CHECK など）に当たっています。必須カラムをご確認ください。'
+            : `登録者が試合に関与していません。reporter_id を自分のID(${uid})にするか、winner/loser に自分を含めてください。`;
+        throw new Error(`権限エラー: ${hint}`);                              // ★
+      }                                                                     // ★
+      throw new Error(`Failed to create match: ${res.status} ${t}`);
     }
+
     const json = await res.json();
     return { data: json?.[0] ?? null, error: null };
   } catch (e: any) {
