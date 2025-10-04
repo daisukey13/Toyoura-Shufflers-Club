@@ -1,56 +1,72 @@
 // lib/hooks/useFetchSupabaseData.ts
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
 
-/**
- * NOTE
- * - 公開読み取りは anon キーで行うため、読み取り系ラッパの既定 requireAuth は false。
- * - 試合は VIEW（読み取り専用）を利用し、書込みは基表へ。
- */
-
+/* =========================
+ * 環境変数（REST 用ヘッダ）
+ * ========================= */
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-type OrderBy =
-  | { column: string; ascending?: boolean }
-  | { columns: string[]; ascending?: boolean };
+function headersJSON() {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    'Content-Type': 'application/json',
+    Prefer: 'return=representation',
+  };
+}
 
-type BaseOptions = {
-  tableName: string;
-  select?: string;                  // default: '*'
-  orderBy?: OrderBy;                // 複数列候補を順に試す
-  limit?: number;
-  retryCount?: number;              // default: 3
-  retryDelay?: number;              // default: 1000 (指数バックオフ気味)
-  enabled?: boolean;                // default: true
-  requireAuth?: boolean;            // default: true（読み取り系ラッパでは false を指定）
-  queryParams?: Record<string, string>; // 追加クエリ（eq系など）
+/* =========================
+ * 型
+ * ========================= */
+export type PlayerPublic = {
+  id: string;
+  handle_name: string;
+  avatar_url: string | null;
+  address: string | null;
+  is_active: boolean;
+  ranking_points: number;
+  handicap: number;
+  matches_played: number;
+  wins: number;
+  losses: number;
+  created_at: string;
+  current_rank?: number | null; // 無い環境もあるので任意
 };
 
-function toOrderColumns(orderBy?: OrderBy): { cols: string[]; asc: boolean } {
-  if (!orderBy) return { cols: [], asc: false };
-  if ('columns' in orderBy) {
-    return { cols: orderBy.columns, asc: !!orderBy.ascending };
-  }
-  return { cols: [orderBy.column], asc: !!orderBy.ascending };
-}
+export type MatchDetail = {
+  id: string;
+  match_date: string;
+  winner_id: string;
+  loser_id: string;
+  winner_score: number;
+  loser_score: number;
+  winner_name?: string | null;
+  loser_name?: string | null;
+  winner_avatar?: string | null;
+  loser_avatar?: string | null;
+  // ビューに無い環境があるので型は任意・RESTでは要求しない
+  venue?: string | null;
+  tournament_name?: string | null;
+};
 
-/** 内部: アクセストークン取得（必要なら少し待機してリトライ） */
-async function getAccessToken(requireAuth: boolean, tries = 3, delayMs = 300) {
-  const supabase = createClient();
-  for (let i = 0; i < tries; i++) {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token ?? null;
-    if (token) return token;
-    if (!requireAuth) return null; // 認証不要なら即 null（Anonキーで読む）
-    await new Promise((r) => setTimeout(r, delayMs));
-  }
-  return null;
-}
+/* ==========================================================
+ * 共通：REST 経由で一覧を取得
+ *   - select を明示（存在しない列は絶対に要求しない）
+ * ========================================================== */
+type FetchOptions = {
+  tableName: string;
+  select?: string; // 例: "id,handle_name"
+  orderBy?: { column: string; ascending?: boolean };
+  limit?: number;
+  retryCount?: number;
+  retryDelay?: number; // ms
+};
 
-export function useFetchSupabaseData<T = any>(options: BaseOptions) {
+export function useFetchSupabaseData(options: FetchOptions) {
   const {
     tableName,
     select = '*',
@@ -58,443 +74,318 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
     limit,
     retryCount = 3,
     retryDelay = 1000,
-    enabled = true,
-    requireAuth = true,
-    queryParams,
   } = options;
 
-  const [data, setData] = useState<T[]>([]);
-  const [loading, setLoading] = useState<boolean>(enabled);
-  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [retrying, setRetrying] = useState(false);
-
-  // フェッチ制御
-  const inflightKeyRef = useRef<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const lastKeyRef = useRef<string | null>(null); // StrictMode の二重実行回避
-
-  const { cols: orderCols, asc } = useMemo(() => toOrderColumns(orderBy), [orderBy]);
-  const baseKey = useMemo(
-    () => JSON.stringify({ tableName, select, orderCols, asc, limit, queryParams, requireAuth }),
-    [tableName, select, orderCols, asc, limit, queryParams, requireAuth]
-  );
-
-  const fetchOnce = useCallback(
-    async (token: string | null): Promise<T[]> => {
-      // 指定順に order 候補を試し、ダメなら順序無し
-      const candidates = orderCols.length ? [...orderCols] : [];
-      candidates.push('__NO_ORDER__');
-
-      for (const col of candidates) {
-        let url = `${SUPABASE_URL}/rest/v1/${tableName}?`;
-        const params = new URLSearchParams();
-        params.set('select', select);
-
-        if (queryParams) {
-          for (const [k, v] of Object.entries(queryParams)) params.set(k, v);
-        }
-
-        if (col !== '__NO_ORDER__') {
-          params.append('order', `${col}.${asc ? 'asc' : 'desc'}`);
-        }
-        if (typeof limit === 'number') params.append('limit', String(limit));
-
-        url += params.toString();
-
-        // 以前のリクエストを中断
-        abortRef.current?.abort();
-        abortRef.current = new AbortController();
-
-        const res = await fetch(url, {
-          method: 'GET',
-          headers: {
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          signal: abortRef.current.signal,
-        });
-
-        if (!res.ok) {
-          // 列不在などの 400 は次候補へ（order列が無い等）
-          if (res.status === 400 && col !== '__NO_ORDER__') continue;
-          const errorText = await res.text();
-          throw new Error(`HTTP ${res.status}: ${errorText}`);
-        }
-
-        const json = (await res.json()) as T[];
-        return json ?? [];
-      }
-
-      return [];
-    },
-    [tableName, select, orderCols, asc, limit, queryParams]
-  );
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(
-    async (attemptNumber = 1) => {
-      if (!enabled) return;
-
-      if (inflightKeyRef.current === baseKey) return; // 二重フェッチ抑止
-      inflightKeyRef.current = baseKey;
-
-      setLoading(true);
-      setError(null);
-
+    async (attempt = 1, signal?: AbortSignal) => {
       try {
-        const token = await getAccessToken(requireAuth);
-        if (requireAuth && !token) {
-          throw new Error('認証トークンが見つかりません（ログインが必要です）');
+        setError(null);
+        const params = new URLSearchParams();
+        params.append('select', select);
+        if (orderBy) {
+          params.append('order', `${orderBy.column}.${orderBy.ascending ? 'asc' : 'desc'}`);
+        }
+        if (typeof limit === 'number') {
+          params.append('limit', String(limit));
         }
 
-        const rows = await fetchOnce(token);
-        setData(rows);
-        setRetrying(false);
-      } catch (err: any) {
-        if (attemptNumber < retryCount) {
-          setRetrying(true);
-          setTimeout(() => {
-            fetchData(attemptNumber + 1);
-          }, retryDelay * attemptNumber);
-        } else {
-          setError(err?.message || 'データの読み込みに失敗しました。');
-          setRetrying(false);
+        const url = `${SUPABASE_URL}/rest/v1/${tableName}?${params.toString()}`;
+        const res = await fetch(url, { headers: headersJSON(), signal });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text}`);
         }
+
+        const json = await res.json();
+        setData(Array.isArray(json) ? json : []);
+        setRetrying(false);
+      } catch (e: any) {
+        if (signal?.aborted) return;
+        if (attempt < retryCount) {
+          setRetrying(true);
+          await new Promise((r) => setTimeout(r, retryDelay * attempt));
+          return fetchData(attempt + 1, signal);
+        }
+        setError(e?.message || 'データの読み込みに失敗しました。');
+        setRetrying(false);
       } finally {
-        if (attemptNumber === 1 || attemptNumber >= retryCount) setLoading(false);
-        inflightKeyRef.current = null;
+        setLoading(false);
       }
     },
-    [enabled, baseKey, retryCount, retryDelay, fetchOnce, requireAuth]
+    [tableName, select, orderBy, limit, retryCount, retryDelay]
   );
 
   useEffect(() => {
-    if (!enabled) return;
-
-    // StrictMode の初回二重実行を回避（baseKey が同じ時だけ抑止）
-    if (process.env.NODE_ENV !== 'production') {
-      if (lastKeyRef.current === baseKey) return;
-      lastKeyRef.current = baseKey;
-    }
-
-    fetchData();
-    return () => {
-      abortRef.current?.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, baseKey]);
+    const ac = new AbortController();
+    setLoading(true);
+    fetchData(1, ac.signal);
+    return () => ac.abort();
+  }, [fetchData]);
 
   const refetch = useCallback(() => {
+    const ac = new AbortController();
     setLoading(true);
     setError(null);
-    fetchData();
+    fetchData(1, ac.signal);
   }, [fetchData]);
 
   return { data, loading, error, retrying, refetch };
 }
 
-/* =========================================================
- * 読み取り系ラッパ（既定で requireAuth: false）
- * =========================================================*/
-
-/** ★ 空の display_name を絶対に作らないための小さな保険 */
-const sanitizeDisplayName = (row: any) => {
-  const raw = (row?.display_name ?? '').toString().trim();
-  if (raw) return raw;
-  // ここまで来たら “空表示” になってしまうので、見た目を維持しつつ確実に埋める
-  // 将来 handle_name が返る場合も拾えるように少しだけ候補を用意
-  const fallbacks = [
-    (row?.handle_name ?? '').toString().trim(),
-    (row?.name ?? '').toString().trim(),
-  ].filter(Boolean);
-  if (fallbacks[0]) return fallbacks[0];
-  // 最後の手段：IDの先頭8桁（UI崩さず識別できる）
-  return `ID:${(row?.id || '').toString().slice(0, 8)}`;
-};
-
-export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: boolean }) {
-  // players → players_public に切替（UI期待の列名で返る）
+/* ==========================================================
+ * プレイヤー一覧（公開）
+ * ========================================================== */
+export function useFetchPlayersData() {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
-    tableName: 'players_public',
-    select:
-      // 既存の UI で参照している列のみ。ビュー側で is_active/is_deleted を絞っている前提。
-      'id,display_name,current_points,current_handicap,avatar_url,wins,losses,match_count,created_at,updated_at',
-    orderBy: { columns: ['current_points', 'id'], ascending: false },
-    enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
+    tableName: 'players',
+    select: [
+      'id',
+      'handle_name',
+      'avatar_url',
+      'address',
+      'is_active',
+      'ranking_points',
+      'handicap',
+      'matches_played',
+      'wins',
+      'losses',
+      'created_at',
+      // 'current_rank' は無い環境もあるため要求しない
+    ].join(','),
+    orderBy: { column: 'ranking_points', ascending: false },
   });
 
-  // ★ ここで “空ラベル” を絶対に作らない
-  const players = useMemo(
-    () =>
-      (data ?? []).map((p: any) =>
-        p?.display_name ? p : { ...p, display_name: sanitizeDisplayName(p) }
-      ),
-    [data]
+  const players = (data as PlayerPublic[]).filter(
+    (p) => p.is_active === true && (p as any).is_deleted !== true
   );
 
   return { players, loading, error, retrying, refetch };
 }
 
-export function useFetchMatchesData(
-  limit?: number,
-  opts?: { enabled?: boolean; requireAuth?: boolean }
-) {
-  // match_details → match_details_public に切替
+/* ==========================================================
+ * 試合一覧（match_details ビュー）
+ *   - venue / tournament_name は要求しない（無い環境があるため）
+ * ========================================================== */
+const MATCH_DETAIL_SELECT = [
+  'id',
+  'match_date',
+  'winner_id',
+  'loser_id',
+  'winner_score',
+  'loser_score',
+  'winner_name',
+  'loser_name',
+  'winner_avatar',
+  'loser_avatar',
+  // ← venue, tournament_name は要求しない
+].join(',');
+
+export function useFetchMatchesData(limit?: number) {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
-    tableName: 'match_details_public',
-    select:
-      'id,match_date,is_tournament,venue,loser_score,winner_id,winner_name,winner_avatar,winner_current_points,winner_current_handicap,winner_points_change,loser_id,loser_name,loser_avatar,loser_current_points,loser_current_handicap,loser_points_change,tournament_name',
-    orderBy: { columns: ['match_date', 'id'], ascending: false },
+    tableName: 'match_details',
+    select: MATCH_DETAIL_SELECT,
+    orderBy: { column: 'match_date', ascending: false },
     limit,
-    enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
   });
 
-  return { matches: data, loading, error, retrying, refetch };
+  return { matches: data as MatchDetail[], loading, error, retrying, refetch };
 }
 
-/** チームランキング（team_rankings VIEW） */
-export type TeamRankingRow = {
-  id: string;
-  name: string;
-  team_size?: number | null;
-  avg_rp?: number | null;
-  avg_hc?: number | null;
-  played?: number | null;
-  wins?: number | null;
-  losses?: number | null;
-  win_pct?: number | null;
-  last_match_at?: string | null;
-};
+/* ==========================================================
+ * プレイヤー詳細（公開 + 直近試合）
+ *   - venue / tournament_name は要求しない
+ * ========================================================== */
+export function useFetchPlayerDetail(playerId: string) {
+  const [player, setPlayer] = useState<PlayerPublic | null>(null);
+  const [matches, setMatches] = useState<MatchDetail[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-export function useTeamRankings(opts?: {
-  enabled?: boolean;
-  requireAuth?: boolean; // 既定: false（公開ビューを想定）
-  order?: 'avg_rp' | 'win_pct' | 'last_match_at';
-  direction?: 'asc' | 'desc';
-  limit?: number;
-}) {
-  const orderCol = opts?.order ?? 'avg_rp';
-  const asc = (opts?.direction ?? 'desc') === 'asc';
+  const fetchPlayerData = useCallback(
+    async (attempt = 1, signal?: AbortSignal) => {
+      if (!playerId) {
+        setLoading(false);
+        return;
+      }
+      try {
+        setError(null);
 
-  const { data, loading, error, retrying, refetch } = useFetchSupabaseData<TeamRankingRow>({
-    tableName: 'team_rankings',
-    select:
-      'id,name,team_size,avg_rp,avg_hc,played,wins,losses,win_pct,last_match_at',
-    orderBy: { column: orderCol, ascending: asc },
-    limit: opts?.limit,
-    enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false,
-  });
+        // 1) player
+        {
+          const params = new URLSearchParams();
+          params.append(
+            'select',
+            [
+              'id',
+              'handle_name',
+              'avatar_url',
+              'address',
+              'is_active',
+              'ranking_points',
+              'handicap',
+              'matches_played',
+              'wins',
+              'losses',
+              'created_at',
+            ].join(',')
+          );
+          params.append('id', `eq.${playerId}`);
 
-  return { teams: data, loading, error, retrying, refetch };
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/players?${params}`, {
+            headers: headersJSON(),
+            signal,
+          });
+          if (!res.ok) throw new Error(`Failed to fetch player: ${res.status}`);
+          const json = await res.json();
+          const row: PlayerPublic | undefined = json?.[0];
+          if (!row) throw new Error('Player not found');
+          setPlayer(row);
+        }
+
+        // 2) matches（勝者/敗者いずれかに該当）
+        {
+          const m = new URLSearchParams();
+          m.append('select', MATCH_DETAIL_SELECT);
+          m.append('or', `(winner_id.eq.${playerId},loser_id.eq.${playerId})`);
+          m.append('order', 'match_date.desc');
+          m.append('limit', '50');
+
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/match_details?${m}`, {
+            headers: headersJSON(),
+            signal,
+          });
+          const json: MatchDetail[] = res.ok ? await res.json() : [];
+          setMatches(Array.isArray(json) ? json : []);
+        }
+
+        setRetrying(false);
+      } catch (e: any) {
+        if (signal?.aborted) return;
+        if (attempt < 3) {
+          setRetrying(true);
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+          return fetchPlayerData(attempt + 1, signal);
+        }
+        setError(e?.message || 'データ取得に失敗しました');
+        setRetrying(false);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [playerId]
+  );
+
+  useEffect(() => {
+    const ac = new AbortController();
+    setLoading(true);
+    fetchPlayerData(1, ac.signal);
+    return () => ac.abort();
+  }, [fetchPlayerData]);
+
+  const refetch = useCallback(() => {
+    const ac = new AbortController();
+    setLoading(true);
+    setError(null);
+    fetchPlayerData(1, ac.signal);
+  }, [fetchPlayerData]);
+
+  return { player, matches, loading, error, retrying, refetch };
 }
 
-/** チーム一覧（UI 選択用） */
-export type TeamRow = { id: string; name: string };
-
-export function useTeamsList(opts?: {
-  enabled?: boolean;
-  requireAuth?: boolean;
-  order?: 'name' | 'created_at';
-  direction?: 'asc' | 'desc';
-  limit?: number;
-}) {
-  const orderCol = opts?.order ?? 'name';
-  const asc = (opts?.direction ?? 'asc') === 'asc';
-
-  const { data, loading, error, retrying, refetch } = useFetchSupabaseData<TeamRow>({
-    tableName: 'teams',
-    select: 'id,name',
-    orderBy: { column: orderCol, ascending: asc },
-    limit: opts?.limit,
-    enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false, // 公開で読める運用なら false、RLS が厳しいなら true に変更
-  });
-
-  return { teams: data, loading, error, retrying, refetch };
-}
-
-/* =========================================================
- * 詳細系フック（既定: requireAuth: false）
- * =========================================================*/
-
-export function useFetchPlayerDetail(
-  playerId: string,
-  opts?: { enabled?: boolean; requireAuth?: boolean }
-) {
-  const [player, setPlayer] = useState<any>(null);
-  const [matches, setMatches] = useState<any[]>([]);
+/* ==========================================================
+ * お知らせ詳細
+ * ========================================================== */
+export function useFetchNoticeDetail(noticeId: string) {
+  const [notice, setNotice] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const enabled = opts?.enabled ?? true;
-  const requireAuth = opts?.requireAuth ?? false;
-
   useEffect(() => {
-    if (!enabled || !playerId) {
+    if (!noticeId) {
       setLoading(false);
       return;
     }
-
-    let cancelled = false;
-    const supabase = createClient();
+    const ac = new AbortController();
 
     (async () => {
       try {
-        setLoading(true);
         setError(null);
+        const params = new URLSearchParams();
+        params.append('select', '*');
+        params.append('id', `eq.${noticeId}`);
 
-        const token =
-          (await supabase.auth.getSession()).data.session?.access_token ??
-          (requireAuth ? null : SUPABASE_ANON_KEY);
-
-        if (requireAuth && !token) throw new Error('認証トークンが見つかりません');
-
-        // プレイヤー情報（players_public）
-        const playerUrl =
-          `${SUPABASE_URL}/rest/v1/players_public?id=eq.${playerId}` +
-          `&select=id,display_name,current_points,current_handicap,avatar_url,wins,losses,match_count,created_at,updated_at`;
-        const playerRes = await fetch(playerUrl, {
-          headers: {
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          },
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/notices?${params}`, {
+          headers: headersJSON(),
+          signal: ac.signal,
         });
-        if (!playerRes.ok) throw new Error(`Failed to fetch player: ${playerRes.status}`);
-        const playerData = await playerRes.json();
-        if (!playerData?.[0]) throw new Error('Player not found');
-        if (cancelled) return;
-
-        // ★ 詳細でも空表示名をつくらない
-        const normalized = {
-          ...playerData[0],
-          display_name: sanitizeDisplayName(playerData[0]),
-        };
-
-        // 試合履歴（match_details_public）
-        const matchUrl =
-          `${SUPABASE_URL}/rest/v1/match_details_public` +
-          `?or=(winner_id.eq.${playerId},loser_id.eq.${playerId})` +
-          `&select=id,match_date,is_tournament,venue,loser_score,winner_id,winner_name,winner_avatar,winner_current_points,winner_current_handicap,winner_points_change,loser_id,loser_name,loser_avatar,loser_current_points,loser_current_handicap,loser_points_change,tournament_name` +
-          `&order=match_date.desc&limit=50`;
-        const matchesRes = await fetch(matchUrl, {
-          headers: {
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        const matchesData = matchesRes.ok ? await matchesRes.json() : [];
-        if (cancelled) return;
-
-        setPlayer(normalized);
-        setMatches(matchesData || []);
+        if (!res.ok) throw new Error(`Failed to fetch notice: ${res.status}`);
+        const json = await res.json();
+        if (!json?.[0]) throw new Error('Notice not found');
+        setNotice(json[0]);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || '読み込みに失敗しました');
+        if (!ac.signal.aborted) setError(e?.message || '取得に失敗しました');
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!ac.signal.aborted) setLoading(false);
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [playerId, enabled, requireAuth]);
+    return () => ac.abort();
+  }, [noticeId]);
 
-  const refetch = useCallback(() => {
-    // 必要に応じて再取得ロジックを実装
-  }, []);
-
-  return { player, matches, loading, error, refetch };
+  return { notice, loading, error };
 }
 
-/* =========================================================
- * 変更系ユーティリティ（必ずユーザートークンで実行）
- * =========================================================*/
-
-export async function updatePlayer(playerId: string, updates: any) {
+/* ==========================================================
+ * 更新・作成（書き込みは supabase-js で RLS 通過）
+ * ========================================================== */
+export async function updatePlayer(playerId: string, updates: Partial<PlayerPublic>) {
   try {
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new Error('ログインが必要です');
-    const token = session.access_token;
+    const { data, error } = await supabase
+      .from('players')
+      .update(updates)
+      .eq('id', playerId)
+      .select()
+      .single();
 
-    // 書込みは基表へ
-    const url = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}`;
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`, // ユーザーのアクセストークン
-        'Content-Type': 'application/json',
-        Prefer: 'return=representation',
-      },
-      body: JSON.stringify(updates),
-    });
-
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`Failed to update player: ${t}`);
-    }
-    const json = await res.json();
-    return { data: json?.[0] ?? null, error: null };
+    if (error) throw error;
+    return { data, error: null };
   } catch (e: any) {
-    return { data: null, error: e?.message || '更新に失敗しました' };
+    return { data: null, error: e?.message || 'update failed' };
   }
 }
 
 /**
- * 試合作成: 書き込みは `matches` テーブルへ
- * - 必須カラム（例: reporter_id / registered_by など）は呼び出し側でセットしてください
- * - RLS 例: with check (reporter_id = auth.uid()) or (registered_by = auth.uid())
+ * 試合作成は `matches` テーブルへ（ビュー `match_details` へは挿入不可）
+ * 例）{ match_date, winner_id, loser_id, winner_score, loser_score, is_tournament?, tournament_name?, venue? }
  */
-export async function createMatch(matchData: any) {
+export async function createMatch(matchData: Record<string, any>) {
   try {
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new Error('ログインが必要です');
-    const token = session.access_token;
-    const uid   = session.user.id;
+    const payload = {
+      match_date: matchData.match_date ?? new Date().toISOString(),
+      winner_id: matchData.winner_id,
+      loser_id: matchData.loser_id,
+      winner_score: matchData.winner_score,
+      loser_score: matchData.loser_score,
+      is_tournament: !!matchData.is_tournament,
+      tournament_name: matchData.tournament_name ?? null,
+      venue: matchData.venue ?? null,
+    };
 
-    // RLS を確実に通すため reporter_id を自動補完（既にあれば尊重）
-    const payload: any = { ...matchData };
-    if (!payload.reporter_id) payload.reporter_id = uid;
+    const { data, error } = await supabase
+      .from('matches')
+      .insert(payload)
+      .select()
+      .single();
 
-    // 早期エラー
-    if (!payload.winner_id || !payload.loser_id) throw new Error('勝者・敗者を選択してください。');
-    if (payload.winner_id === payload.loser_id) throw new Error('同一プレイヤー同士の対戦は登録できません。');
-
-    const url = `${SUPABASE_URL}/rest/v1/matches`; // VIEW ではなく基表へ
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=representation',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const t = await res.text();
-      if (res.status === 403 && /row-level security|rls/i.test(t)) {
-        const involved = [payload.reporter_id, payload.winner_id, payload.loser_id];
-        const hint =
-          involved.includes(uid)
-            ? 'RLS要件は満たしていますが、別の制約（NOT NULL / CHECK など）に当たっています。必須カラムをご確認ください。'
-            : `登録者が試合に関与していません。reporter_id を自分のID(${uid})にするか、winner/loser に自分を含めてください。`;
-        throw new Error(`権限エラー: ${hint}`);
-      }
-      throw new Error(`Failed to create match: ${res.status} ${t}`);
-    }
-
-    const json = await res.json();
-    return { data: json?.[0] ?? null, error: null };
+    if (error) throw error;
+    return { data, error: null };
   } catch (e: any) {
-    return { data: null, error: e?.message || '登録に失敗しました' };
+    return { data: null, error: e?.message || 'create match failed' };
   }
 }
