@@ -14,7 +14,7 @@ import { useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
 /* ───────────────────────────── Types ───────────────────────────── */
 type Player = {
   id: string;
-  handle_name: string;
+  handle_name: string;        // ← UI はこれを参照（display_name が来ても正規化で吸収）
   ranking_points: number;
   handicap: number;
   avatar_url?: string | null;
@@ -117,8 +117,19 @@ export default function SinglesRegisterPage() {
   }, [authed, supabase]);
 
   // プレイヤー一覧（認証後のみ）
-  const { players = [], loading: playersLoading, error: playersError } =
-    useFetchPlayersData({ enabled: authed === true, requireAuth: true });
+  const { players: rawPlayers = [], loading: playersLoading, error: playersError } =
+    useFetchPlayersData();
+
+  // ★★★ 互換レイヤー：display_name / current_points 系を handle_name / ranking_points に正規化（最小追加）
+  const players: Player[] = useMemo(() => {
+    return (rawPlayers as any[]).map((r) => ({
+      id: r.id,
+      handle_name: r.handle_name ?? r.display_name ?? '',          // ← UI は常に handle_name を参照
+      ranking_points: r.ranking_points ?? r.current_points ?? 0,   // 後方互換
+      handicap: r.handicap ?? r.current_handicap ?? 0,             // 後方互換
+      avatar_url: r.avatar_url ?? r.avatar ?? null,
+    }));
+  }, [rawPlayers]);
 
   // UI 状態
   const [matchDate, setMatchDate] = useState(nowLocalDatetime());
@@ -135,6 +146,7 @@ export default function SinglesRegisterPage() {
   const [result, setResult] = useState<ApiSuccess | null>(null);
   const submittingRef = useRef(false);
 
+  // 従来の変数名/ロジックを維持
   const opponents = (players as Player[]).filter(p => p.id !== me?.id);
   const nameById = (id: string) =>
     (players as Player[]).find(p => p.id === id)?.handle_name || `${id?.slice(0, 8)}…`;
