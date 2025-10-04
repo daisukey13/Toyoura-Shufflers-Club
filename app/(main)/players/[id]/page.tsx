@@ -86,9 +86,8 @@ export default function PlayerProfilePage() {
   const params = useParams<{ id: string }>();
   const playerId = params?.id;
 
-  const { player, matches, loading, error } = useFetchPlayerDetail(playerId, {
-    requireAuth: false,
-  });
+  const { player, matches, loading, error } = useFetchPlayerDetail(playerId);
+
 
   const { players: allPlayers } = useFetchPlayersData({ requireAuth: false });
   const { rank, totalActive } = useMemo(() => {
