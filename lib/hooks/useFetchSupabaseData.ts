@@ -181,7 +181,8 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
     return () => {
       abortRef.current?.abort();
     };
-  }, [enabled, baseKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, baseKey]);
 
   const refetch = useCallback(() => {
     setLoading(true);
@@ -196,21 +197,39 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
  * 読み取り系ラッパ（既定で requireAuth: false）
  * =========================================================*/
 
+/** ★ 空の display_name を絶対に作らないための小さな保険 */
+const sanitizeDisplayName = (row: any) => {
+  const raw = (row?.display_name ?? '').toString().trim();
+  if (raw) return raw;
+  // ここまで来たら “空表示” になってしまうので、見た目を維持しつつ確実に埋める
+  // 将来 handle_name が返る場合も拾えるように少しだけ候補を用意
+  const fallbacks = [
+    (row?.handle_name ?? '').toString().trim(),
+    (row?.name ?? '').toString().trim(),
+  ].filter(Boolean);
+  if (fallbacks[0]) return fallbacks[0];
+  // 最後の手段：IDの先頭8桁（UI崩さず識別できる）
+  return `ID:${(row?.id || '').toString().slice(0, 8)}`;
+};
+
 export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: boolean }) {
   // players → players_public に切替（UI期待の列名で返る）
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
     tableName: 'players_public',
     select:
-      // ★ 追加: is_active, is_deleted を必ず取得（UI 側で再フィルタしているため）
-      'id,display_name,current_points,current_handicap,avatar_url,wins,losses,match_count,created_at,updated_at,is_active,is_deleted',
+      // 既存の UI で参照している列のみ。ビュー側で is_active/is_deleted を絞っている前提。
+      'id,display_name,current_points,current_handicap,avatar_url,wins,losses,match_count,created_at,updated_at',
     orderBy: { columns: ['current_points', 'id'], ascending: false },
     enabled: opts?.enabled ?? true,
     requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
   });
 
-  // ★ 念のため二重に守る（undefined でも意図通りに通す）
+  // ★ ここで “空ラベル” を絶対に作らない
   const players = useMemo(
-    () => (data ?? []).filter((p: any) => (p?.is_active ?? true) && !(p?.is_deleted ?? false)),
+    () =>
+      (data ?? []).map((p: any) =>
+        p?.display_name ? p : { ...p, display_name: sanitizeDisplayName(p) }
+      ),
     [data]
   );
 
@@ -349,6 +368,12 @@ export function useFetchPlayerDetail(
         if (!playerData?.[0]) throw new Error('Player not found');
         if (cancelled) return;
 
+        // ★ 詳細でも空表示名をつくらない
+        const normalized = {
+          ...playerData[0],
+          display_name: sanitizeDisplayName(playerData[0]),
+        };
+
         // 試合履歴（match_details_public）
         const matchUrl =
           `${SUPABASE_URL}/rest/v1/match_details_public` +
@@ -365,7 +390,7 @@ export function useFetchPlayerDetail(
         const matchesData = matchesRes.ok ? await matchesRes.json() : [];
         if (cancelled) return;
 
-        setPlayer(playerData[0]);
+        setPlayer(normalized);
         setMatches(matchesData || []);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || '読み込みに失敗しました');
@@ -434,24 +459,20 @@ export async function createMatch(matchData: any) {
     const token = session.access_token;
     const uid   = session.user.id;
 
-    // 最小追加: RLS を確実に通すため reporter_id を自動補完（既にあれば尊重）
+    // RLS を確実に通すため reporter_id を自動補完（既にあれば尊重）
     const payload: any = { ...matchData };
     if (!payload.reporter_id) payload.reporter_id = uid;
 
-    // 最小チェック
-    if (!payload.winner_id || !payload.loser_id) {
-      throw new Error('勝者・敗者を選択してください。');
-    }
-    if (payload.winner_id === payload.loser_id) {
-      throw new Error('同一プレイヤー同士の対戦は登録できません。');
-    }
+    // 早期エラー
+    if (!payload.winner_id || !payload.loser_id) throw new Error('勝者・敗者を選択してください。');
+    if (payload.winner_id === payload.loser_id) throw new Error('同一プレイヤー同士の対戦は登録できません。');
 
     const url = `${SUPABASE_URL}/rest/v1/matches`; // VIEW ではなく基表へ
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`, // ユーザーのアクセストークン
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
