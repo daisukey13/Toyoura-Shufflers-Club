@@ -17,17 +17,23 @@ export type TeamRankItem = {
   last_match_at?: string | null;
 };
 
-type OrderKey = 'avg_rp' | 'last_match_at' | 'name';
-
-export function useTeamRankings(opts?: {
+type Options = {
   enabled?: boolean;
-  requireAuth?: boolean; // 既定: false（公開VIEW想定）
-  orderBy?: OrderKey;
-  ascending?: boolean;
+  requireAuth?: boolean;                 // 既定: false（公開ビューを想定）
+  order?: 'avg_rp' | 'win_pct' | 'last_match_at';
+  direction?: 'asc' | 'desc';
   limit?: number;
-}) {
-  const orderCol = opts?.orderBy ?? 'avg_rp';
-  const ascending = opts?.ascending ?? false;
+};
+
+/**
+ * チームランキング（team_rankings VIEW）
+ * - 既存の UI/デザインは変更しません
+ * - Supabase 連携の挙動もそのまま
+ * - 最小修正: useFetchSupabaseData にジェネリックを渡さず、戻り値を局所で型付け
+ */
+export function useTeamRankings(opts?: Options) {
+  const orderCol = opts?.order ?? 'avg_rp';
+  const ascending = (opts?.direction ?? 'desc') === 'asc';
 
   const {
     data,
@@ -35,17 +41,23 @@ export function useTeamRankings(opts?: {
     error,
     retrying,
     refetch,
-  } = useFetchSupabaseData<TeamRankItem>({
-    tableName: 'team_rankings',      // ← VIEW 名
-    select: '*',
+  } = useFetchSupabaseData({
+    tableName: 'team_rankings', // ← VIEW 名
+    select:
+      'id,name,team_size,avg_rp,avg_hc,played,wins,losses,win_pct,last_match_at',
     orderBy: { column: orderCol, ascending },
     limit: opts?.limit,
     enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false, // 公開閲覧OK
+    requireAuth: opts?.requireAuth ?? false,
   });
 
-  // 将来フィルタなどをここで挟む想定
-  const teams = useMemo(() => data, [data]);
+  // 最小限の型付け（UI側の型安全を保ちつつ、呼び出し側は従来通り）
+  const teams: TeamRankItem[] = useMemo(
+    () => (Array.isArray(data) ? (data as TeamRankItem[]) : []),
+    [data]
+  );
 
   return { teams, loading, error, retrying, refetch };
 }
+
+export default useTeamRankings;
