@@ -414,7 +414,7 @@ function RankingsInner() {
 
   /* ── Teams ── */
   const { teams, loading: tLoading, error: tError, retrying: tRetrying, refetch: tRefetch } =
-    useTeamRankings({ enabled: tab === 'teams', orderBy: 'avg_rp', ascending: false });
+   useTeamRankings({ enabled: tab === 'teams', order: 'avg_rp', direction: 'desc' });
 
   const [sortByTeams, setSortByTeams] = useState<'avg_rp' | 'win_pct'>('avg_rp');
   const [isPendingTeams, startTransitionTeams] = useTransition();
