@@ -84,18 +84,43 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
 /* ───────── Page ───────── */
 export default function PlayerProfilePage() {
   const params = useParams<{ id: string }>();
-  const playerId = params?.id;
+  const playerId = String(params?.id || '');
 
+  // 一覧（ランキング用）: ★ 引数なし版フック
   const { players: allPlayers } = useFetchPlayersData();
 
+  // 詳細: ★ 追加（第2引数なし）
+  const { player: rawPlayer, matches, loading, error } = useFetchPlayerDetail(playerId);
 
-  const { players: allPlayers } = useFetchPlayersData({ requireAuth: false });
+  // ★ 最小マッピング：public系の列名 → 画面が期待する列名に寄せる
+  const player: Player | null = useMemo(() => {
+    if (!rawPlayer) return null;
+    const p: any = rawPlayer;
+    return {
+      id: p.id,
+      handle_name:
+        (p.handle_name?.trim?.() ||
+          p.display_name?.trim?.() ||
+          (p.id ? `${String(p.id).slice(0, 8)}…` : '')) as string,
+      avatar_url: p.avatar_url ?? null,
+      ranking_points: p.ranking_points ?? p.current_points ?? 0,
+      handicap: p.handicap ?? p.current_handicap ?? 0,
+      wins: p.wins ?? 0,
+      losses: p.losses ?? 0,
+      is_active: p.is_active ?? true,
+      address: p.address ?? null,
+    };
+  }, [rawPlayer]);
+
+  // ランク計算：★ current_points / ranking_points どちらでもOKに
   const { rank, totalActive } = useMemo(() => {
     const src = Array.isArray(allPlayers) ? allPlayers : [];
     const arr = [...src].sort(
-      (a: any, b: any) => (b.ranking_points ?? 0) - (a.ranking_points ?? 0)
+      (a: any, b: any) =>
+        (b.current_points ?? b.ranking_points ?? 0) -
+        (a.current_points ?? a.ranking_points ?? 0)
     );
-    const idx = arr.findIndex((p: any) => p.id === playerId);
+    const idx = arr.findIndex((p: any) => String(p.id) === playerId);
     return { rank: idx >= 0 ? idx + 1 : null, totalActive: arr.length };
   }, [allPlayers, playerId]);
 
