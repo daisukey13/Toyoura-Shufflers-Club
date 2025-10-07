@@ -49,7 +49,7 @@ const LazyImage = ({ src, alt, className }: { src: string; alt: string; classNam
     loading="lazy"
     decoding="async"
     onError={(e) => {
-      (e.target as HTMLImageElement).src = '/default-avatar.png';
+      (e.currentTarget as HTMLImageElement).src = '/default-avatar.png';
     }}
   />
 );
@@ -245,7 +245,7 @@ const TeamCard = memo(function TeamCard({
               {team.name}
             </h3>
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-gray-400">
-              <span className="px-2 py-1 rounded-full bg紫色-900/30 text-purple-300">
+              <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">
                 メンバー: {team.team_size ?? 0}
               </span>
               <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">
@@ -254,7 +254,7 @@ const TeamCard = memo(function TeamCard({
             </div>
           </div>
 
-          <div className="text-right flex-shrink-0">
+        <div className="text-right flex-shrink-0">
             <div className={`text-2xl sm:text-3xl font-bold ${isTop3 ? 'text-yellow-100' : 'text-purple-300'}`}>
               {Math.round(team.avg_rp ?? 0)}
             </div>
@@ -267,7 +267,7 @@ const TeamCard = memo(function TeamCard({
             <div className="text-yellow-300 font-bold text-sm sm:text-base">{team.played ?? 0}</div>
             <div className="text-xs text-gray-500">試合</div>
           </div>
-          <div className="bg紫色-900/30 rounded-lg py-1.5 sm:py-2">
+          <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
             <div className="text-green-400 font-bold text-sm sm:text-base">{team.wins ?? 0}</div>
             <div className="text-xs text-gray-500">勝</div>
           </div>
@@ -334,7 +334,7 @@ const StatsCardsTeams = memo(function StatsCardsTeams({
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20 min-w-[140px]">
           <FaTrophy className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text黄色-100 mb-1">{stats.topAvgRp}</div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.topAvgRp}</div>
           <div className="text-gray-400 text-xs sm:text-base">最高平均RP</div>
         </div>
 
@@ -479,7 +479,7 @@ function RankingsInner() {
             onClick={() => setTab('teams')}
             className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
               tab === 'teams'
-                ? 'bg-gradient-to-r from紫色-600 to-pink-600 text-white'
+                ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
                 : 'bg-purple-900/30 text-gray-300 hover:text-white'
             }`}
             aria-pressed={tab === 'teams'}
@@ -636,4 +636,3 @@ export default function RankingsPage() {
     </Suspense>
   );
 }
-

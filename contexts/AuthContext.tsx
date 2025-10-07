@@ -3,7 +3,8 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase/browserClient';
+import { createClient } from '@/lib/supabase/client'; // ← ここだけ切替（シングルトン）
+const supabase = createClient();
 
 type PlayerRow = {
   id: string;
@@ -127,6 +128,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       const { error } = await supabase.auth.signOut();
       if (error) console.warn('[AuthContext] signOut error:', error);
+      // Next.js のサーバ Cookie を同期している場合は以下を使う実装に合わせてもOK
+      // await fetch('/auth/callback', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ event: 'SIGNED_OUT', session: null }) });
     } finally {
       // ローカル状態をクリア
       setUser(null);
