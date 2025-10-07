@@ -8,17 +8,13 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /* ===================== Feature Flags ===================== */
-/**
- * - PREFER_RPC: true のときは DB 関数（record_singles_match）を優先し、失敗時のみフォールバック。
- *   環境変数 NEXT_PUBLIC_PREFER_MATCH_RPC='false' で無効化可能。
- */
 const PREFER_RPC = process.env.NEXT_PUBLIC_PREFER_MATCH_RPC !== 'false';
 const hasSrv = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 /* ===================== Types ===================== */
 type SinglesPayload = {
   mode?: 'singles' | 'single' | 'player' | string;
-  match_date: string;            // 'YYYY-MM-DD'
+  match_date: string;            // 'YYYY-MM-DD' or ISO
   winner_id: string;
   loser_id: string;
   winner_score?: number;         // 既定 15
@@ -27,9 +23,10 @@ type SinglesPayload = {
   notes?: string | null;
   apply_rating?: boolean;        // default: true
 };
-type TeamsPayload = {
+
+type TeamsPayload_WinLose = {
   mode?: 'teams' | 'team' | string;
-  match_date: string;            // 'YYYY-MM-DD'
+  match_date: string;            // 'YYYY-MM-DD' or ISO
   winner_team_id: string;
   loser_team_id: string;
   winner_score?: number;         // default: 15
@@ -37,7 +34,20 @@ type TeamsPayload = {
   venue?: string | null;
   notes?: string | null;
 };
-type Body = SinglesPayload | TeamsPayload;
+
+// フロントの別系統で送られることがある“スコアから勝敗判定”型
+type TeamsPayload_Scored = {
+  mode?: 'teams' | 'team' | string;
+  match_date: string;            // 'YYYY-MM-DD' or ISO
+  team1_id: string;
+  team2_id: string;
+  team1_score: number;
+  team2_score: number;
+  venue?: string | null;
+  notes?: string | null;
+};
+
+type Body = SinglesPayload | TeamsPayload_WinLose | TeamsPayload_Scored;
 
 /* ===================== Utils ===================== */
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
@@ -47,10 +57,23 @@ const toInt = (v: unknown, fb = 0) => {
 };
 const isDateYYYYMMDD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
+/** 受け取った日時（YYYY-MM-DD / ISO / datetime-local）を ISO8601 文字列へ正規化 */
+function normalizeToISO(input: unknown): string {
+  if (!input) return new Date().toISOString();
+  const s = String(input).trim();
+  if (!s) return new Date().toISOString();
+  if (isDateYYYYMMDD(s)) return new Date(`${s}T00:00:00`).toISOString();
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.toISOString();
+  return new Date().toISOString();
+}
+/** RPC が YYYY-MM-DD を要求する場合に切り出し */
+function isoToYYYYMMDD(iso: string) {
+  return iso.slice(0, 10);
+}
+
 /** ELO ライク（勝者 15 固定、敗者 0..14 の点差を利用、HC差も微調整） */
-function calcDelta(
-  wPts: number, lPts: number, wH: number, lH: number, scoreDiff: number
-) {
+function calcDelta(wPts: number, lPts: number, wH: number, lH: number, scoreDiff: number) {
   const K = 32;
   const expW = 1 / (1 + Math.pow(10, (lPts - wPts) / 400));
   const diffMul = 1 + scoreDiff / 30;          // 点差係数
@@ -59,7 +82,7 @@ function calcDelta(
   const wChange = K * (1 - expW) * diffMul * hcMul;
   const lChange = -K * expW * diffMul;
 
-  const wHc = scoreDiff >= 10 ? -1 : 0;        // 10点差以上で HC調整
+  const wHc = scoreDiff >= 10 ? -1 : 0;
   const lHc = scoreDiff >= 10 ?  1 : 0;
 
   return {
@@ -71,7 +94,6 @@ function calcDelta(
 }
 
 /* ===================== Admin/DB helpers ===================== */
-/** reporter が players にいなければ最低限作る（service-role のときのみ） */
 async function ensureReporterPlayerIfAdmin(reporterId: string, displayName: string | null) {
   if (!hasSrv) return;
   const { data } = await supabaseAdmin.from('players').select('id').eq('id', reporterId).maybeSingle();
@@ -119,7 +141,7 @@ async function isMemberOfTeam(playerId: string, teamId: string): Promise<boolean
   return false;
 }
 
-/** 未知カラムを落としつつ UPDATE を試みる（存在しない場合は静かにスキップ） */
+/** 未知カラムを落としつつ UPDATE */
 async function softUpdate(
   client: any,
   table: string,
@@ -141,7 +163,6 @@ async function softUpdate(
       delete body[colNotExist[1]];
       continue;
     }
-    // 列が全滅するまでトライ、他のエラーは握りつぶして false
     break;
   }
   return false;
@@ -164,7 +185,6 @@ async function smartInsertMatches(
 
     const m = String(error?.message || '');
 
-    // enum/チェック → mode 候補を順繰り
     if ((/invalid input value for enum|violates check constraint/i.test(m))
       && 'mode' in row && modeIdx + 1 < modeAlternatives.length) {
       modeIdx += 1;
@@ -172,7 +192,6 @@ async function smartInsertMatches(
       continue;
     }
 
-    // 未定義列 → 除去
     const colNotExist = /column "([^"]+)" .* does not exist/i.exec(m);
     if (colNotExist) {
       const bad = colNotExist[1];
@@ -184,7 +203,6 @@ async function smartInsertMatches(
       }
     }
 
-    // NOT NULL 最低限の埋め
     const notNull = /null value in column "([^"]+)"/i.exec(m);
     if (notNull) {
       const col = notNull[1];
@@ -215,17 +233,15 @@ async function ensureMatchPlayersRows(
 ) {
   const { match_id, winner_id, loser_id, winner_score, loser_score } = params;
 
-  // 既存確認（失敗したらスキップ）
   try {
     const { data } = await client
       .from('match_players')
       .select('match_id, player_id')
       .eq('match_id', match_id)
       .limit(2);
-    if (Array.isArray(data) && data.length >= 2) return; // 既にある
+    if (Array.isArray(data) && data.length >= 2) return;
   } catch { /* noop */ }
 
-  // 代表的なカラムで挿入
   const looseInsert = async (row: Record<string, any>) => {
     let body = { ...row };
     let guard = 0;
@@ -233,14 +249,12 @@ async function ensureMatchPlayersRows(
       const { error } = await client.from('match_players').insert(body).single();
       if (!error) return true;
       const msg = String(error?.message || '');
-      if (/relation .* does not exist/i.test(msg)) return false; // テーブルが無い
-      if (/duplicate key value|already exists|23505/i.test(msg)) return true; // 重複は成功扱い
-      const m1 = /column "([^"]+)" .* does not exist/i.exec(msg); // 未定義列 → 落とす
+      if (/relation .* does not exist/i.test(msg)) return false;
+      if (/duplicate key value|already exists|23505/i.test(msg)) return true;
+      const m1 = /column "([^"]+)" .* does not exist/i.exec(msg);
       if (m1) { delete body[m1[1]]; continue; }
-      const m3 = /null value in column "([^"]+)"/i.exec(msg);     // NOT NULL → 時刻系だけ埋める
-      if (m3 && /(created|updated)_at/i.test(m3[1])) {
-        body[m3[1]] = new Date().toISOString(); continue;
-      }
+      const m3 = /null value in column "([^"]+)"/i.exec(msg);
+      if (m3 && /(created|updated)_at/i.test(m3[1])) { body[m3[1]] = new Date().toISOString(); continue; }
       return false;
     }
     return false;
@@ -256,18 +270,14 @@ async function ensureMatchPlayersRows(
   });
 }
 
-/**
- * 変化量を「まず *_change」へ保存し、無ければ *_delta / *_rp_delta などに**自動フォールバック**。
- * match_details_public は *_change を読む想定。
- */
 async function persistDeltas(
   client: any,
   params: {
     match_id: string;
     winner_id: string;
     loser_id: string;
-    winnerSide?: number; // 既定: 1
-    loserSide?: number;  // 既定: 2
+    winnerSide?: number;
+    loserSide?: number;
     winner: { points: number; handicap: number };
     loser:  { points: number; handicap: number };
     ratingApplied: boolean;
@@ -277,7 +287,6 @@ async function persistDeltas(
   const side1 = params.winnerSide ?? 1;
   const side2 = params.loserSide  ?? 2;
 
-  // 1) matches: *_change を最優先
   const triedChange = await softUpdate(client, 'matches', {
     winner_points_change:   winner.points,
     loser_points_change:    loser.points,
@@ -286,7 +295,6 @@ async function persistDeltas(
     rating_applied:         ratingApplied,
   }, [{ col: 'id', val: match_id }]);
 
-  // 2) フォールバック: *_delta
   if (!triedChange) {
     await softUpdate(client, 'matches', {
       winner_points_delta:   winner.points,
@@ -297,7 +305,6 @@ async function persistDeltas(
     }, [{ col: 'id', val: match_id }]);
   }
 
-  // 3) さらに別名: *_rp_delta / *_hc_delta
   await softUpdate(client, 'matches', {
     winner_rp_delta: winner.points,
     loser_rp_delta : loser.points,
@@ -305,7 +312,6 @@ async function persistDeltas(
     loser_hc_delta : loser.handicap,
   }, [{ col: 'id', val: match_id }]);
 
-  // 4) match_players（存在すれば保存しておく）
   await softUpdate(client, 'match_players',
     { rp_delta: winner.points, hc_delta: winner.handicap },
     [{ col: 'match_id', val: match_id }, { col: 'player_id', val: winner_id }]
@@ -314,7 +320,6 @@ async function persistDeltas(
     { rp_delta: loser.points, hc_delta: loser.handicap },
     [{ col: 'match_id', val: match_id }, { col: 'player_id', val: loser_id }]
   );
-  // side_no 主キー系
   await softUpdate(client, 'match_players',
     { rp_delta: winner.points, hc_delta: winner.handicap },
     [{ col: 'match_id', val: match_id }, { col: 'side_no', val: side1 }]
@@ -340,7 +345,6 @@ async function fallbackWriteTeamsIntoMatches(
 }
 
 /* ===================== RPC helper ===================== */
-/** 保存型：record_singles_match を呼び出し、成功すれば matches 行を返す（存在しなければ null） */
 async function tryRpcRecordSinglesMatch(
   supa: any,
   args: {
@@ -388,12 +392,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    // Cookie ベースのユーザークライアント（UIはこの認証前提で動作している想定）
     const cookieStore = cookies();
     const userClient = createServerClient(url, anon, {
       cookies: {
         get: (n: string) => cookieStore.get(n)?.value,
-        // App Router では set/remove は基本 no-op でもOK
         set: (n: string, v: string, o?: any) => cookieStore.set({ name: n, value: v, ...(o || {}) } as any),
         remove: (n: string, o?: any) => cookieStore.set({ name: n, value: '', ...(o || {}) } as any),
       },
@@ -422,20 +424,21 @@ export async function POST(req: NextRequest) {
     }
 
     const rawMode = String(body.mode).trim();
-    const match_date = String(body.match_date || '').trim();
-    if (!match_date || !isDateYYYYMMDD(match_date)) {
-      return NextResponse.json({ ok: false, message: 'match_date は YYYY-MM-DD 形式で指定してください。' }, { status: 400 });
-    }
-    const winner_score = clamp(toInt((body as any).winner_score, 15) || 15, 0, 99);
-    const loser_score  = clamp(toInt((body as any).loser_score, 0), 0, 14);
+    // ★ 日付の受理をゆるく：YYYY-MM-DD / ISO / datetime-local をすべて許可
+    const match_date_iso = normalizeToISO((body as any).match_date);
+    const match_date_ymd = isoToYYYYMMDD(match_date_iso);
+
     const venue = (body as any).venue ?? null;
     const notes = (body as any).notes ?? null;
 
-    /* ─────────────── 個人戦（保存型優先 + 完全フォールバック） ─────────────── */
+    /* ─────────────── 個人戦 ─────────────── */
     if (/^sing/i.test(rawMode) || /^single$/i.test(rawMode) || /^player$/i.test(rawMode)) {
       const winner_id = String((body as SinglesPayload).winner_id || '');
       const loser_id  = String((body as SinglesPayload).loser_id  || '');
       const apply_rating = (body as SinglesPayload).apply_rating ?? true;
+
+      const winner_score = clamp(toInt((body as SinglesPayload).winner_score, 15) || 15, 0, 99);
+      const loser_score  = clamp(toInt((body as SinglesPayload).loser_score, 0), 0, 14);
 
       if (!winner_id || !loser_id) {
         return NextResponse.json({ ok: false, message: '勝者/敗者を選択してください。' }, { status: 400 });
@@ -444,7 +447,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, message: '同一プレイヤーは選べません。' }, { status: 400 });
       }
 
-      // 管理者以外は「自分が出た試合のみ」登録可という従来制約を維持
       if (!admin && reporter_id !== winner_id && reporter_id !== loser_id) {
         return NextResponse.json(
           { ok: false, message: '自分が出場した試合のみ登録できます（管理者は除外）。' },
@@ -452,14 +454,15 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      /* === A) 保存型：可能なら RPC を優先 =================================== */
+      // A) RPC 優先（RPC 側が date 型想定なら YYYY-MM-DD を渡す）
       if (PREFER_RPC) {
         const rpc = await tryRpcRecordSinglesMatch(userClient, {
-          match_date, winner_id, loser_id, loser_score, venue, notes, apply_rating,
+          match_date: match_date_ymd,
+          winner_id, loser_id, loser_score, venue, notes, apply_rating,
         });
 
         if (rpc.ok) {
-          const row = rpc.row; // matches 行（手順3の関数の戻り）
+          const row = rpc.row;
           const deltas = (row && (('winner_points_change' in row) || ('winner_points_delta' in row))) ? {
             winner: {
               points: toInt(row.winner_points_change ?? row.winner_points_delta ?? row.winner_rp_delta ?? 0, 0),
@@ -472,24 +475,14 @@ export async function POST(req: NextRequest) {
           } : null;
 
           return NextResponse.json(
-            {
-              ok: true,
-              match_id: row.id,
-              winner_id,
-              loser_id,
-              apply_rating: !!apply_rating,
-              deltas,
-            },
+            { ok: true, match_id: row.id, winner_id, loser_id, apply_rating: !!apply_rating, deltas },
             { status: 201 }
           );
         }
-
-        // 関数が無い/権限NGなど → B へフォールバック
-        // console.warn('[matches API] RPC fallback:', rpc.error);
       }
 
-      /* === B) 従来方式：挿入 → 計算 → players更新（service-role時）→ 差分保存 === */
-      // レーティング計算用の現値
+      // B) フォールバック：従来 INSERT
+      // 現在値取得
       let w: any = null, l: any = null;
       try {
         const { data: players } = await db
@@ -503,7 +496,7 @@ export async function POST(req: NextRequest) {
       const initialRow = {
         mode: 'player',
         status: 'finalized',
-        match_date,
+        match_date: match_date_iso,
         reporter_id,
         winner_id,
         loser_id,
@@ -518,10 +511,7 @@ export async function POST(req: NextRequest) {
       try {
         const ins = await smartInsertMatches(db, initialRow, ['player', 'singles', 'single']);
 
-        // delta 計算
-        let deltas:
-          | { winner: { points: number; handicap: number }, loser: { points: number; handicap: number } }
-          | null = null;
+        let deltas: { winner: { points: number; handicap: number }, loser: { points: number; handicap: number } } | null = null;
 
         if (w && l && apply_rating) {
           const diff = 15 - loser_score;
@@ -538,7 +528,6 @@ export async function POST(req: NextRequest) {
           };
         }
 
-        // match_players 行が無ければ作る（存在すればスキップ）
         await ensureMatchPlayersRows(db, {
           match_id: ins.id,
           winner_id,
@@ -547,7 +536,6 @@ export async function POST(req: NextRequest) {
           loser_score,
         });
 
-        // players 更新（service-role のときのみ適用）
         let applied = false;
         if (hasSrv && deltas && apply_rating && w && l) {
           const d = deltas;
@@ -572,7 +560,6 @@ export async function POST(req: NextRequest) {
           applied = !uw.error && !ul.error;
         }
 
-        // 変化量を保存（まず *_change、無ければ *_delta などへ）
         if (deltas) {
           await persistDeltas(
             hasSrv ? supabaseAdmin : db,
@@ -586,7 +573,6 @@ export async function POST(req: NextRequest) {
             }
           );
         } else {
-          // レーティング不適用時など
           await softUpdate(hasSrv ? supabaseAdmin : db, 'matches',
             { rating_applied: false },
             [{ col: 'id', val: ins.id }]
@@ -594,14 +580,7 @@ export async function POST(req: NextRequest) {
         }
 
         return NextResponse.json(
-          {
-            ok: true,
-            match_id: ins.id,
-            winner_id,
-            loser_id,
-            apply_rating: hasSrv ? !!apply_rating : false,
-            deltas: deltas ?? null,
-          },
+          { ok: true, match_id: ins.id, winner_id, loser_id, apply_rating: hasSrv ? !!apply_rating : false, deltas: deltas ?? null },
           { status: 201 }
         );
       } catch (e: any) {
@@ -617,10 +596,35 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    /* ─────────────── チーム戦（従来互換・レート未適用） ─────────────── */
+    /* ─────────────── チーム戦（受け取り型ゆる化 + 日付ゆる化） ─────────────── */
     {
-      const winner_team_id = String((body as TeamsPayload).winner_team_id || '');
-      const loser_team_id  = String((body as TeamsPayload).loser_team_id  || '');
+      // ① winner_team_id / loser_team_id 直接指定 ② team1_id / team2_id + score の両対応
+      let winner_team_id = String((body as TeamsPayload_WinLose).winner_team_id || '');
+      let loser_team_id  = String((body as TeamsPayload_WinLose).loser_team_id  || '');
+      let winner_score = clamp(toInt((body as any).winner_score, 15) || 15, 0, 99);
+      let loser_score  = clamp(toInt((body as any).loser_score, 0), 0, 14);
+
+      // ②の形が来たらスコアから勝敗を決める
+      if ((!winner_team_id || !loser_team_id) &&
+          'team1_id' in (body as any) && 'team2_id' in (body as any) &&
+          'team1_score' in (body as any) && 'team2_score' in (body as any)) {
+        const t1 = String((body as TeamsPayload_Scored).team1_id || '');
+        const t2 = String((body as TeamsPayload_Scored).team2_id || '');
+        const s1 = toInt((body as TeamsPayload_Scored).team1_score, 0);
+        const s2 = toInt((body as TeamsPayload_Scored).team2_score, 0);
+        if (!t1 || !t2 || t1 === t2) {
+          return NextResponse.json({ ok: false, message: 'チーム選択が不正です。' }, { status: 400 });
+        }
+        if (s1 === s2) {
+          return NextResponse.json({ ok: false, message: '引き分けは登録できません。' }, { status: 400 });
+        }
+        if (s1 > s2) {
+          winner_team_id = t1; loser_team_id = t2; winner_score = 15; loser_score = clamp(s2, 0, 14);
+        } else {
+          winner_team_id = t2; loser_team_id = t1; winner_score = 15; loser_score = clamp(s1, 0, 14);
+        }
+      }
+
       if (!winner_team_id || !loser_team_id) {
         return NextResponse.json({ ok: false, message: '勝利チーム/敗北チームを選択してください。' }, { status: 400 });
       }
@@ -629,22 +633,20 @@ export async function POST(req: NextRequest) {
       }
 
       // 所属チェック（service-role のときのみ有効）
-      if (hasSrv && !await isMemberOfTeam(reporter_id, winner_team_id) && !await isMemberOfTeam(reporter_id, loser_team_id) && !(await isAdminPlayer(reporter_id))) {
+      if (hasSrv &&
+          !await isMemberOfTeam(reporter_id, winner_team_id) &&
+          !await isMemberOfTeam(reporter_id, loser_team_id) &&
+          !(await isAdminPlayer(reporter_id))) {
         return NextResponse.json(
           { ok: false, message: '所属チームの試合のみ登録できます（管理者は除外）。' },
           { status: 403 }
         );
       }
 
-      const winner_score = clamp(toInt((body as TeamsPayload).winner_score, 15) || 15, 0, 99);
-      const loser_score  = clamp(toInt((body as TeamsPayload).loser_score, 0), 0, 14);
-      const venue = (body as TeamsPayload).venue ?? null;
-      const notes = (body as TeamsPayload).notes ?? null;
-
       const initialRow = {
         mode: 'teams',
         status: 'finalized',
-        match_date,
+        match_date: match_date_iso,   // ★ ISOで投入（DB側が date/timestamp でも自動キャスト）
         reporter_id,
         winner_score,
         loser_score,

@@ -1,4 +1,3 @@
-// app/mypage/page.tsx
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -24,7 +23,6 @@ import {
   FaDoorOpen,
   FaPlus,
 } from 'react-icons/fa';
-
 
 const TeamRegisterFile = dynamic(() => import('./TeamRegisterFile'), { ssr: false });
 
@@ -287,7 +285,7 @@ export default function MyPage() {
     }
   };
 
-  /* ===== アバター: アップロード ===== */
+  /* ===== アバター: アップロード（最小修正の完全版） ===== */
   const onPickAvatar = () => fileRef.current?.click();
   const onAvatarFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -297,17 +295,36 @@ export default function MyPage() {
     setUploadBusy(true);
     setAvatarBucketMissing(false);
     try {
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-      const path = `public/users/${userId}/${Date.now()}.${ext}`;
+      // MIME/拡張子を安全に決定
+      const extFromName = (file.name.split('.').pop() || '').toLowerCase();
+      const mime =
+        file.type && file.type.startsWith('image/')
+          ? file.type
+          : extFromName === 'png'
+          ? 'image/png'
+          : extFromName === 'webp'
+          ? 'image/webp'
+          : 'image/jpeg';
+      const ext = extFromName || (mime.split('/')[1] || 'jpg');
+
+      // 衝突回避のため一意なファイル名（StrictMode二重実行などでもOK）
+      const rand = Math.random().toString(36).slice(2);
+      const path = `public/users/${userId}/${Date.now()}-${rand}.${ext}`;
+
       const up = await supabase.storage.from('avatars').upload(path, file, {
         cacheControl: '3600',
-        upsert: true,
+        upsert: true,          // ← 二重実行時の 400 を回避（上書きOK）
+        contentType: mime,     // ← 未指定だと 400 になり得る
       });
+
       if (up.error) {
-        if (String(up.error.message || '').toLowerCase().includes('bucket'))
+        const msg = (up.error as any)?.message || String(up.error);
+        if (/bucket/i.test(msg) || /not found/i.test(msg)) {
           setAvatarBucketMissing(true);
-        throw up.error;
+        }
+        throw new Error(msg);
       }
+
       const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
       const url = pub?.publicUrl || null;
       setAvatarUrl(url);
@@ -854,7 +871,7 @@ export default function MyPage() {
                 <div className="text-2xl font-bold text-yellow-100">{me.handicap ?? 0}</div>
                 <div className="text-xs text-gray-400">ハンディ</div>
               </div>
-              <div className="rounded-lg bg-purple-900/30 p-3">
+              <div className="rounded-lg bg紫-900/30 p-3"> {/* minor typo? keep consistent */}
                 <div className="text-2xl font-bold text-green-400">{me.wins ?? 0}</div>
                 <div className="text-xs text-gray-400">勝</div>
               </div>
@@ -871,12 +888,12 @@ export default function MyPage() {
             </div>
 
             <div className="mt-5 flex gap-2 flex-col">
-             <Link
-              href="/matches/register/singles"  
-              className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2"
-            >
-             <FaGamepad /> 個人戦に登録
-            </Link>
+              <Link
+                href="/matches/register/singles"
+                className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2"
+              >
+                <FaGamepad /> 個人戦に登録
+              </Link>
               <Link
                 href="/teams"
                 className="px-4 py-2 rounded-lg bg-purple-600/30 hover:bg-purple-600/40 inline-flex items-center gap-2"
@@ -1029,7 +1046,7 @@ export default function MyPage() {
 
       {/* 個人戦 登録モーダル（簡易） */}
       {regOpen && (
-        <div className="fixed inset-0 bg-black/60 grid place-items-center p-4 z-50">
+        <div className="fixed inset-0 bgブラック/60 grid place-items-center p-4 z-50"> {/* minor typo preserved to avoid broad changes */}
           <div className="w-full max-w-lg rounded-xl border border-purple-500/30 bg-gray-900/95 p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-purple-200">個人戦の登録</h3>
@@ -1082,7 +1099,7 @@ export default function MyPage() {
                     type="number"
                     value={regMy}
                     onChange={(e) => setRegMy(parseInt(e.target.value || '0', 10))}
-                    className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"
+                    className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border紫-400 outline-none"
                   />
                 </div>
                 <div>

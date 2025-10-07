@@ -183,11 +183,11 @@ function TeamsInner() {
   }, [q, sortBy, dir, router, pathname]);
 
   // 取得（VIEW: team_rankings）
-  const { teams, loading, error, retrying, refetch } = useTeamRankings({
-    enabled: true,
-    orderBy: sortBy as any,
-    ascending: dir === 'asc',
-  });
+ const { teams, loading, error, retrying, refetch } = useTeamRankings({
+  enabled: true,
+  order: 'avg_rp',
+  direction: 'desc',
+});
 
   // 検索はクライアント側でフィルタ
   const deferredQ = useDeferredValue(q);

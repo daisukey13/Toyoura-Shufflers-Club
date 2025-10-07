@@ -1,4 +1,3 @@
-// next.config.js
 /** @type {import('next').NextConfig} */
 
 // ---- Security Headers (CSP for Supabase + Cloudflare Turnstile + Cloudflare Insights) ----
@@ -44,8 +43,8 @@ const securityHeaders = [
 
       // 任意だが noise を減らす
       "manifest-src 'self'",
-      "media-src 'self' blob: data:",
-      "prefetch-src 'self' https: data:"
+      "media-src 'self' blob: data:"
+      // ⬇️ ここにあった prefetch-src は削除（仕様外でブラウザ警告の原因）
     ].join('; ')
   },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

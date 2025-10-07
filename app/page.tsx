@@ -3,9 +3,8 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
 import {
   FaTrophy,
   FaUsers,
@@ -18,7 +17,8 @@ import {
   FaFlagCheckered,
   FaCrown,
 } from 'react-icons/fa';
-import MobileCTAButtons from '@/components/MobileCTAButtons';
+
+const MobileCTAButtons = dynamic(() => import('@/components/MobileCTAButtons'), { ssr: false });
 
 const supabase = createClient();
 
@@ -113,9 +113,6 @@ export default function HomePage() {
   const [notices, setNotices] = useState<any[]>([]);
   const [teamMembersMap, setTeamMembersMap] = useState<Record<string, MemberLite[]>>({});
 
-  const router = useRouter();
-  const { user, player, loading } = useAuth();
-
   useEffect(() => {
     fetchStats();
     fetchTopPlayers();
@@ -123,14 +120,6 @@ export default function HomePage() {
     fetchNotices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ログイン済みなら自動遷移
-  useEffect(() => {
-    if (user && player && !loading) {
-      if (player.is_admin) router.push('/admin/dashboard');
-      else router.push(`/players/${player.id}`);
-    }
-  }, [user, player, loading, router]);
 
   const fetchStats = async () => {
     try {
@@ -188,7 +177,7 @@ export default function HomePage() {
         const res2 = await supabase
           .from('match_details')
           .select('*')
-          .order('match_date', { ascending: false }) // ← created_at だと無い環境があるため安全側に
+          .order('match_date', { ascending: false })
           .limit(6);
         if (!res2.error)
           data = (res2.data ?? []).map((m: any) => ({ ...m, mode: 'singles' })) as RecentMatch[];
@@ -302,7 +291,6 @@ export default function HomePage() {
     };
 
     if (recentMatches.length) void loadTeamMembers();
-    // teamMembersMap を依存に含めると不要再取得が増えるため recentMatches のみ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recentMatches]);
 

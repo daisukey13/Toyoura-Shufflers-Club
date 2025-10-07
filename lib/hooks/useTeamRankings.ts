@@ -18,8 +18,8 @@ export type TeamRankItem = {
 };
 
 type Options = {
-  enabled?: boolean;
-  requireAuth?: boolean;                 // 既定: false（公開ビューを想定）
+  enabled?: boolean; // 呼び出し側互換のため残す（内部では使わない）
+  requireAuth?: boolean; // 同上
   order?: 'avg_rp' | 'win_pct' | 'last_match_at';
   direction?: 'asc' | 'desc';
   limit?: number;
@@ -27,31 +27,22 @@ type Options = {
 
 /**
  * チームランキング（team_rankings VIEW）
- * - 既存の UI/デザインは変更しません
- * - Supabase 連携の挙動もそのまま
- * - 最小修正: useFetchSupabaseData にジェネリックを渡さず、戻り値を局所で型付け
+ * - 既存UI/連携は維持
+ * - 最小修正: useFetchSupabaseData に存在しないプロパティを渡さない
  */
 export function useTeamRankings(opts?: Options) {
   const orderCol = opts?.order ?? 'avg_rp';
   const ascending = (opts?.direction ?? 'desc') === 'asc';
 
-  const {
-    data,
-    loading,
-    error,
-    retrying,
-    refetch,
-  } = useFetchSupabaseData({
-    tableName: 'team_rankings', // ← VIEW 名
+  const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
+    tableName: 'team_rankings',
     select:
       'id,name,team_size,avg_rp,avg_hc,played,wins,losses,win_pct,last_match_at',
     orderBy: { column: orderCol, ascending },
     limit: opts?.limit,
-    enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false,
+    // enabled / requireAuth は useFetchSupabaseData の型に無いので渡さない
   });
 
-  // 最小限の型付け（UI側の型安全を保ちつつ、呼び出し側は従来通り）
   const teams: TeamRankItem[] = useMemo(
     () => (Array.isArray(data) ? (data as TeamRankItem[]) : []),
     [data]
