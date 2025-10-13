@@ -3,7 +3,9 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { createClient } from '@/lib/supabase/client'; // ← ここだけ切替（シングルトン）
+import { createClient } from '@/lib/supabase/client';
+
+// ★ ここで 1 度だけ取得（client.ts 側が __supabase__ に固定しているため多重生成を防げます）
 const supabase = createClient();
 
 type PlayerRow = {
@@ -15,15 +17,14 @@ type PlayerRow = {
   is_admin: boolean | null;
   is_active: boolean | null;
   is_deleted: boolean | null;
-  // UI 用の派生フィールド（DBに無くてもOK）
+  // UI 派生
   display_name?: string | null;
   avatar_url?: string | null;
   email?: string | null;
 };
 
 type AuthState = {
-  // 未判定: undefined / 未ログイン: null / ログイン中: User
-  user: User | null | undefined;
+  user: User | null | undefined; // 未判定: undefined / 未ログイン: null / ログイン中: User
   player: PlayerRow | null;
   isAdmin: boolean;
   loading: boolean;
@@ -45,13 +46,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [player, setPlayer] = useState<PlayerRow | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
-  // 競合防止（リクエストの世代管理）
-  const reqIdRef = useRef(0);
 
-  /** players から当該ユーザーのプレイヤー情報を取得し、表示名を合成 */
+  // 競合防止（同時リクエストの世代管理）
+  const reqIdRef = useRef(0);
+  // StrictMode の二重実行対策（購読の多重化を抑止）
+  const subscribedRef = useRef(false);
+
+  /** players から当該ユーザーのプレイヤー情報を取得し、表示名を合成（列差異にフォールバック） */
   const fetchPlayerByUserId = async (uid: string): Promise<PlayerRow | null> => {
     try {
-      const res = await supabase
+      // まずは想定スキーマ
+      let q = supabase
         .from('players')
         .select(
           [
@@ -72,20 +77,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .limit(1)
         .maybeSingle();
 
+      let res = await q;
+      // 列差異（is_deleted 無し等）の場合は緩めに再試行
+      if (res.error && /column .* does not exist/i.test(String(res.error.message))) {
+        res = await supabase
+          .from('players')
+          .select(
+            [
+              'id',
+              'auth_user_id',
+              'user_id',
+              'handle_name',
+              'team_name',
+              'is_admin',
+              'is_active',
+              'avatar_url',
+              'email',
+            ].join(',')
+          )
+          .or(`auth_user_id.eq.${uid},user_id.eq.${uid}`)
+          .limit(1)
+          .maybeSingle();
+      }
+
       if (res.error) {
         console.warn('[AuthContext] fetchPlayer error:', res.error);
         return null;
       }
-
       const row = (res.data ?? null) as PlayerRow | null;
       if (!row) return null;
 
       const merged: PlayerRow = {
         ...row,
-        display_name:
-          (row as any).display_name ?? row.handle_name ?? row.team_name ?? null,
+        display_name: (row as any).display_name ?? row.handle_name ?? row.team_name ?? null,
       };
-
       return merged;
     } catch (e) {
       console.warn('[AuthContext] fetchPlayer exception:', e);
@@ -100,7 +125,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data, error } = await supabase.auth.getSession();
     if (error) console.warn('[AuthContext] getSession error:', error);
 
-    // 古いリクエストは破棄
+    // 古い要求は破棄
     if (myReq !== reqIdRef.current) return;
 
     const currentUser = data?.session?.user ?? null;
@@ -128,10 +153,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       const { error } = await supabase.auth.signOut();
       if (error) console.warn('[AuthContext] signOut error:', error);
-      // Next.js のサーバ Cookie を同期している場合は以下を使う実装に合わせてもOK
-      // await fetch('/auth/callback', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ event: 'SIGNED_OUT', session: null }) });
+      // サーバ Cookie 同期を使っている場合のみ：
+      // await fetch('/auth/callback', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ event:'SIGNED_OUT', session:null }) });
     } finally {
-      // ローカル状態をクリア
       setUser(null);
       setPlayer(null);
       setIsAdmin(false);
@@ -146,6 +170,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!mounted) return;
       await applySession();
     })();
+
+    // 開発の StrictMode でも二重購読しないようにガード
+    if (subscribedRef.current) return () => {};
+    subscribedRef.current = true;
 
     const {
       data: { subscription },
@@ -169,7 +197,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
