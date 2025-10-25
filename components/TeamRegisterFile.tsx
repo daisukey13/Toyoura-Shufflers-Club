@@ -1,7 +1,7 @@
 // components/TeamRegisterFile.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { FaSave, FaSpinner, FaUsers } from 'react-icons/fa';
 
@@ -20,8 +20,9 @@ export default function TeamRegisterFile() {
   const [notes, setNotes] = useState<string>('');
   const [date, setDate] = useState<string>(() => {
     const d = new Date();
-    // API側は YYYY-MM-DD で受けるため、日付だけ切り出し
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 10); // YYYY-MM-DD
   });
 
   const [busy, setBusy] = useState(false);
@@ -46,8 +47,8 @@ export default function TeamRegisterFile() {
     })();
   }, []);
 
-  const canSubmit = useMemo(() => {
-    return (
+  const canSubmit = useMemo(
+    () =>
       !busy &&
       !!winnerId &&
       !!loserId &&
@@ -55,9 +56,9 @@ export default function TeamRegisterFile() {
       Number.isFinite(loserScore) &&
       loserScore >= 0 &&
       loserScore <= 14 &&
-      /^\d{4}-\d{2}-\d{2}$/.test(date)
-    );
-  }, [busy, winnerId, loserId, loserScore, date]);
+      /^\d{4}-\d{2}-\d{2}$/.test(date),
+    [busy, winnerId, loserId, loserScore, date]
+  );
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -69,7 +70,7 @@ export default function TeamRegisterFile() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           mode: 'teams',
-          match_date: date, // YYYY-MM-DD
+          match_date: date,
           winner_team_id: winnerId,
           loser_team_id: loserId,
           winner_score: 15,
@@ -80,12 +81,9 @@ export default function TeamRegisterFile() {
       });
 
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(json?.message || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
 
       setMsg('チーム戦を登録しました。');
-      // フォームを軽くリセット
       setLoserScore(0);
       setVenue('');
       setNotes('');
@@ -108,12 +106,10 @@ export default function TeamRegisterFile() {
           読み込み中…
         </div>
       ) : teams.length === 0 ? (
-        <div className="text-sm text-gray-400">
-          チームが見つかりません。先にチームを作成してください。
-        </div>
+        <div className="text-sm text-gray-400">チームが見つかりません。先にチームを作成してください。</div>
       ) : (
         <div className="space-y-3">
-          {/* 日付（YYYY-MM-DD） */}
+          {/* 日付 */}
           <div>
             <label className="block text-sm text-gray-300 mb-1">試合日</label>
             <input
@@ -168,7 +164,9 @@ export default function TeamRegisterFile() {
                 min={0}
                 max={14}
                 value={loserScore}
-                onChange={(e) => setLoserScore(Math.max(0, Math.min(14, parseInt(e.target.value || '0', 10))))}
+                onChange={(e) =>
+                  setLoserScore(Math.max(0, Math.min(14, parseInt(e.target.value || '0', 10))))
+                }
                 className="w-full px-3 py-2 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 outline-none"
               />
             </div>

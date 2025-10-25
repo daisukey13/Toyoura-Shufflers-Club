@@ -3,6 +3,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
+const TeamRegisterFile = dynamic(
+  () => import('@/components/TeamRegisterFile').then((m) => m.default || m),
+  { ssr: false }
+);
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -23,8 +27,6 @@ import {
   FaDoorOpen,
   FaPlus,
 } from 'react-icons/fa';
-
-const TeamRegisterFile = dynamic(() => import('./TeamRegisterFile'), { ssr: false });
 
 /* ================================ 型 ================================ */
 type Player = {
@@ -274,10 +276,7 @@ export default function MyPage() {
         return;
       }
 
-      // 型は Home の最近試合用。ここでは MyPage の戦績とは別枠で扱うため、簡易に成功扱い。
-      // 画面右下の「最近の試合」ボックスは MyPage 固有の rls/table が無いときにも空表示にします。
-      // （この MyPage の「最近の試合」は match_players ベースの別ロジック。こちらは Home 用の取得互換に合わせて存在してもOK）
-      // 何もしない（このブロックは Top ページ用の RecentMatch 型に合わせておくためのフォールバックです）
+      // ここでは Top ページ用型との互換だけ確保。MyPage固有の戦績ボックスは別ロジックのため空でもOK。
     } catch (e: any) {
       console.warn('戦績取得に失敗:', e?.message || e);
       setMatchFetchNote('戦績テーブル/ビューが未設定のため、最近の試合履歴を表示できません。');
@@ -895,7 +894,8 @@ export default function MyPage() {
                 <div className="text-2xl font-bold text-yellow-100">{me.handicap ?? 0}</div>
                 <div className="text-xs text-gray-400">ハンディ</div>
               </div>
-              <div className="rounded-lg bg紫色-900/30 p-3">
+              {/* ▼ ここ修正：bg紫色-900/30 → bg-purple-900/30 */}
+              <div className="rounded-lg bg-purple-900/30 p-3">
                 <div className="text-2xl font-bold text-green-400">{me.wins ?? 0}</div>
                 <div className="text-xs text-gray-400">勝</div>
               </div>
@@ -968,7 +968,7 @@ export default function MyPage() {
                     value={teamSearch}
                     onChange={(e) => setTeamSearch(e.target.value)}
                     placeholder="チーム名で検索"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-purple-900/30 border border-purple-500/30 text黄色-100 placeholder:text-gray-400 focus:outline-none focus:border-purple-400"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-purple-900/30 border border-purple-500/30 text-yellow-100 placeholder:text-gray-400 focus:outline-none focus:border-purple-400"
                   />
                 </div>
                 {teamCandidates.length > 0 && (

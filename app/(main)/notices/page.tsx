@@ -90,11 +90,13 @@ export default function NoticesListPage() {
                       <div className="flex items-center gap-2 text-sm text-gray-400 shrink-0">
                         <FaCalendarAlt />
                         <span>
-                          {new Date(n.date).toLocaleDateString('ja-JP', {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                          })}
+                          {n?.date
+                           ? new Date(n.date as string).toLocaleDateString('ja-JP', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                             })
+                          : '-'}
                         </span>
                       </div>
                     </div>

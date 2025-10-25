@@ -1,0 +1,15 @@
+  ▲ Next.js 14.2.25
+  - Environments: .env.local
+
+   Creating an optimized production build ...
+
+--- STDERR ---
+Failed to compile.
+
+./app/page.tsx
+Module not found: Can't resolve './TeamRegisterFile'
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+> Build failed because of webpack errors

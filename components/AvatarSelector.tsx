@@ -50,8 +50,10 @@ export default function AvatarSelector({
         });
       if (error) throw error;
 
-      const files = (data ?? []).filter(f => !!f.name && !f.name.startsWith('.'));
-      const mapped: AvatarItem[] = files.map((f) => {
+      type FileLike = { name?: string };
+      const files = (data ?? []).filter((f: FileLike) => !!f?.name && !f.name!.startsWith('.'));
+      const mapped: AvatarItem[] = files.map((f: Required<FileLike>) => {
+        
         const pub = supabase.storage.from(bucket).getPublicUrl(`${prefix}/${f.name}`);
         return { name: f.name, url: pub.data.publicUrl };
       });

@@ -6,8 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p 3000",
-    "typecheck": "tsc --noEmit",
-    "lint": "next lint"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --ext .ts,.tsx --max-warnings=0",
+    "format:check": "prettier -c .",
+    "deps:unused": "depcheck --json > audit/depcheck.json || true",
+    "code:unused": "knip --reporter json > audit/knip.json || true",
+    "graph:cycles": "madge --circular --warning --extensions ts,tsx --json . > audit/madge.json || true",
+    "next:build": "next build",
+    "audit:quick": "npm run typecheck && npm run lint && npm run next:build",
+    "audit:full": "node scripts/run-audit.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.31.4",

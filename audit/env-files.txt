@@ -1,0 +1,1 @@
+-rw-r--r--@ 1 dukey  staff  2724 Sep  2 16:58 .env.local
