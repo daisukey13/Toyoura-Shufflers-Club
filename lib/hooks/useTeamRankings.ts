@@ -1,8 +1,8 @@
 // lib/hooks/useTeamRankings.ts
-'use client';
+"use client";
 
-import { useMemo } from 'react';
-import { useFetchSupabaseData } from '@/lib/hooks/useFetchSupabaseData';
+import { useMemo } from "react";
+import { useFetchSupabaseData } from "@/lib/hooks/useFetchSupabaseData";
 
 export type TeamRankItem = {
   id: string;
@@ -20,8 +20,8 @@ export type TeamRankItem = {
 type Options = {
   enabled?: boolean; // 呼び出し側互換のため残す（内部では使わない）
   requireAuth?: boolean; // 同上
-  order?: 'avg_rp' | 'win_pct' | 'last_match_at';
-  direction?: 'asc' | 'desc';
+  order?: "avg_rp" | "win_pct" | "last_match_at";
+  direction?: "asc" | "desc";
   limit?: number;
 };
 
@@ -31,13 +31,13 @@ type Options = {
  * - 最小修正: useFetchSupabaseData に存在しないプロパティを渡さない
  */
 export function useTeamRankings(opts?: Options) {
-  const orderCol = opts?.order ?? 'avg_rp';
-  const ascending = (opts?.direction ?? 'desc') === 'asc';
+  const orderCol = opts?.order ?? "avg_rp";
+  const ascending = (opts?.direction ?? "desc") === "asc";
 
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
-    tableName: 'team_rankings',
+    tableName: "team_rankings",
     select:
-      'id,name,team_size,avg_rp,avg_hc,played,wins,losses,win_pct,last_match_at',
+      "id,name,team_size,avg_rp,avg_hc,played,wins,losses,win_pct,last_match_at",
     orderBy: { column: orderCol, ascending },
     limit: opts?.limit,
     // enabled / requireAuth は useFetchSupabaseData の型に無いので渡さない
@@ -45,7 +45,7 @@ export function useTeamRankings(opts?: Options) {
 
   const teams: TeamRankItem[] = useMemo(
     () => (Array.isArray(data) ? (data as TeamRankItem[]) : []),
-    [data]
+    [data],
   );
 
   return { teams, loading, error, retrying, refetch };

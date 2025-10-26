@@ -1,6 +1,6 @@
 // lib/supabase/server.ts
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
 export function createServerSupabase() {
   const cookieStore = cookies();
@@ -16,10 +16,9 @@ export function createServerSupabase() {
           cookieStore.set({ name, value, ...options });
         },
         remove(name: string, options: any) {
-          cookieStore.set({ name, value: '', ...options, maxAge: 0 });
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
         },
       },
-    }
+    },
   );
 }
-

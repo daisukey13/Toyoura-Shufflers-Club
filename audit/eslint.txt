@@ -1,4 +1,17 @@
 
 --- STDERR ---
-Invalid option '--ext' - perhaps you meant '-c'?
-You're using eslint.config.js, some command line flags are no longer available. Please see https://eslint.org/docs/latest/use/command-line-interface for details.
+
+Oops! Something went wrong! :(
+
+ESLint: 8.57.1
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/dukey/Documents/shufflers8/node_modules/@rushstack/eslint-patch/modern-module-resolution' imported from /Users/dukey/Documents/shufflers8/eslint.config.mjs
+Did you mean to import "@rushstack/eslint-patch/modern-module-resolution.js"?
+    at finalizeResolution (node:internal/modules/esm/resolve:283:11)
+    at moduleResolve (node:internal/modules/esm/resolve:952:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1188:11)
+    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:642:12)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:591:25)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:574:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:236:38)
+    at ModuleJob._link (node:internal/modules/esm/module_job:130:49)

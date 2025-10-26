@@ -1,11 +1,16 @@
 // app/(main)/players/[id]/matches/page.tsx
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
-import { FaArrowLeft, FaCalendar, FaChevronLeft, FaChevronRight } from 'react-icons/fa';
-import { createClient } from '@/lib/supabase/client';
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import {
+  FaArrowLeft,
+  FaCalendar,
+  FaChevronLeft,
+  FaChevronRight,
+} from "react-icons/fa";
+import { createClient } from "@/lib/supabase/client";
 
 type MatchDetails = {
   id: string;
@@ -32,16 +37,16 @@ export default function PlayerAllMatchesPage() {
   const { id: playerId } = useParams<{ id: string }>();
   const router = useRouter();
   const sp = useSearchParams();
-  const pageParam = Math.max(1, parseInt(sp.get('page') || '1', 10) || 1);
+  const pageParam = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
 
   const [items, setItems] = useState<MatchDetails[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
+  const [error, setError] = useState<string>("");
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)),
-    [total]
+    [total],
   );
 
   useEffect(() => {
@@ -51,7 +56,7 @@ export default function PlayerAllMatchesPage() {
     (async () => {
       if (!playerId) return;
       setLoading(true);
-      setError('');
+      setError("");
 
       try {
         const from = (pageParam - 1) * PAGE_SIZE;
@@ -59,10 +64,10 @@ export default function PlayerAllMatchesPage() {
 
         // singles用ビュー: match_details（winner/loserどちらでもヒット）
         const q = supabase
-          .from('match_details')
-          .select('*', { count: 'exact' })
+          .from("match_details")
+          .select("*", { count: "exact" })
           .or(`winner_id.eq.${playerId},loser_id.eq.${playerId}`)
-          .order('match_date', { ascending: false })
+          .order("match_date", { ascending: false })
           .range(from, to);
 
         const { data, count, error } = await q;
@@ -74,7 +79,7 @@ export default function PlayerAllMatchesPage() {
         }
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.message || '読み込みに失敗しました');
+          setError(e?.message || "読み込みに失敗しました");
           setItems([]);
           setTotal(0);
         }
@@ -91,7 +96,7 @@ export default function PlayerAllMatchesPage() {
   const gotoPage = (p: number) => {
     const safe = Math.min(Math.max(1, p), totalPages);
     const params = new URLSearchParams(sp.toString());
-    params.set('page', String(safe));
+    params.set("page", String(safe));
     router.push(`/players/${playerId}/matches?${params.toString()}`);
   };
 
@@ -111,7 +116,9 @@ export default function PlayerAllMatchesPage() {
         <div className="max-w-3xl mx-auto">
           <div className="mb-6 sm:mb-8 flex items-end justify-between gap-3 flex-wrap">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-yellow-100">全ての試合</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold text-yellow-100">
+                全ての試合
+              </h1>
               <p className="text-gray-400 text-sm mt-1">
                 1ページ {PAGE_SIZE}件・新しい順 / 合計 {total} 件
               </p>
@@ -143,7 +150,10 @@ export default function PlayerAllMatchesPage() {
           {loading && (
             <div className="space-y-3">
               {Array.from({ length: PAGE_SIZE }).map((_, i) => (
-                <div key={i} className="h-20 rounded-xl bg-white/5 animate-pulse" />
+                <div
+                  key={i}
+                  className="h-20 rounded-xl bg-white/5 animate-pulse"
+                />
               ))}
             </div>
           )}
@@ -169,23 +179,23 @@ export default function PlayerAllMatchesPage() {
                     key={m.id}
                     className={`rounded-xl p-3 sm:p-4 border transition-colors ${
                       isWin
-                        ? 'bg-green-500/10 border-green-500/30'
-                        : 'bg-red-500/10 border-red-500/30'
+                        ? "bg-green-500/10 border-green-500/30"
+                        : "bg-red-500/10 border-red-500/30"
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-xs text-gray-400 flex items-center gap-1">
                           <FaCalendar />
-                          {new Date(m.match_date).toLocaleString('ja-JP', {
-                            month: 'numeric',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
+                          {new Date(m.match_date).toLocaleString("ja-JP", {
+                            month: "numeric",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
                           })}
                         </div>
                         <div className="font-semibold text-yellow-100 truncate">
-                          {isWin ? '勝利' : '敗北'}：{oppName}
+                          {isWin ? "勝利" : "敗北"}：{oppName}
                         </div>
                       </div>
                       <div className="text-right">
@@ -194,11 +204,14 @@ export default function PlayerAllMatchesPage() {
                         </div>
                         <div
                           className={`text-xs sm:text-sm ${
-                            isWin ? 'text-green-300' : 'text-red-300'
+                            isWin ? "text-green-300" : "text-red-300"
                           }`}
                         >
-                          {isWin ? '+' : ''}
-                          {isWin ? m.winner_points_change ?? 0 : m.loser_points_change ?? 0}pt
+                          {isWin ? "+" : ""}
+                          {isWin
+                            ? (m.winner_points_change ?? 0)
+                            : (m.loser_points_change ?? 0)}
+                          pt
                         </div>
                       </div>
                     </div>

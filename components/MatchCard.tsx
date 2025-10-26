@@ -1,9 +1,9 @@
 // components/MatchCard.tsx
 
-import { FaTrophy, FaUser } from 'react-icons/fa';
-import { formatDistanceToNow } from 'date-fns';
-import { ja } from 'date-fns/locale';
-import Image from 'next/image';
+import { FaTrophy, FaUser } from "react-icons/fa";
+import { formatDistanceToNow } from "date-fns";
+import { ja } from "date-fns/locale";
+import Image from "next/image";
 
 interface Player {
   id: string;
@@ -24,12 +24,12 @@ interface MatchCardProps {
 }
 
 // 退会者用のデフォルトアバター
-const DELETED_USER_AVATAR = '/images/deleted-user-avatar.png';
-const DEFAULT_AVATAR = '/images/default-avatar.png';
+const DELETED_USER_AVATAR = "/images/deleted-user-avatar.png";
+const DEFAULT_AVATAR = "/images/default-avatar.png";
 
 export default function MatchCard({ match }: MatchCardProps) {
   const formatPlayerName = (player: Player) => {
-    return player.is_deleted ? '退会済' : player.handle_name;
+    return player.is_deleted ? "退会済" : player.handle_name;
   };
 
   const getPlayerAvatar = (player: Player) => {
@@ -50,7 +50,7 @@ export default function MatchCard({ match }: MatchCardProps) {
   }) => (
     <div
       className={`flex items-center gap-3 p-4 rounded-lg ${
-        isWinner ? 'bg-green-900/30' : 'bg-gray-800/50'
+        isWinner ? "bg-green-900/30" : "bg-gray-800/50"
       }`}
     >
       <div className="relative">
@@ -75,7 +75,7 @@ export default function MatchCard({ match }: MatchCardProps) {
       <div className="flex-1">
         <p
           className={`font-medium ${
-            player.is_deleted ? 'text-gray-500' : 'text-white'
+            player.is_deleted ? "text-gray-500" : "text-white"
           }`}
         >
           {formatPlayerName(player)}

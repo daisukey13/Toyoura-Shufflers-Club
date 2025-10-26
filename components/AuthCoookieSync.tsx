@@ -1,8 +1,8 @@
 // components/AuthCookieSync.tsx
-'use client';
+"use client";
 
-import { useEffect, useMemo, useRef } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useEffect, useMemo, useRef } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 /**
  * クライアント側の Supabase 認証イベントを監視し、
@@ -22,9 +22,9 @@ export default function AuthCookieSync() {
     try {
       if (inFlightRef.current) return;
       inFlightRef.current = true;
-      await fetch('/auth/callback', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      await fetch("/auth/callback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         // same-origin のみ、Cookie は route.ts 側で set される
         body: JSON.stringify(payload),
       });
@@ -43,20 +43,20 @@ export default function AuthCookieSync() {
       const token = session?.access_token ?? null;
       if (token) {
         lastAccessTokenRef.current = token;
-        void postSync({ event: 'TOKEN_REFRESHED', session });
+        void postSync({ event: "TOKEN_REFRESHED", session });
       }
     });
 
     // 2) 認証イベント監視
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') {
+      if (event === "SIGNED_OUT") {
         // サインアウトは常に通知
         lastAccessTokenRef.current = null;
         void postSync({ event, session: null });
         return;
       }
 
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
         const token = session?.access_token ?? null;
         // 同一トークンの重複送信はスキップ（無限ループ/過剰 POST 対策）
         if (token && lastAccessTokenRef.current !== token) {

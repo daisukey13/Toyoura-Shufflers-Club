@@ -1,9 +1,9 @@
 // app/mypage/TeamRegisterFile.tsx
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { FaUsers, FaChevronRight } from 'react-icons/fa';
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { FaUsers, FaChevronRight } from "react-icons/fa";
 
 type Team = { id: string; name: string };
 type TeamsResponse =
@@ -14,25 +14,34 @@ export default function TeamRegisterFile() {
   const [loading, setLoading] = useState(true);
   const [teams, setTeams] = useState<Team[]>([]);
   const [admin, setAdmin] = useState(false);
-  const [sel, setSel] = useState('');
-  const [err, setErr] = useState('');
+  const [sel, setSel] = useState("");
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
-        setErr('');
-        const res = await fetch('/api/my/teams', {
-          credentials: 'include',
-          cache: 'no-store',
-          headers: { Accept: 'application/json' },
+        setErr("");
+        const res = await fetch("/api/my/teams", {
+          credentials: "include",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
         });
         const text = await res.text();
         const json: TeamsResponse = (() => {
-          try { return JSON.parse(text); } catch { return { ok: false, message: 'Invalid JSON' }; }
+          try {
+            return JSON.parse(text);
+          } catch {
+            return { ok: false, message: "Invalid JSON" };
+          }
         })();
-        if (!res.ok || !json.ok) throw new Error(!res.ok ? `HTTP ${res.status}` : (json as any)?.message || 'unknown error');
+        if (!res.ok || !json.ok)
+          throw new Error(
+            !res.ok
+              ? `HTTP ${res.status}`
+              : (json as any)?.message || "unknown error",
+          );
 
         if (!alive) return;
         const list = Array.isArray(json.teams) ? json.teams : [];
@@ -40,17 +49,22 @@ export default function TeamRegisterFile() {
         setAdmin(Boolean(json.admin));
         if (list.length === 1) setSel(list[0].id);
       } catch (e: any) {
-        if (alive) setErr(e?.message || '所属チームの取得に失敗しました');
+        if (alive) setErr(e?.message || "所属チームの取得に失敗しました");
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   if (loading) {
     return (
-      <div className="glass-card rounded-xl p-5 border border-purple-500/30" aria-busy="true">
+      <div
+        className="glass-card rounded-xl p-5 border border-purple-500/30"
+        aria-busy="true"
+      >
         <div className="animate-pulse h-6 w-40 bg-white/10 rounded mb-3" />
         <div className="animate-pulse h-10 w-full bg-white/10 rounded" />
       </div>
@@ -65,7 +79,9 @@ export default function TeamRegisterFile() {
           <div className="p-3 rounded-full bg-emerald-500/20">
             <FaUsers className="text-emerald-300" />
           </div>
-          <h3 className="text-lg font-bold text-yellow-100">チーム試合を登録</h3>
+          <h3 className="text-lg font-bold text-yellow-100">
+            チーム試合を登録
+          </h3>
         </div>
         <p className="text-sm text-gray-400">
           所属チームがありません。チームに加入すると、ここからチーム戦の登録ができます。
@@ -88,7 +104,9 @@ export default function TeamRegisterFile() {
             <FaUsers className="text-emerald-300" />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-bold text-yellow-100">チーム試合を登録</h3>
+            <h3 className="text-lg font-bold text-yellow-100">
+              チーム試合を登録
+            </h3>
             <p className="text-sm text-gray-400">所属チーム: {t.name}</p>
           </div>
           <FaChevronRight className="text-gray-400 group-hover:text-gray-200" />
@@ -100,8 +118,8 @@ export default function TeamRegisterFile() {
   // 管理者 or 複数所属 → セレクトして遷移
   const canGo = Boolean(sel);
   const btnCls = canGo
-    ? 'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90'
-    : 'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-gray-600/50 cursor-not-allowed';
+    ? "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90"
+    : "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-gray-600/50 cursor-not-allowed";
 
   return (
     <div className="glass-card rounded-xl p-5 border border-purple-500/30">
@@ -118,19 +136,31 @@ export default function TeamRegisterFile() {
           onChange={(e) => setSel(e.target.value)}
           className="w-full px-3 py-2 bg-purple-900/30 border border-purple-500/30 rounded-lg text-yellow-100"
         >
-          <option value="">{admin ? 'チームを選択（全チーム）' : '所属チームを選択'}</option>
+          <option value="">
+            {admin ? "チームを選択（全チーム）" : "所属チームを選択"}
+          </option>
           {teams.map((t) => (
-            <option key={t.id} value={t.id}>{t.name}</option>
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
           ))}
         </select>
 
         {canGo ? (
-          <Link href={`/matches/register/teams?team_id=${encodeURIComponent(sel)}`} className={btnCls}>
+          <Link
+            href={`/matches/register/teams?team_id=${encodeURIComponent(sel)}`}
+            className={btnCls}
+          >
             <FaUsers />
             登録画面へ進む
           </Link>
         ) : (
-          <button type="button" disabled className={btnCls} aria-disabled="true">
+          <button
+            type="button"
+            disabled
+            className={btnCls}
+            aria-disabled="true"
+          >
             <FaUsers />
             登録画面へ進む
           </button>

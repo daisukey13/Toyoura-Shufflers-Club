@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import Link from 'next/link';
+import Link from "next/link";
 
 type Props = { className?: string };
 
-export default function LoginButton({ className = '' }: Props) {
+export default function LoginButton({ className = "" }: Props) {
   return (
     <Link
       href="/login"

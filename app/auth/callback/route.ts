@@ -1,9 +1,9 @@
-import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
 type Body = {
-  event: 'SIGNED_IN' | 'SIGNED_OUT' | 'TOKEN_REFRESHED';
+  event: "SIGNED_IN" | "SIGNED_OUT" | "TOKEN_REFRESHED";
   session: any | null;
 };
 
@@ -23,22 +23,25 @@ export async function POST(req: Request) {
           cookieStore.set(name, value, options);
         },
         remove(name: string, options: any) {
-          cookieStore.set(name, '', { ...options, maxAge: 0 });
+          cookieStore.set(name, "", { ...options, maxAge: 0 });
         },
       },
-    }
+    },
   );
 
   try {
-    if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+    if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
       if (session) {
         await supabase.auth.setSession(session);
       }
-    } else if (event === 'SIGNED_OUT') {
+    } else if (event === "SIGNED_OUT") {
       await supabase.auth.signOut();
     }
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, message: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, message: String(e?.message || e) },
+      { status: 500 },
+    );
   }
 }

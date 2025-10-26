@@ -1,7 +1,7 @@
-import Link from 'next/link'
+import Link from "next/link";
 
 export default function Footer() {
-  const currentYear = new Date().getFullYear()
+  const currentYear = new Date().getFullYear();
 
   return (
     <footer className="bg-gray-900 text-white">
@@ -25,12 +25,18 @@ export default function Footer() {
             </h3>
             <ul className="space-y-2">
               <li>
-                <Link href="/about" className="text-gray-400 hover:text-white text-sm">
+                <Link
+                  href="/about"
+                  className="text-gray-400 hover:text-white text-sm"
+                >
                   サイトについて
                 </Link>
               </li>
               <li>
-                <Link href="/terms" className="text-gray-400 hover:text-white text-sm">
+                <Link
+                  href="/terms"
+                  className="text-gray-400 hover:text-white text-sm"
+                >
                   利用規約
                 </Link>
               </li>
@@ -43,12 +49,18 @@ export default function Footer() {
             </h3>
             <ul className="space-y-2">
               <li>
-                <Link href="/rankings" className="text-gray-400 hover:text-white text-sm">
+                <Link
+                  href="/rankings"
+                  className="text-gray-400 hover:text-white text-sm"
+                >
                   ランキング
                 </Link>
               </li>
               <li>
-                <Link href="/players" className="text-gray-400 hover:text-white text-sm">
+                <Link
+                  href="/players"
+                  className="text-gray-400 hover:text-white text-sm"
+                >
                   プレイヤー
                 </Link>
               </li>
@@ -63,5 +75,5 @@ export default function Footer() {
         </div>
       </div>
     </footer>
-  )
+  );
 }

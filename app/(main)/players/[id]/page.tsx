@@ -1,9 +1,9 @@
 // app/(main)/players/[id]/page.tsx
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   FaCrown,
   FaMedal,
@@ -11,12 +11,12 @@ import {
   FaTrophy,
   FaArrowLeft,
   FaUsers,
-} from 'react-icons/fa';
+} from "react-icons/fa";
 import {
   useFetchPlayerDetail,
   useFetchPlayersData,
-} from '@/lib/hooks/useFetchSupabaseData';
-import { createClient } from '@/lib/supabase/client';
+} from "@/lib/hooks/useFetchSupabaseData";
+import { createClient } from "@/lib/supabase/client";
 
 /* ───────── Types ───────── */
 type Player = {
@@ -48,11 +48,15 @@ function winRateOf(p?: Player | null) {
   return g ? Math.round((w / g) * 100) : 0;
 }
 function rankTheme(rank?: number | null) {
-  if (!rank) return { ring: 'from-purple-500 to-pink-600', glow: 'bg-purple-400' };
-  if (rank === 1) return { ring: 'from-yellow-300 to-yellow-500', glow: 'bg-yellow-300' };
-  if (rank === 2) return { ring: 'from-gray-200 to-gray-400', glow: 'bg-gray-300' };
-  if (rank === 3) return { ring: 'from-orange-300 to-orange-500', glow: 'bg-orange-400' };
-  return { ring: 'from-purple-400 to-pink-500', glow: 'bg-purple-400' };
+  if (!rank)
+    return { ring: "from-purple-500 to-pink-600", glow: "bg-purple-400" };
+  if (rank === 1)
+    return { ring: "from-yellow-300 to-yellow-500", glow: "bg-yellow-300" };
+  if (rank === 2)
+    return { ring: "from-gray-200 to-gray-400", glow: "bg-gray-300" };
+  if (rank === 3)
+    return { ring: "from-orange-300 to-orange-500", glow: "bg-orange-400" };
+  return { ring: "from-purple-400 to-pink-500", glow: "bg-purple-400" };
 }
 
 /* ───────── UI ───────── */
@@ -60,12 +64,14 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
   const t = rankTheme(rank);
   return (
     <div className="relative inline-block">
-      <div className={`absolute -inset-4 rounded-full blur-2xl opacity-40 ${t.glow}`} />
+      <div
+        className={`absolute -inset-4 rounded-full blur-2xl opacity-40 ${t.glow}`}
+      />
       <div className={`relative rounded-full p-1 bg-gradient-to-br ${t.ring}`}>
         <div className="rounded-full bg-[#1f1f2f] p-4 sm:p-5">
           <div className="flex items-center justify-center">
             <span className="font-extrabold tracking-tight text-6xl sm:text-7xl text-yellow-100 drop-shadow">
-              {rank ?? '—'}
+              {rank ?? "—"}
             </span>
           </div>
         </div>
@@ -84,13 +90,18 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
 /* ───────── Page ───────── */
 export default function PlayerProfilePage() {
   const params = useParams<{ id: string }>();
-  const playerId = String(params?.id || '');
+  const playerId = String(params?.id || "");
 
   // 一覧（ランキング用）: ★ 引数なし版フック
   const { players: allPlayers } = useFetchPlayersData();
 
   // 詳細: ★ 追加（第2引数なし）
-  const { player: rawPlayer, matches, loading, error } = useFetchPlayerDetail(playerId);
+  const {
+    player: rawPlayer,
+    matches,
+    loading,
+    error,
+  } = useFetchPlayerDetail(playerId);
 
   // ★ 最小マッピング：public系の列名 → 画面が期待する列名に寄せる
   const player: Player | null = useMemo(() => {
@@ -98,10 +109,9 @@ export default function PlayerProfilePage() {
     const p: any = rawPlayer;
     return {
       id: p.id,
-      handle_name:
-        (p.handle_name?.trim?.() ||
-          p.display_name?.trim?.() ||
-          (p.id ? `${String(p.id).slice(0, 8)}…` : '')) as string,
+      handle_name: (p.handle_name?.trim?.() ||
+        p.display_name?.trim?.() ||
+        (p.id ? `${String(p.id).slice(0, 8)}…` : "")) as string,
       avatar_url: p.avatar_url ?? null,
       ranking_points: p.ranking_points ?? p.current_points ?? 0,
       handicap: p.handicap ?? p.current_handicap ?? 0,
@@ -118,7 +128,7 @@ export default function PlayerProfilePage() {
     const arr = [...src].sort(
       (a: any, b: any) =>
         (b.current_points ?? b.ranking_points ?? 0) -
-        (a.current_points ?? a.ranking_points ?? 0)
+        (a.current_points ?? a.ranking_points ?? 0),
     );
     const idx = arr.findIndex((p: any) => String(p.id) === playerId);
     return { rank: idx >= 0 ? idx + 1 : null, totalActive: arr.length };
@@ -140,10 +150,30 @@ export default function PlayerProfilePage() {
       setTeamsLoading(true);
       try {
         const membershipCandidates = [
-          { table: 'team_members', playerCol: 'player_id', teamCol: 'team_id', roleCol: 'role' },
-          { table: 'players_teams', playerCol: 'player_id', teamCol: 'team_id', roleCol: null },
-          { table: 'team_players', playerCol: 'player_id', teamCol: 'team_id', roleCol: null },
-          { table: 'memberships',  playerCol: 'player_id', teamCol: 'team_id', roleCol: 'role' },
+          {
+            table: "team_members",
+            playerCol: "player_id",
+            teamCol: "team_id",
+            roleCol: "role",
+          },
+          {
+            table: "players_teams",
+            playerCol: "player_id",
+            teamCol: "team_id",
+            roleCol: null,
+          },
+          {
+            table: "team_players",
+            playerCol: "player_id",
+            teamCol: "team_id",
+            roleCol: null,
+          },
+          {
+            table: "memberships",
+            playerCol: "player_id",
+            teamCol: "team_id",
+            roleCol: "role",
+          },
         ] as const;
 
         let memberRows: TeamMemberRow[] = [];
@@ -158,7 +188,7 @@ export default function PlayerProfilePage() {
           if (!error && data) {
             memberRows = (data as any[]).map((r) => ({
               team_id: r[c.teamCol] ?? null,
-              role: c.roleCol ? r[c.roleCol] ?? null : null,
+              role: c.roleCol ? (r[c.roleCol] ?? null) : null,
             }));
             break;
           } else {
@@ -168,20 +198,26 @@ export default function PlayerProfilePage() {
 
         const ids: string[] = (memberRows ?? [])
           .map((r) => r.team_id)
-          .filter((v): v is string => typeof v === 'string' && v.length > 0);
+          .filter((v): v is string => typeof v === "string" && v.length > 0);
 
         if (ids.length === 0) {
           if (!cancelled) {
-            if (lastErr) console.warn('[player profile] membership lookup fallback last error:', lastErr);
+            if (lastErr)
+              console.warn(
+                "[player profile] membership lookup fallback last error:",
+                lastErr,
+              );
             setTeams([]);
             setTeamsLoading(false);
           }
           return;
         }
 
-        const { data: teamRows, error: tErr } = await (supabase.from('teams') as any)
-          .select('id, name, avatar_url')
-          .in('id', ids);
+        const { data: teamRows, error: tErr } = await (
+          supabase.from("teams") as any
+        )
+          .select("id, name, avatar_url")
+          .in("id", ids);
         if (tErr) throw tErr;
 
         const roleMap = new Map<string, string | null>();
@@ -200,7 +236,7 @@ export default function PlayerProfilePage() {
         }
       } catch (e) {
         if (!cancelled) {
-          console.error('[player profile] fetch teams error:', e);
+          console.error("[player profile] fetch teams error:", e);
           setTeams([]);
           setTeamsLoading(false);
         }
@@ -249,7 +285,7 @@ export default function PlayerProfilePage() {
                 <div className="shrink-0">
                   <HugeRankBadge rank={rank} />
                   <div className="text-center mt-2 text-xs sm:text-sm text-gray-400">
-                    {rank ? `全${totalActive}人中` : '順位集計外'}
+                    {rank ? `全${totalActive}人中` : "順位集計外"}
                   </div>
                 </div>
 
@@ -257,7 +293,7 @@ export default function PlayerProfilePage() {
                   <div className="flex items-center gap-4 sm:gap-5">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={player.avatar_url || '/default-avatar.png'}
+                      src={player.avatar_url || "/default-avatar.png"}
                       alt={player.handle_name}
                       className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 border-purple-500/40 object-cover"
                     />
@@ -272,7 +308,9 @@ export default function PlayerProfilePage() {
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
                       <div className="flex items-center justify-center gap-2 text-purple-200 mb-1">
                         <FaMedal className="text-lg sm:text-xl" />
-                        <span className="text-xs sm:text-sm">ランキングポイント</span>
+                        <span className="text-xs sm:text-sm">
+                          ランキングポイント
+                        </span>
                       </div>
                       <div className="text-4xl sm:text-5xl font-black text-yellow-100 tracking-tight">
                         {player.ranking_points ?? 0}
@@ -281,7 +319,9 @@ export default function PlayerProfilePage() {
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
                       <div className="flex items-center justify-center gap-2 text-blue-200 mb-1">
                         <FaChartLine className="text-lg sm:text-xl" />
-                        <span className="text-xs sm:text-sm">ハンディキャップ</span>
+                        <span className="text-xs sm:text-sm">
+                          ハンディキャップ
+                        </span>
                       </div>
                       <div className="text-4xl sm:text-5xl font-black text-blue-100 tracking-tight">
                         {player.handicap ?? 0}
@@ -294,19 +334,25 @@ export default function PlayerProfilePage() {
                       <div className="text-2xl font-extrabold text-green-400">
                         {player.wins ?? 0}
                       </div>
-                      <div className="text-xs sm:text-sm text-gray-400">勝利</div>
+                      <div className="text-xs sm:text-sm text-gray-400">
+                        勝利
+                      </div>
                     </div>
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
                       <div className="text-2xl font-extrabold text-red-400">
                         {player.losses ?? 0}
                       </div>
-                      <div className="text-xs sm:text-sm text-gray-400">敗北</div>
+                      <div className="text-xs sm:text-sm text-gray-400">
+                        敗北
+                      </div>
                     </div>
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
                       <div className="text-2xl font-extrabold text-blue-400">
                         {winRateOf(player)}%
                       </div>
-                      <div className="text-xs sm:text-sm text-gray-400">勝率</div>
+                      <div className="text-xs sm:text-sm text-gray-400">
+                        勝率
+                      </div>
                     </div>
                   </div>
 
@@ -315,10 +361,10 @@ export default function PlayerProfilePage() {
                       <div
                         className={`h-full rounded-full ${
                           wr >= 60
-                            ? 'bg-green-500'
+                            ? "bg-green-500"
                             : wr >= 40
-                            ? 'bg-yellow-500'
-                            : 'bg-red-500'
+                              ? "bg-yellow-500"
+                              : "bg-red-500"
                         }`}
                         style={{ width: `${wr}%` }}
                       />
@@ -352,14 +398,18 @@ export default function PlayerProfilePage() {
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={t.avatar_url || '/default-avatar.png'}
+                        src={t.avatar_url || "/default-avatar.png"}
                         alt={t.name}
                         className="w-10 h-10 rounded-full border-2 border-purple-500/40 object-cover"
                       />
                       <div className="min-w-0">
-                        <div className="font-semibold text-yellow-100 truncate">{t.name}</div>
+                        <div className="font-semibold text-yellow-100 truncate">
+                          {t.name}
+                        </div>
                         {t.role && (
-                          <div className="text-xs text-purple-300 truncate">役割: {t.role}</div>
+                          <div className="text-xs text-purple-300 truncate">
+                            役割: {t.role}
+                          </div>
                         )}
                       </div>
                     </Link>
@@ -411,22 +461,22 @@ export default function PlayerProfilePage() {
                         key={m.id}
                         className={`rounded-xl p-3 sm:p-4 border transition-colors ${
                           isWin
-                            ? 'bg-green-500/10 border-green-500/30'
-                            : 'bg-red-500/10 border-red-500/30'
+                            ? "bg-green-500/10 border-green-500/30"
+                            : "bg-red-500/10 border-red-500/30"
                         }`}
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-xs text-gray-400">
-                              {new Date(m.match_date).toLocaleString('ja-JP', {
-                                month: 'numeric',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
+                              {new Date(m.match_date).toLocaleString("ja-JP", {
+                                month: "numeric",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
                               })}
                             </div>
                             <div className="font-semibold text-yellow-100 truncate">
-                              {isWin ? '勝利' : '敗北'}：{oppName}
+                              {isWin ? "勝利" : "敗北"}：{oppName}
                             </div>
                           </div>
                           <div className="text-right">
@@ -435,13 +485,13 @@ export default function PlayerProfilePage() {
                             </div>
                             <div
                               className={`text-xs sm:text-sm ${
-                                isWin ? 'text-green-300' : 'text-red-300'
+                                isWin ? "text-green-300" : "text-red-300"
                               }`}
                             >
-                              {isWin ? '+' : ''}
+                              {isWin ? "+" : ""}
                               {isWin
-                                ? m.winner_points_change ?? 0
-                                : m.loser_points_change ?? 0}
+                                ? (m.winner_points_change ?? 0)
+                                : (m.loser_points_change ?? 0)}
                               pt
                             </div>
                           </div>

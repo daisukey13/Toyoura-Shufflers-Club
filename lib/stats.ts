@@ -1,5 +1,8 @@
 // lib/stats.ts
-export function calcWinRate(wins?: number | null, losses?: number | null): number {
+export function calcWinRate(
+  wins?: number | null,
+  losses?: number | null,
+): number {
   const w = wins ?? 0;
   const l = losses ?? 0;
   const total = w + l;
@@ -9,6 +12,6 @@ export function calcWinRate(wins?: number | null, losses?: number | null): numbe
 }
 export function formatWinRate(wins?: number, losses?: number): string {
   const total = (wins ?? 0) + (losses ?? 0);
-  if (total === 0) return '—';
+  if (total === 0) return "—";
   return `${calcWinRate(wins, losses).toFixed(1)}%`;
 }

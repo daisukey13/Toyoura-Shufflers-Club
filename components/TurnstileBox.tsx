@@ -1,7 +1,7 @@
 // components/TurnstileBox.tsx
-'use client';
+"use client";
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef } from "react";
 
 /**
  * ✅ ここが重要：
@@ -22,33 +22,34 @@ type Props = {
   onVerify: (token: string) => void;
   action?: string;
   cData?: string;
-  theme?: 'light' | 'dark' | 'auto';
+  theme?: "light" | "dark" | "auto";
   className?: string;
 };
 
-const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '';
+const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
 export default function TurnstileBox({
   onVerify,
   action,
   cData,
-  theme = 'auto',
+  theme = "auto",
   className,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const widgetIdRef  = useRef<string | null>(null);
-  const renderedRef  = useRef(false);
+  const widgetIdRef = useRef<string | null>(null);
+  const renderedRef = useRef(false);
 
   useEffect(() => {
     // サイトキー未設定なら何もしない（プレースホルダ表示のみ）
     if (!SITE_KEY) return;
 
     // Turnstile API を 1 回だけ読み込む
-    const SCRIPT_ID = 'cf-turnstile-api';
+    const SCRIPT_ID = "cf-turnstile-api";
     if (!document.getElementById(SCRIPT_ID)) {
-      const s = document.createElement('script');
+      const s = document.createElement("script");
       s.id = SCRIPT_ID;
-      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.src =
+        "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
       s.async = true;
       s.defer = true;
       document.head.appendChild(s);
@@ -56,23 +57,26 @@ export default function TurnstileBox({
 
     // API 到着を待って 1 回だけ render
     const tick = setInterval(() => {
-      if (!window.turnstile || !containerRef.current || renderedRef.current) return;
+      if (!window.turnstile || !containerRef.current || renderedRef.current)
+        return;
 
       renderedRef.current = true;
       try {
         widgetIdRef.current = window.turnstile!.render(containerRef.current, {
-          sitekey: SITE_KEY,          // ← string 確定
+          sitekey: SITE_KEY, // ← string 確定
           theme,
           action,
           cData,
           callback: (token: string) => onVerify(token),
-          'error-callback': () => {
+          "error-callback": () => {
             // 必要に応じてトースト/ログを追加
             // console.warn('[Turnstile] error-callback');
           },
-          'expired-callback': () => {
+          "expired-callback": () => {
             // 期限切れ時は必要ならリセット
-            try { window.turnstile?.reset?.(widgetIdRef.current ?? undefined); } catch {}
+            try {
+              window.turnstile?.reset?.(widgetIdRef.current ?? undefined);
+            } catch {}
           },
         });
       } catch (e) {

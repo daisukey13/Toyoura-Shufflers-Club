@@ -1,6 +1,16 @@
 // app/(main)/terms/page.tsx
 
-import { FaScroll, FaShieldAlt, FaUserCheck, FaLock, FaExclamationTriangle, FaGamepad, FaGavel, FaBalanceScale, FaCalendarAlt } from 'react-icons/fa';
+import {
+  FaScroll,
+  FaShieldAlt,
+  FaUserCheck,
+  FaLock,
+  FaExclamationTriangle,
+  FaGamepad,
+  FaGavel,
+  FaBalanceScale,
+  FaCalendarAlt,
+} from "react-icons/fa";
 
 export default function TermsPage() {
   return (
@@ -20,7 +30,7 @@ export default function TermsPage() {
             豊浦シャッフラーズクラブ ランキングシステム
           </p>
         </div>
-        
+
         <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-8 space-y-8">
           {/* 第1条 */}
           <section className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20 hover:border-purple-400/40 transition-all">
@@ -28,7 +38,9 @@ export default function TermsPage() {
               <div className="p-2 bg-purple-500/20 rounded-lg">
                 <FaShieldAlt className="text-purple-400 text-xl" />
               </div>
-              <h2 className="text-2xl font-bold text-purple-300">第1条（目的）</h2>
+              <h2 className="text-2xl font-bold text-purple-300">
+                第1条（目的）
+              </h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
               本規約は、テーブルシャッフルボード日本ランキングシステム（以下「本サービス」といいます）の利用に関する条件を定めるものです。
@@ -42,7 +54,9 @@ export default function TermsPage() {
               <div className="p-2 bg-blue-500/20 rounded-lg">
                 <FaUserCheck className="text-blue-400 text-xl" />
               </div>
-              <h2 className="text-2xl font-bold text-blue-300">第2条（利用登録）</h2>
+              <h2 className="text-2xl font-bold text-blue-300">
+                第2条（利用登録）
+              </h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
               利用登録を希望する者は、本規約に同意の上、当社の定める方法によって利用登録を申請し、
@@ -56,7 +70,9 @@ export default function TermsPage() {
               <div className="p-2 bg-green-500/20 rounded-lg">
                 <FaLock className="text-green-400 text-xl" />
               </div>
-              <h2 className="text-2xl font-bold text-green-300">第3条（個人情報の取り扱い）</h2>
+              <h2 className="text-2xl font-bold text-green-300">
+                第3条（個人情報の取り扱い）
+              </h2>
             </div>
             <p className="text-gray-300 mb-4 leading-relaxed">
               本サービスでは、以下の情報を収集・管理します：
@@ -66,14 +82,20 @@ export default function TermsPage() {
                 <span className="text-green-400 mt-1">▸</span>
                 <div>
                   <span className="text-green-300 font-medium">公開情報：</span>
-                  <span className="text-gray-300">ハンドルネーム、アバター画像、地域、ランキング情報、試合結果</span>
+                  <span className="text-gray-300">
+                    ハンドルネーム、アバター画像、地域、ランキング情報、試合結果
+                  </span>
                 </div>
               </div>
               <div className="flex items-start gap-3 bg-gray-700/30 rounded-lg p-3">
                 <span className="text-yellow-400 mt-1">▸</span>
                 <div>
-                  <span className="text-yellow-300 font-medium">非公開情報：</span>
-                  <span className="text-gray-300">氏名、メールアドレス、電話番号</span>
+                  <span className="text-yellow-300 font-medium">
+                    非公開情報：
+                  </span>
+                  <span className="text-gray-300">
+                    氏名、メールアドレス、電話番号
+                  </span>
                 </div>
               </div>
             </div>
@@ -88,20 +110,25 @@ export default function TermsPage() {
               <div className="p-2 bg-red-500/20 rounded-lg">
                 <FaExclamationTriangle className="text-red-400 text-xl" />
               </div>
-              <h2 className="text-2xl font-bold text-red-300">第4条（禁止事項）</h2>
+              <h2 className="text-2xl font-bold text-red-300">
+                第4条（禁止事項）
+              </h2>
             </div>
             <p className="text-gray-300 mb-4 leading-relaxed">
               利用者は、以下の行為を行ってはなりません：
             </p>
             <ul className="space-y-2">
               {[
-                '虚偽の情報を登録する行為',
-                '他の利用者になりすます行為',
-                '本サービスの運営を妨害する行為',
-                '他の利用者に対する誹謗中傷行為',
-                'その他、当社が不適切と判断する行為'
+                "虚偽の情報を登録する行為",
+                "他の利用者になりすます行為",
+                "本サービスの運営を妨害する行為",
+                "他の利用者に対する誹謗中傷行為",
+                "その他、当社が不適切と判断する行為",
               ].map((item, index) => (
-                <li key={index} className="flex items-center gap-3 text-gray-300 bg-red-900/20 rounded-lg p-2 border border-red-500/20">
+                <li
+                  key={index}
+                  className="flex items-center gap-3 text-gray-300 bg-red-900/20 rounded-lg p-2 border border-red-500/20"
+                >
                   <span className="text-red-400">✗</span>
                   {item}
                 </li>
@@ -115,7 +142,9 @@ export default function TermsPage() {
               <div className="p-2 bg-yellow-500/20 rounded-lg">
                 <FaGamepad className="text-yellow-400 text-xl" />
               </div>
-              <h2 className="text-2xl font-bold text-yellow-300">第5条（試合結果の登録）</h2>
+              <h2 className="text-2xl font-bold text-yellow-300">
+                第5条（試合結果の登録）
+              </h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
               試合結果は正確に登録するものとし、虚偽の結果を登録した場合は、
@@ -129,7 +158,9 @@ export default function TermsPage() {
               <div className="p-2 bg-orange-500/20 rounded-lg">
                 <FaGavel className="text-orange-400 text-xl" />
               </div>
-              <h2 className="text-2xl font-bold text-orange-300">第6条（免責事項）</h2>
+              <h2 className="text-2xl font-bold text-orange-300">
+                第6条（免責事項）
+              </h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
               本サービスの利用により生じた損害について、当社は一切の責任を負いません。
@@ -143,7 +174,9 @@ export default function TermsPage() {
               <div className="p-2 bg-cyan-500/20 rounded-lg">
                 <FaScroll className="text-cyan-400 text-xl" />
               </div>
-              <h2 className="text-2xl font-bold text-cyan-300">第7条（規約の変更）</h2>
+              <h2 className="text-2xl font-bold text-cyan-300">
+                第7条（規約の変更）
+              </h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
               当社は、必要と判断した場合には、利用者に通知することなく本規約を変更することができるものとします。
@@ -157,7 +190,9 @@ export default function TermsPage() {
               <div className="p-2 bg-indigo-500/20 rounded-lg">
                 <FaBalanceScale className="text-indigo-400 text-xl" />
               </div>
-              <h2 className="text-2xl font-bold text-indigo-300">第8条（準拠法・管轄裁判所）</h2>
+              <h2 className="text-2xl font-bold text-indigo-300">
+                第8条（準拠法・管轄裁判所）
+              </h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
               本規約の解釈にあたっては、日本法を準拠法とします。

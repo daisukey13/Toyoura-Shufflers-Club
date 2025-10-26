@@ -23,21 +23,25 @@
 
 body {
   background: rgb(20, 14, 30);
-  background: linear-gradient(135deg, rgba(20,14,30,1) 0%, rgba(40,30,60,1) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(20, 14, 30, 1) 0%,
+    rgba(40, 30, 60, 1) 100%
+  );
   min-height: 100vh;
   position: relative;
 }
 
 /* シャッフルボードパックの背景 */
 body::before {
-  content: '';
+  content: "";
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   width: min(80vw, 800px);
   height: min(80vw, 800px);
-  background-image: url('/shuffleboard-puck-blue.png');
+  background-image: url("/shuffleboard-puck-blue.png");
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
@@ -62,14 +66,16 @@ body::before {
 
 /* ネオンエフェクト */
 .neon-text {
-  text-shadow: 0 0 10px rgba(139, 92, 246, 0.8),
-               0 0 20px rgba(139, 92, 246, 0.6),
-               0 0 30px rgba(139, 92, 246, 0.4);
+  text-shadow:
+    0 0 10px rgba(139, 92, 246, 0.8),
+    0 0 20px rgba(139, 92, 246, 0.6),
+    0 0 30px rgba(139, 92, 246, 0.4);
 }
 
 .neon-border {
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.5),
-              inset 0 0 20px rgba(139, 92, 246, 0.1);
+  box-shadow:
+    0 0 20px rgba(139, 92, 246, 0.5),
+    inset 0 0 20px rgba(139, 92, 246, 0.1);
 }
 
 /* グラデーションボタン */
@@ -85,14 +91,24 @@ body::before {
 
 /* アニメーション */
 @keyframes float {
-  0% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
-  100% { transform: translateY(0px); }
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
 }
 
 @keyframes shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .float-animation {
@@ -136,13 +152,13 @@ body::before {
 }
 
 .ranking-card::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: url('/avatars/bear-avatar.jpg');
+  background-image: url("/avatars/bear-avatar.jpg");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -158,13 +174,13 @@ body::before {
 }
 
 .members-card::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: url('/avatars/owl-avatar.jpg');
+  background-image: url("/avatars/owl-avatar.jpg");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -180,13 +196,13 @@ body::before {
 }
 
 .matches-card::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: url('/avatars/giraffe-avatar.jpg');
+  background-image: url("/avatars/giraffe-avatar.jpg");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -202,13 +218,13 @@ body::before {
 }
 
 .register-card::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: url('/avatars/donkey-avatar.jpg');
+  background-image: url("/avatars/donkey-avatar.jpg");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -216,29 +232,59 @@ body::before {
   z-index: 0;
   pointer-events: none;
 }
-#mobile-menu-overlay { position: fixed !important; inset: 0 !important; z-index: 2147483645 !important; }
-#mobile-menu         { position: fixed !important; left: 0 !important; right: 0 !important; top: 0 !important; z-index: 2147483646 !important; }
+#mobile-menu-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483645 !important;
+}
+#mobile-menu {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: 0 !important;
+  z-index: 2147483646 !important;
+}
 
 /* === Arcade theme tokens & utilities ========================= */
 @layer base {
   :root {
-    --arcade-surface: 28 28 44;       /* #1c1c2c */
-    --arcade-panel:  36 36 58;        /* #24243a */
-    --glow-purple:  168 85 247;       /* #a855f7 */
-    --glow-pink:    236 72 153;       /* #ec4899 */
-    --glow-green:    34 197 94;       /* #22c55e */
-    --glow-blue:     59 130 246;      /* #3b82f6 */
-    --glow-gold:    234 179  8;       /* #eab308 */
+    --arcade-surface: 28 28 44; /* #1c1c2c */
+    --arcade-panel: 36 36 58; /* #24243a */
+    --glow-purple: 168 85 247; /* #a855f7 */
+    --glow-pink: 236 72 153; /* #ec4899 */
+    --glow-green: 34 197 94; /* #22c55e */
+    --glow-blue: 59 130 246; /* #3b82f6 */
+    --glow-gold: 234 179 8; /* #eab308 */
   }
 
   /* 背景：暗いラバー調 + 著作権に触れない抽象パターン */
   .bg-arcade {
     background:
-      radial-gradient(1200px 600px at 100% -10%, rgba(168,85,247,.14) 0%, transparent 60%),
-      radial-gradient(900px 500px at -10% 110%, rgba(236,72,153,.12) 0%, transparent 60%),
-      linear-gradient(180deg, rgba(255,255,255,.03), transparent 30%),
-      repeating-linear-gradient(  0deg, rgba(255,255,255,.02), rgba(255,255,255,.02) 2px, transparent 2px, transparent 28px),
-      repeating-linear-gradient( 90deg, rgba(255,255,255,.02), rgba(255,255,255,.02) 2px, transparent 2px, transparent 28px),
+      radial-gradient(
+        1200px 600px at 100% -10%,
+        rgba(168, 85, 247, 0.14) 0%,
+        transparent 60%
+      ),
+      radial-gradient(
+        900px 500px at -10% 110%,
+        rgba(236, 72, 153, 0.12) 0%,
+        transparent 60%
+      ),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 30%),
+      repeating-linear-gradient(
+        0deg,
+        rgba(255, 255, 255, 0.02),
+        rgba(255, 255, 255, 0.02) 2px,
+        transparent 2px,
+        transparent 28px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.02),
+        rgba(255, 255, 255, 0.02) 2px,
+        transparent 2px,
+        transparent 28px
+      ),
       rgb(var(--arcade-surface));
   }
 }
@@ -250,10 +296,17 @@ body::before {
            transition-all select-none shadow-[0_8px_0_rgba(0,0,0,.35),0_0_0_1px_rgba(255,255,255,.06)_inset]
            active:translate-y-[2px] active:shadow-[0_6px_0_rgba(0,0,0,.35),0_0_0_1px_rgba(255,255,255,.06)_inset];
   }
-  .btn-arcade::after { /* 光沢 */
+  .btn-arcade::after {
+    /* 光沢 */
     content: "";
-    position: absolute; inset: 0; border-radius: 1rem;
-    background: linear-gradient( to bottom, rgba(255,255,255,.25), rgba(255,255,255,0) 45% );
+    position: absolute;
+    inset: 0;
+    border-radius: 1rem;
+    background: linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.25),
+      rgba(255, 255, 255, 0) 45%
+    );
     pointer-events: none;
   }
 
@@ -261,32 +314,32 @@ body::before {
   .btn-arcade--green {
     background-image: linear-gradient(180deg, #34d399, #16a34a);
     box-shadow:
-      0 0 24px rgba(var(--glow-green)/.35),
-      0 10px 0 rgba(0,0,0,.35),
-      inset 0 1px 0 rgba(255,255,255,.25);
+      0 0 24px rgba(var(--glow-green) / 0.35),
+      0 10px 0 rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.25);
   }
   .btn-arcade--blue {
     background-image: linear-gradient(180deg, #60a5fa, #2563eb);
     box-shadow:
-      0 0 24px rgba(var(--glow-blue)/.35),
-      0 10px 0 rgba(0,0,0,.35),
-      inset 0 1px 0 rgba(255,255,255,.25);
+      0 0 24px rgba(var(--glow-blue) / 0.35),
+      0 10px 0 rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.25);
   }
   .btn-arcade--gold {
     background-image: linear-gradient(180deg, #facc15, #d97706);
     color: #1a1a1a;
-    text-shadow: 0 1px 0 rgba(255,255,255,.4);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
     box-shadow:
-      0 0 28px rgba(var(--glow-gold)/.35),
-      0 10px 0 rgba(0,0,0,.35),
-      inset 0 1px 0 rgba(255,255,255,.35);
+      0 0 28px rgba(var(--glow-gold) / 0.35),
+      0 10px 0 rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
   }
   .btn-arcade--magenta {
     background-image: linear-gradient(180deg, #fb7185, #db2777);
     box-shadow:
-      0 0 24px rgba(var(--glow-pink)/.35),
-      0 10px 0 rgba(0,0,0,.35),
-      inset 0 1px 0 rgba(255,255,255,.25);
+      0 0 24px rgba(var(--glow-pink) / 0.35),
+      0 10px 0 rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.25);
   }
 
   /* パネル（event tile風の厚みと縁取り） */
@@ -296,5 +349,8 @@ body::before {
   }
 
   /* 小さな数値を等幅で（タイマー/カウンタ） */
-  .tnum { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
 }

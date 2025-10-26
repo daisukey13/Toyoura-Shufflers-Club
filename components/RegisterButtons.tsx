@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { FaGamepad, FaUsers } from 'react-icons/fa';
+import Link from "next/link";
+import { FaGamepad, FaUsers } from "react-icons/fa";
 
 export default function RegisterButtons() {
   return (

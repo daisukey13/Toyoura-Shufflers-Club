@@ -1,9 +1,9 @@
 // app/(main)/admin/dashboard/page.tsx
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   FaCog,
   FaUsers,
@@ -19,8 +19,8 @@ import {
   FaEdit,
   FaEye,
   FaEyeSlash,
-} from 'react-icons/fa';
-import { createClient } from '@/lib/supabase/client';
+} from "react-icons/fa";
+import { createClient } from "@/lib/supabase/client";
 
 type RankingConfig = {
   k_factor: number;
@@ -50,11 +50,13 @@ export default function AdminDashboard() {
   const supabase = useMemo(() => createClient(), []);
 
   // 認可フラグ
-  const [authz, setAuthz] = useState<'checking' | 'ok' | 'no'>('checking');
+  const [authz, setAuthz] = useState<"checking" | "ok" | "no">("checking");
   const [userId, setUserId] = useState<string | null>(null);
 
   // UI
-  const [activeTab, setActiveTab] = useState<'overview' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<"overview" | "settings">(
+    "overview",
+  );
   const [stats, setStats] = useState({
     totalPlayers: 0,
     activePlayers: 0,
@@ -82,10 +84,10 @@ export default function AdminDashboard() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch('/auth/whoami', { cache: 'no-store' });
+        const r = await fetch("/auth/whoami", { cache: "no-store" });
         const j = r.ok ? await r.json() : { authenticated: false };
         if (!j?.authenticated) {
-          router.replace('/login?redirect=/admin/dashboard');
+          router.replace("/login?redirect=/admin/dashboard");
           return;
         }
 
@@ -93,7 +95,7 @@ export default function AdminDashboard() {
           data: { user },
         } = await supabase.auth.getUser();
         if (!user) {
-          router.replace('/login?redirect=/admin/dashboard');
+          router.replace("/login?redirect=/admin/dashboard");
           return;
         }
         if (cancelled) return;
@@ -101,11 +103,14 @@ export default function AdminDashboard() {
 
         let isAdmin = false;
         const [adminResp, playerResp] = await Promise.all([
-          (supabase.from('app_admins') as any)
-            .select('user_id')
-            .eq('user_id', user.id)
+          (supabase.from("app_admins") as any)
+            .select("user_id")
+            .eq("user_id", user.id)
             .maybeSingle(),
-          (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
+          (supabase.from("players") as any)
+            .select("is_admin")
+            .eq("id", user.id)
+            .maybeSingle(),
         ]);
         const adminRow = (adminResp?.data ?? null) as AdminRow | null;
         const playerRow = (playerResp?.data ?? null) as PlayerFlagRow | null;
@@ -113,16 +118,16 @@ export default function AdminDashboard() {
         if (adminRow?.user_id) isAdmin = true;
         if (playerRow?.is_admin === true) isAdmin = true;
         if (!isAdmin) {
-          setAuthz('no');
+          setAuthz("no");
           return;
         }
 
-        setAuthz('ok');
+        setAuthz("ok");
         void fetchStats();
-        void loadConfig();     // ← ★ APIから設定取得
+        void loadConfig(); // ← ★ APIから設定取得
         void fetchNotices();
       } catch {
-        setAuthz('no');
+        setAuthz("no");
       }
     })();
     return () => {
@@ -135,23 +140,25 @@ export default function AdminDashboard() {
   const fetchStats = async () => {
     try {
       const [playersResp, matchesResp] = await Promise.all([
-        (supabase.from('players') as any).select('id,is_active'),
-        (supabase.from('matches') as any).select('id,created_at'),
+        (supabase.from("players") as any).select("id,is_active"),
+        (supabase.from("matches") as any).select("id,created_at"),
       ]);
       const players = (playersResp?.data ?? []) as PlayerStatRow[];
       const matches = (matchesResp?.data ?? []) as MatchRow[];
 
-      const todayISO = new Date().toISOString().split('T')[0];
+      const todayISO = new Date().toISOString().split("T")[0];
       const totalPlayers = players.length;
       const activePlayers = players.filter((p) => !!p.is_active).length;
       const totalMatches = matches.length;
       const todayMatches = matches.filter((m) =>
-        typeof m.created_at === 'string' ? m.created_at.startsWith(todayISO) : false
+        typeof m.created_at === "string"
+          ? m.created_at.startsWith(todayISO)
+          : false,
       ).length;
 
       setStats({ totalPlayers, activePlayers, totalMatches, todayMatches });
     } catch (error) {
-      console.error('[admin/dashboard] fetchStats error:', error);
+      console.error("[admin/dashboard] fetchStats error:", error);
     }
   };
 
@@ -159,15 +166,15 @@ export default function AdminDashboard() {
   const fetchNotices = async () => {
     setNLoading(true);
     try {
-      const { data, error } = await (supabase.from('notices') as any)
-        .select('*')
-        .order('date', { ascending: false })
-        .order('created_at', { ascending: false })
+      const { data, error } = await (supabase.from("notices") as any)
+        .select("*")
+        .order("date", { ascending: false })
+        .order("created_at", { ascending: false })
         .limit(3);
       if (error) throw error;
       setNotices((data ?? []) as Notice[]);
     } catch (e) {
-      console.error('[admin/dashboard] notices fetch error:', e);
+      console.error("[admin/dashboard] notices fetch error:", e);
     } finally {
       setNLoading(false);
     }
@@ -176,19 +183,23 @@ export default function AdminDashboard() {
   /** 公開トグル */
   const togglePublish = async (target: Notice) => {
     const next = !target.is_published;
-    setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
+    setNotices((prev) =>
+      prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)),
+    );
     try {
-      const { error } = await (supabase.from('notices') as any)
+      const { error } = await (supabase.from("notices") as any)
         .update({ is_published: next } as any)
-        .eq('id', target.id);
+        .eq("id", target.id);
 
       if (error) throw error;
     } catch (e) {
-      console.error('[admin/dashboard] toggle publish error:', e);
+      console.error("[admin/dashboard] toggle publish error:", e);
       setNotices((prev) =>
-        prev.map((n) => (n.id === target.id ? { ...n, is_published: !next } : n))
+        prev.map((n) =>
+          n.id === target.id ? { ...n, is_published: !next } : n,
+        ),
       );
-      alert('公開状態の更新に失敗しました。RLS の許可設定をご確認ください。');
+      alert("公開状態の更新に失敗しました。RLS の許可設定をご確認ください。");
     }
   };
 
@@ -199,7 +210,7 @@ export default function AdminDashboard() {
   // APIから設定を読み込む
   const loadConfig = async () => {
     try {
-      const r = await fetch('/api/admin/ranking-config', { cache: 'no-store' });
+      const r = await fetch("/api/admin/ranking-config", { cache: "no-store" });
       const j = await r.json();
       if (r.ok && j?.ok && j.config) {
         // 既存UIのスライダー範囲に軽くクランプ（安全策）
@@ -209,14 +220,22 @@ export default function AdminDashboard() {
         const normalized: RankingConfig = {
           k_factor: clamp(cfg.k_factor, 10, 64),
           score_diff_multiplier: clamp(cfg.score_diff_multiplier, 0.01, 0.1),
-          handicap_diff_multiplier: clamp(cfg.handicap_diff_multiplier, 0.01, 0.05),
-          win_threshold_handicap_change: clamp(cfg.win_threshold_handicap_change, 0, 50),
+          handicap_diff_multiplier: clamp(
+            cfg.handicap_diff_multiplier,
+            0.01,
+            0.05,
+          ),
+          win_threshold_handicap_change: clamp(
+            cfg.win_threshold_handicap_change,
+            0,
+            50,
+          ),
           handicap_change_amount: clamp(cfg.handicap_change_amount, -10, 10),
         };
         setConfig((prev) => ({ ...prev, ...normalized }));
       }
     } catch (e) {
-      console.warn('[admin/dashboard] loadConfig error:', e);
+      console.warn("[admin/dashboard] loadConfig error:", e);
     }
   };
 
@@ -228,19 +247,20 @@ export default function AdminDashboard() {
         data: { user },
       } = await supabase.auth.getUser();
 
-      const res = await fetch('/api/admin/ranking-config', {
-        method: 'PUT',
+      const res = await fetch("/api/admin/ranking-config", {
+        method: "PUT",
         headers: {
-          'content-type': 'application/json',
-          'x-user-id': user?.id || '',
+          "content-type": "application/json",
+          "x-user-id": user?.id || "",
         },
         body: JSON.stringify(config),
       });
       const j = await res.json();
-      if (!res.ok || !j?.ok) throw new Error(j?.message || `HTTP ${res.status}`);
-      alert('設定を保存しました');
+      if (!res.ok || !j?.ok)
+        throw new Error(j?.message || `HTTP ${res.status}`);
+      alert("設定を保存しました");
     } catch (e: any) {
-      alert(`設定の保存に失敗しました: ${e?.message || 'failed'}`);
+      alert(`設定の保存に失敗しました: ${e?.message || "failed"}`);
     } finally {
       setSaving(false);
     }
@@ -251,14 +271,14 @@ export default function AdminDashboard() {
     try {
       await supabase.auth.signOut();
       try {
-        await fetch('/auth/callback', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ event: 'SIGNED_OUT', session: null }),
+        await fetch("/auth/callback", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ event: "SIGNED_OUT", session: null }),
         });
       } catch {}
     } finally {
-      router.replace('/');
+      router.replace("/");
     }
   };
 
@@ -267,10 +287,10 @@ export default function AdminDashboard() {
     if (!den || den <= 0) return 0;
     const v = (num / den) * 100;
     return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
-    };
+  };
 
   // 認証中
-  if (authz === 'checking') {
+  if (authz === "checking") {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
         認証を確認しています...
@@ -279,7 +299,7 @@ export default function AdminDashboard() {
   }
 
   // 権限なし
-  if (authz === 'no') {
+  if (authz === "no") {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
         アクセス権限がありません
@@ -313,22 +333,22 @@ export default function AdminDashboard() {
         {/* タブ */}
         <div className="flex gap-4 mb-8 border-b border-purple-500/30">
           <button
-            onClick={() => setActiveTab('overview')}
+            onClick={() => setActiveTab("overview")}
             className={`pb-3 px-6 flex items-center gap-2 transition-all ${
-              activeTab === 'overview'
-                ? 'border-b-2 border-purple-400 text-purple-400'
-                : 'text-gray-400 hover:text-gray-300'
+              activeTab === "overview"
+                ? "border-b-2 border-purple-400 text-purple-400"
+                : "text-gray-400 hover:text-gray-300"
             }`}
           >
             <FaChartLine />
             概要
           </button>
           <button
-            onClick={() => setActiveTab('settings')}
+            onClick={() => setActiveTab("settings")}
             className={`pb-3 px-6 flex items-center gap-2 transition-all ${
-              activeTab === 'settings'
-                ? 'border-b-2 border-purple-400 text-purple-400'
-                : 'text-gray-400 hover:text-gray-300'
+              activeTab === "settings"
+                ? "border-b-2 border-purple-400 text-purple-400"
+                : "text-gray-400 hover:text-gray-300"
             }`}
           >
             <FaCog />
@@ -336,7 +356,7 @@ export default function AdminDashboard() {
           </button>
         </div>
 
-        {activeTab === 'overview' && (
+        {activeTab === "overview" && (
           <div>
             {/* 統計カード */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -347,11 +367,16 @@ export default function AdminDashboard() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm text-gray-400">総プレイヤー数</p>
-                    <p className="text-3xl font-bold text-blue-400">{stats.totalPlayers}</p>
+                    <p className="text-3xl font-bold text-blue-400">
+                      {stats.totalPlayers}
+                    </p>
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full" style={{ width: '100%' }} />
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full"
+                    style={{ width: "100%" }}
+                  />
                 </div>
               </div>
 
@@ -362,13 +387,17 @@ export default function AdminDashboard() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm text-gray-400">アクティブ</p>
-                    <p className="text-3xl font-bold text-green-400">{stats.activePlayers}</p>
+                    <p className="text-3xl font-bold text-green-400">
+                      {stats.activePlayers}
+                    </p>
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-gradient-to-r from-green-500 to-green-400 rounded-full"
-                    style={{ width: `${percent(stats.activePlayers, stats.totalPlayers)}%` }}
+                    style={{
+                      width: `${percent(stats.activePlayers, stats.totalPlayers)}%`,
+                    }}
                   />
                 </div>
               </div>
@@ -380,11 +409,16 @@ export default function AdminDashboard() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm text-gray-400">総試合数</p>
-                    <p className="text-3xl font-bold text-yellow-400">{stats.totalMatches}</p>
+                    <p className="text-3xl font-bold text-yellow-400">
+                      {stats.totalMatches}
+                    </p>
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full" style={{ width: '100%' }} />
+                  <div
+                    className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full"
+                    style={{ width: "100%" }}
+                  />
                 </div>
               </div>
 
@@ -395,7 +429,9 @@ export default function AdminDashboard() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm text-gray-400">本日の試合</p>
-                    <p className="text-3xl font-bold text-purple-400">{stats.todayMatches}</p>
+                    <p className="text-3xl font-bold text-purple-400">
+                      {stats.todayMatches}
+                    </p>
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
@@ -419,7 +455,9 @@ export default function AdminDashboard() {
                   </div>
                   <h3 className="text-2xl font-bold">プレイヤー管理</h3>
                 </div>
-                <p className="text-gray-400">プレイヤーの情報を編集・管理できます</p>
+                <p className="text-gray-400">
+                  プレイヤーの情報を編集・管理できます
+                </p>
               </Link>
 
               <Link
@@ -445,7 +483,9 @@ export default function AdminDashboard() {
                   </div>
                   <h3 className="text-2xl font-bold">お知らせ管理</h3>
                 </div>
-                <p className="text-gray-400">お知らせの作成・公開設定・編集・削除</p>
+                <p className="text-gray-400">
+                  お知らせの作成・公開設定・編集・削除
+                </p>
               </Link>
             </div>
 
@@ -486,34 +526,34 @@ export default function AdminDashboard() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
                           <h3 className="text-lg font-semibold text-yellow-100 break-all">
-                            {n.title || '無題'}
+                            {n.title || "無題"}
                           </h3>
                           <span
                             className={`px-2 py-0.5 rounded-full text-xs ${
                               n.is_published
-                                ? 'bg-green-500/20 text-green-400'
-                                : 'bg-gray-500/20 text-gray-300'
+                                ? "bg-green-500/20 text-green-400"
+                                : "bg-gray-500/20 text-gray-300"
                             }`}
                           >
-                            {n.is_published ? '公開中' : '非公開'}
+                            {n.is_published ? "公開中" : "非公開"}
                           </span>
                           <span className="text-sm text-gray-400">
                             {n.date
-                              ? new Date(n.date).toLocaleDateString('ja-JP', {
-                                  year: 'numeric',
-                                  month: 'long',
-                                  day: 'numeric',
+                              ? new Date(n.date).toLocaleDateString("ja-JP", {
+                                  year: "numeric",
+                                  month: "long",
+                                  day: "numeric",
                                 })
-                              : ''}
+                              : ""}
                           </span>
                         </div>
                         <p
                           className="text-gray-300 mt-1 overflow-hidden text-ellipsis"
                           style={{
-                            display: '-webkit-box',
+                            display: "-webkit-box",
                             WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            whiteSpace: 'normal',
+                            WebkitBoxOrient: "vertical",
+                            whiteSpace: "normal",
                           }}
                           title={n.content}
                         >
@@ -525,7 +565,7 @@ export default function AdminDashboard() {
                         <button
                           onClick={() => togglePublish(n)}
                           className="p-2 rounded-lg hover:bg-purple-900/30 transition-colors"
-                          title={n.is_published ? '非公開にする' : '公開する'}
+                          title={n.is_published ? "非公開にする" : "公開する"}
                         >
                           {n.is_published ? (
                             <FaEyeSlash className="text-gray-300" />
@@ -549,7 +589,7 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {activeTab === 'settings' && (
+        {activeTab === "settings" && (
           <div className="max-w-4xl mx-auto">
             <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-8">
               <h2 className="text-3xl font-bold mb-8 flex items-center gap-3">
@@ -563,7 +603,9 @@ export default function AdminDashboard() {
                   <label className="block text-lg font-medium text-purple-300 mb-2">
                     K係数（ELOレーティング）
                   </label>
-                  <p className="text-sm text-gray-400 mb-4">レーティング変動の大きさ。通常は16〜64。</p>
+                  <p className="text-sm text-gray-400 mb-4">
+                    レーティング変動の大きさ。通常は16〜64。
+                  </p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
@@ -571,12 +613,17 @@ export default function AdminDashboard() {
                       max={64}
                       value={config.k_factor}
                       onChange={(e) =>
-                        setConfig({ ...config, k_factor: parseInt(e.target.value, 10) })
+                        setConfig({
+                          ...config,
+                          k_factor: parseInt(e.target.value, 10),
+                        })
                       }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.k_factor}</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.k_factor}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -586,7 +633,9 @@ export default function AdminDashboard() {
                   <label className="block text-lg font-medium text-purple-300 mb-2">
                     スコア差倍率
                   </label>
-                  <p className="text-sm text-gray-400 mb-4">0.01〜0.10 推奨。</p>
+                  <p className="text-sm text-gray-400 mb-4">
+                    0.01〜0.10 推奨。
+                  </p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
@@ -615,7 +664,9 @@ export default function AdminDashboard() {
                   <label className="block text-lg font-medium text-purple-300 mb-2">
                     ハンディキャップ差倍率
                   </label>
-                  <p className="text-sm text-gray-400 mb-4">0.01〜0.05 推奨。</p>
+                  <p className="text-sm text-gray-400 mb-4">
+                    0.01〜0.05 推奨。
+                  </p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
@@ -656,7 +707,10 @@ export default function AdminDashboard() {
                       onChange={(e) =>
                         setConfig({
                           ...config,
-                          win_threshold_handicap_change: parseInt(e.target.value, 10),
+                          win_threshold_handicap_change: parseInt(
+                            e.target.value,
+                            10,
+                          ),
                         })
                       }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
@@ -674,7 +728,9 @@ export default function AdminDashboard() {
                   <label className="block text-lg font-medium text-purple-300 mb-2">
                     ハンディキャップ変更量
                   </label>
-                  <p className="text-sm text-gray-400 mb-4">閾値を超えた場合の変更量。</p>
+                  <p className="text-sm text-gray-400 mb-4">
+                    閾値を超えた場合の変更量。
+                  </p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
@@ -704,7 +760,7 @@ export default function AdminDashboard() {
                     disabled={saving}
                     className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all transform hover:scale-105 shadow-lg disabled:opacity-50 disabled:transform-none flex items-center gap-2 font-medium"
                   >
-                    {saving ? '保存中...' : '設定を保存'}
+                    {saving ? "保存中..." : "設定を保存"}
                   </button>
                 </div>
               </div>

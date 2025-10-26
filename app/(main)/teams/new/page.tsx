@@ -1,11 +1,17 @@
 // app/(main)/teams/new/page.tsx
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { FaUsers, FaChevronLeft, FaPlusCircle, FaSpinner, FaLock } from 'react-icons/fa';
-import { createClient } from '@/lib/supabase/client';
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  FaUsers,
+  FaChevronLeft,
+  FaPlusCircle,
+  FaSpinner,
+  FaLock,
+} from "react-icons/fa";
+import { createClient } from "@/lib/supabase/client";
 
 const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -20,18 +26,20 @@ export default function TeamCreatePage() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch('/auth/whoami', { cache: 'no-store' });
+        const r = await fetch("/auth/whoami", { cache: "no-store" });
         const j = r.ok ? await r.json() : { authenticated: false };
         if (!cancelled) setAuthed(!!j?.authenticated);
       } catch {
         if (!cancelled) setAuthed(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -50,9 +58,13 @@ export default function TeamCreatePage() {
     setSuccessMsg(null);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-const { data: { session } } = await supabase.auth.getSession();
-      if (!user || !session) throw new Error('ログインが必要です');
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!user || !session) throw new Error("ログインが必要です");
       const token = session.access_token;
 
       const payload = {
@@ -62,12 +74,12 @@ const { data: { session } } = await supabase.auth.getSession();
       };
 
       const res = await fetch(`${BASE}/rest/v1/teams`, {
-        method: 'POST',
+        method: "POST",
         headers: {
           apikey: ANON,
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=representation',
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
         },
         body: JSON.stringify(payload),
       });
@@ -76,19 +88,21 @@ const { data: { session } } = await supabase.auth.getSession();
         const t = await res.text();
         // 一意制約など
         if (/23505|duplicate key value|unique constraint/i.test(t)) {
-          throw new Error('同名のチームが既に存在します。別の名前にしてください。');
+          throw new Error(
+            "同名のチームが既に存在します。別の名前にしてください。",
+          );
         }
-        throw new Error(t || '登録に失敗しました');
+        throw new Error(t || "登録に失敗しました");
       }
 
       const json = await res.json();
       const teamId = json?.[0]?.id as string | undefined;
-      setSuccessMsg('チームを作成しました！');
+      setSuccessMsg("チームを作成しました！");
       setTimeout(() => {
-        router.replace(teamId ? `/teams/${teamId}` : '/teams');
+        router.replace(teamId ? `/teams/${teamId}` : "/teams");
       }, 800);
     } catch (e: any) {
-      setError(e?.message || '登録に失敗しました');
+      setError(e?.message || "登録に失敗しました");
     } finally {
       setSubmitting(false);
     }
@@ -112,7 +126,10 @@ const { data: { session } } = await supabase.auth.getSession();
       <div className="min-h-screen flex items-center justify-center p-8">
         <div className="text-center">
           <p className="mb-4">チーム作成にはログインが必要です。</p>
-          <Link href="/login?redirect=/teams/new" className="underline text-purple-300">
+          <Link
+            href="/login?redirect=/teams/new"
+            className="underline text-purple-300"
+          >
             ログインへ移動
           </Link>
         </div>
@@ -126,7 +143,10 @@ const { data: { session } } = await supabase.auth.getSession();
       <div className="container mx-auto px-4 py-8">
         {/* 戻る */}
         <div className="mb-6">
-          <button onClick={() => router.back()} className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200">
+          <button
+            onClick={() => router.back()}
+            className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
+          >
             <FaChevronLeft /> 戻る
           </button>
         </div>
@@ -146,7 +166,9 @@ const { data: { session } } = await supabase.auth.getSession();
           {/* フォーム */}
           <form onSubmit={onSubmit} className="space-y-6">
             <div className="glass-card rounded-2xl p-6 border border-purple-500/30">
-              <label className="block text-sm font-medium text-purple-300 mb-2">チーム名（必須）</label>
+              <label className="block text-sm font-medium text-purple-300 mb-2">
+                チーム名（必須）
+              </label>
               <input
                 type="text"
                 value={name}
@@ -154,11 +176,15 @@ const { data: { session } } = await supabase.auth.getSession();
                 placeholder="例: チームA"
                 className="w-full px-4 py-3 bg-gray-900/60 border border-purple-500/30 rounded-lg text-yellow-50 focus:outline-none focus:border-purple-400"
               />
-              <p className="text-xs text-gray-500 mt-1">2〜40文字。重複不可。</p>
+              <p className="text-xs text-gray-500 mt-1">
+                2〜40文字。重複不可。
+              </p>
             </div>
 
             <div className="glass-card rounded-2xl p-6 border border-purple-500/30">
-              <label className="block text-sm font-medium text-purple-300 mb-2">紹介文（任意）</label>
+              <label className="block text-sm font-medium text-purple-300 mb-2">
+                紹介文（任意）
+              </label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -180,7 +206,10 @@ const { data: { session } } = await supabase.auth.getSession();
             )}
 
             <div className="flex justify-center gap-3">
-              <Link href="/teams" className="px-6 py-3 rounded-xl bg-gray-700 hover:bg-gray-600">
+              <Link
+                href="/teams"
+                className="px-6 py-3 rounded-xl bg-gray-700 hover:bg-gray-600"
+              >
                 キャンセル
               </Link>
               <button
@@ -188,7 +217,11 @@ const { data: { session } } = await supabase.auth.getSession();
                 disabled={!canSubmit}
                 className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 text-white disabled:opacity-50 inline-flex items-center gap-2"
               >
-                {submitting ? <FaSpinner className="animate-spin" /> : <FaPlusCircle />}
+                {submitting ? (
+                  <FaSpinner className="animate-spin" />
+                ) : (
+                  <FaPlusCircle />
+                )}
                 作成する
               </button>
             </div>

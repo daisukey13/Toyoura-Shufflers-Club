@@ -1,9 +1,9 @@
 // components/GameButton.tsx
-'use client';
-import Link from 'next/link';
-import { ReactNode } from 'react';
+"use client";
+import Link from "next/link";
+import { ReactNode } from "react";
 
-type Variant = 'green' | 'blue' | 'gold' | 'magenta';
+type Variant = "green" | "blue" | "gold" | "magenta";
 
 export default function GameButton({
   href,
@@ -11,8 +11,8 @@ export default function GameButton({
   icon,
   label,
   subLabel,
-  variant = 'green',
-  className = '',
+  variant = "green",
+  className = "",
 }: {
   href?: string;
   onClick?: () => void;
@@ -25,17 +25,23 @@ export default function GameButton({
   const core = (
     <div
       className={[
-        'btn-arcade px-5 py-4 sm:px-6 sm:py-5 text-lg sm:text-xl gap-3 w-full',
-        variant === 'green' ? 'btn-arcade--green' :
-        variant === 'blue'  ? 'btn-arcade--blue'  :
-        variant === 'gold'  ? 'btn-arcade--gold'  : 'btn-arcade--magenta',
+        "btn-arcade px-5 py-4 sm:px-6 sm:py-5 text-lg sm:text-xl gap-3 w-full",
+        variant === "green"
+          ? "btn-arcade--green"
+          : variant === "blue"
+            ? "btn-arcade--blue"
+            : variant === "gold"
+              ? "btn-arcade--gold"
+              : "btn-arcade--magenta",
         className,
-      ].join(' ')}
+      ].join(" ")}
     >
       {icon && <span className="text-2xl sm:text-3xl drop-shadow">{icon}</span>}
       <div className="leading-tight">
         <div className="font-extrabold tracking-wide">{label}</div>
-        {subLabel && <div className="text-xs sm:text-sm opacity-90 tnum">{subLabel}</div>}
+        {subLabel && (
+          <div className="text-xs sm:text-sm opacity-90 tnum">{subLabel}</div>
+        )}
       </div>
     </div>
   );

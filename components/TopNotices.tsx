@@ -1,6 +1,6 @@
 // app/components/TopNotices.tsx
-import { supabaseServer } from '@/lib/supabase-server';
-import Link from 'next/link';
+import { supabaseServer } from "@/lib/supabase-server";
+import Link from "next/link";
 
 type Notice = {
   id: string;
@@ -12,12 +12,12 @@ type Notice = {
 
 export default async function TopNotices() {
   const { data, error } = await supabaseServer
-    .from('notices')
-    .select('id, title, body, published_at, pinned')
-    .eq('status', 'published')
-    .lte('published_at', new Date().toISOString())
-    .order('pinned', { ascending: false })
-    .order('published_at', { ascending: false })
+    .from("notices")
+    .select("id, title, body, published_at, pinned")
+    .eq("status", "published")
+    .lte("published_at", new Date().toISOString())
+    .order("pinned", { ascending: false })
+    .order("published_at", { ascending: false })
     .limit(5);
 
   if (error) {
@@ -32,15 +32,22 @@ export default async function TopNotices() {
       <h2 className="text-xl font-semibold mb-3 text-white">お知らせ</h2>
       <ul className="space-y-3">
         {notices.map((n) => (
-          <li key={n.id} className="rounded-lg border border-purple-500/20 bg-gray-900/60 p-4">
+          <li
+            key={n.id}
+            className="rounded-lg border border-purple-500/20 bg-gray-900/60 p-4"
+          >
             <div className="flex items-start justify-between gap-3">
               <h3 className="font-medium text-white">
-                {n.pinned && <span className="mr-2 inline-block rounded bg-purple-600 px-2 py-0.5 text-xs">重要</span>}
+                {n.pinned && (
+                  <span className="mr-2 inline-block rounded bg-purple-600 px-2 py-0.5 text-xs">
+                    重要
+                  </span>
+                )}
                 {n.title}
               </h3>
               {n.published_at && (
                 <time className="text-xs text-gray-400">
-                  {new Date(n.published_at).toLocaleDateString('ja-JP')}
+                  {new Date(n.published_at).toLocaleDateString("ja-JP")}
                 </time>
               )}
             </div>

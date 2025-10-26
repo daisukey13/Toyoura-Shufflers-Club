@@ -1,9 +1,16 @@
 // contexts/debug-AuthContext.tsx
-'use client';
+"use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import type { User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase/browserClient';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase/browserClient";
 
 type PlayerRow = {
   id: string;
@@ -36,7 +43,9 @@ const DebugAuthContext = createContext<AuthState>({
   signOut: async () => {},
 });
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [player, setPlayer] = useState<PlayerRow | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -44,15 +53,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const reqIdRef = useRef(0);
 
   const fetchPlayerByUserId = async (uid: string) => {
-    const { data: raw, error } = await (supabase.from('players') as any)
-      .select('id,auth_user_id,user_id,handle_name,team_name,is_admin,is_active,is_deleted,avatar_url,display_name')
+    const { data: raw, error } = await (supabase.from("players") as any)
+      .select(
+        "id,auth_user_id,user_id,handle_name,team_name,is_admin,is_active,is_deleted,avatar_url,display_name",
+      )
       .or(`auth_user_id.eq.${uid},user_id.eq.${uid}`)
-      .eq('is_deleted', false as any)
+      .eq("is_deleted", false as any)
       .limit(1)
       .maybeSingle();
 
     if (error) {
-      console.warn('[debug-AuthContext] fetchPlayer error:', error);
+      console.warn("[debug-AuthContext] fetchPlayer error:", error);
       return null;
     }
     if (!raw) return null;
@@ -64,9 +75,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user_id: d.user_id ?? null,
       handle_name: d.handle_name ?? null,
       team_name: d.team_name ?? null,
-      is_admin: typeof d.is_admin === 'boolean' ? d.is_admin : null,
-      is_active: typeof d.is_active === 'boolean' ? d.is_active : null,
-      is_deleted: typeof d.is_deleted === 'boolean' ? d.is_deleted : null,
+      is_admin: typeof d.is_admin === "boolean" ? d.is_admin : null,
+      is_active: typeof d.is_active === "boolean" ? d.is_active : null,
+      is_deleted: typeof d.is_deleted === "boolean" ? d.is_deleted : null,
       display_name: d.display_name ?? d.handle_name ?? d.team_name ?? null,
       avatar_url: d.avatar_url ?? null,
     };
@@ -78,21 +89,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     const myReq = ++reqIdRef.current;
 
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error) console.warn('[debug-AuthContext] getSession error:', error);
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
+    if (error) console.warn("[debug-AuthContext] getSession error:", error);
 
     if (myReq !== reqIdRef.current) return;
 
     const currentUser = session?.user ?? null;
     setUser(currentUser);
-    console.log('[debug-AuthContext] user:', currentUser?.id);
+    console.log("[debug-AuthContext] user:", currentUser?.id);
 
     if (currentUser) {
       const p = await fetchPlayerByUserId(currentUser.id);
       if (myReq !== reqIdRef.current) return;
       setPlayer(p);
       setIsAdmin(!!p?.is_admin);
-      console.log('[debug-AuthContext] player:', p);
+      console.log("[debug-AuthContext] player:", p);
     } else {
       setPlayer(null);
       setIsAdmin(false);
@@ -109,7 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setLoading(true);
       const { error } = await supabase.auth.signOut();
-      if (error) console.warn('[debug-AuthContext] signOut error:', error);
+      if (error) console.warn("[debug-AuthContext] signOut error:", error);
     } finally {
       setUser(null);
       setPlayer(null);
@@ -125,22 +139,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await applySession();
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setUser(session?.user ?? null);
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        setUser(session?.user ?? null);
 
-      if (session?.user?.id) {
-        const myReq = ++reqIdRef.current;
-        const p = await fetchPlayerByUserId(session.user.id);
-        if (myReq !== reqIdRef.current) return;
-        setPlayer(p);
-        setIsAdmin(!!p?.is_admin);
-      } else {
-        setPlayer(null);
-        setIsAdmin(false);
-      }
+        if (session?.user?.id) {
+          const myReq = ++reqIdRef.current;
+          const p = await fetchPlayerByUserId(session.user.id);
+          if (myReq !== reqIdRef.current) return;
+          setPlayer(p);
+          setIsAdmin(!!p?.is_admin);
+        } else {
+          setPlayer(null);
+          setIsAdmin(false);
+        }
 
-      setLoading(false);
-    });
+        setLoading(false);
+      },
+    );
 
     return () => {
       mounted = false;
@@ -157,10 +173,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       refreshAuth,
       signOut,
     }),
-    [user, player, isAdmin, loading]
+    [user, player, isAdmin, loading],
   );
 
-  return <DebugAuthContext.Provider value={value}>{children}</DebugAuthContext.Provider>;
+  return (
+    <DebugAuthContext.Provider value={value}>
+      {children}
+    </DebugAuthContext.Provider>
+  );
 };
 
 export const useAuth = () => useContext(DebugAuthContext);

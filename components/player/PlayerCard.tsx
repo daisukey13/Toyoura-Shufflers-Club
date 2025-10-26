@@ -1,8 +1,8 @@
 // components/player/PlayerCard.tsx
-import Image from 'next/image';
-import React from 'react';
-import { Player } from '@/types/player';
-import { FaTrophy, FaGamepad, FaMapMarkerAlt } from 'react-icons/fa';
+import Image from "next/image";
+import React from "react";
+import { Player } from "@/types/player";
+import { FaTrophy, FaGamepad, FaMapMarkerAlt } from "react-icons/fa";
 
 interface PlayerCardProps {
   player: Player;
@@ -12,28 +12,30 @@ interface PlayerCardProps {
 export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
   // ランク順位に応じた色を決定
   const getRankColor = (rank: number) => {
-    if (rank === 1) return 'text-yellow-500';
-    if (rank === 2) return 'text-gray-400';
-    if (rank === 3) return 'text-orange-600';
-    return 'text-gray-600';
+    if (rank === 1) return "text-yellow-500";
+    if (rank === 2) return "text-gray-400";
+    if (rank === 3) return "text-orange-600";
+    return "text-gray-600";
   };
 
   const getRankBgColor = (rank: number) => {
-    if (rank === 1) return 'bg-yellow-50 border-yellow-200';
-    if (rank === 2) return 'bg-gray-50 border-gray-200';
-    if (rank === 3) return 'bg-orange-50 border-orange-200';
-    return 'bg-white border-gray-200';
+    if (rank === 1) return "bg-yellow-50 border-yellow-200";
+    if (rank === 2) return "bg-gray-50 border-gray-200";
+    if (rank === 3) return "bg-orange-50 border-orange-200";
+    return "bg-white border-gray-200";
   };
 
   // 住所から市区町村を抽出（プライバシー保護）
   const getDisplayAddress = (address?: string) => {
-    if (!address) return '未登録';
+    if (!address) return "未登録";
     const match = address.match(/(.+?[市区町村])/);
-    return match ? match[1] : address.substring(0, 10) + '...';
+    return match ? match[1] : address.substring(0, 10) + "...";
   };
 
   return (
-    <div className={`rounded-lg border-2 p-6 transition-all hover:shadow-lg ${getRankBgColor(rank)}`}>
+    <div
+      className={`rounded-lg border-2 p-6 transition-all hover:shadow-lg ${getRankBgColor(rank)}`}
+    >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-4">
           {/* アバター */}
@@ -42,7 +44,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
               src={
                 player.avatar_url ||
                 `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                  player.handle_name
+                  player.handle_name,
                 )}&background=random`
               }
               alt={player.handle_name}
@@ -55,7 +57,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
             {rank <= 3 && (
               <div
                 className={`absolute -top-2 -right-2 w-8 h-8 rounded-full bg-white shadow-md flex items-center justify-center ${getRankColor(
-                  rank
+                  rank,
                 )}`}
               >
                 <FaTrophy className="w-4 h-4" />
@@ -65,7 +67,9 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
 
           {/* プレイヤー情報 */}
           <div>
-            <h3 className="text-xl font-bold text-gray-800">{player.handle_name}</h3>
+            <h3 className="text-xl font-bold text-gray-800">
+              {player.handle_name}
+            </h3>
             <div className="flex items-center gap-2 text-sm text-gray-600 mt-1">
               <FaMapMarkerAlt className="w-3 h-3" />
               <span>{getDisplayAddress(player.address)}</span>
@@ -74,21 +78,29 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({ player, rank }) => {
         </div>
 
         {/* 順位表示 */}
-        <div className={`text-3xl font-bold ${getRankColor(rank)}`}>#{rank}</div>
+        <div className={`text-3xl font-bold ${getRankColor(rank)}`}>
+          #{rank}
+        </div>
       </div>
 
       {/* スタッツ */}
       <div className="grid grid-cols-3 gap-4 mt-4">
         <div className="text-center">
-          <div className="text-2xl font-bold text-gray-800">{player.ranking_points ?? 1000}</div>
+          <div className="text-2xl font-bold text-gray-800">
+            {player.ranking_points ?? 1000}
+          </div>
           <div className="text-xs text-gray-600">ポイント</div>
         </div>
         <div className="text-center">
-          <div className="text-2xl font-bold text-blue-600">{player.handicap ?? 30}</div>
+          <div className="text-2xl font-bold text-blue-600">
+            {player.handicap ?? 30}
+          </div>
           <div className="text-xs text-gray-600">ハンディキャップ</div>
         </div>
         <div className="text-center">
-          <div className="text-2xl font-bold text-green-600">{player.matches_played ?? 0}</div>
+          <div className="text-2xl font-bold text-green-600">
+            {player.matches_played ?? 0}
+          </div>
           <div className="text-xs text-gray-600">試合数</div>
         </div>
       </div>

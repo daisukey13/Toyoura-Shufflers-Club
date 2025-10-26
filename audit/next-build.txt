@@ -2,14 +2,73 @@
   - Environments: .env.local
 
    Creating an optimized production build ...
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/33) ...
+   Generating static pages (8/33) 
+   Generating static pages (16/33) 
+   Generating static pages (24/33) 
+ ✓ Generating static pages (33/33)
+   Finalizing page optimization ...
+   Collecting build traces ...
 
---- STDERR ---
-Failed to compile.
+Route (app)                              Size     First Load JS
+┌ ƒ /                                    6.32 kB         160 kB
+├ ƒ /_not-found                          876 B          88.2 kB
+├ ƒ /admin/dashboard                     8.96 kB         161 kB
+├ ƒ /admin/login                         154 B          87.5 kB
+├ ƒ /admin/notices                       3.64 kB         155 kB
+├ ƒ /admin/notices/[id]                  2.29 kB         138 kB
+├ ƒ /admin/notices/new                   2.54 kB         145 kB
+├ ƒ /api/admin/ranking-config            0 B                0 B
+├ ƒ /api/login/resolve-email             0 B                0 B
+├ ƒ /api/matches                         0 B                0 B
+├ ƒ /api/matches/feed                    0 B                0 B
+├ ƒ /api/my/teams                        0 B                0 B
+├ ƒ /api/register                        0 B                0 B
+├ ƒ /api/turnstile/verify                0 B                0 B
+├ ƒ /auth/callback                       0 B                0 B
+├ ƒ /auth/is-admin                       0 B                0 B
+├ ƒ /auth/phone                          0 B                0 B
+├ ƒ /auth/whoami                         0 B                0 B
+├ ƒ /debug-login                         2.13 kB         138 kB
+├ ƒ /forgot-password                     3.63 kB         148 kB
+├ ƒ /login                               7.99 kB         160 kB
+├ ƒ /matches                             7.3 kB          158 kB
+├ ƒ /matches/register                    154 B          87.5 kB
+├ ƒ /matches/register/hub                177 B          94.3 kB
+├ ƒ /matches/register/singles            4.64 kB         159 kB
+├ ƒ /matches/register/teams              4.63 kB         156 kB
+├ ƒ /mypage                              7.19 kB         161 kB
+├ ƒ /notices                             3.34 kB         155 kB
+├ ƒ /notices/[id]                        2.51 kB         154 kB
+├ ƒ /players                             3.76 kB         154 kB
+├ ƒ /players/[id]                        4.29 kB         159 kB
+├ ƒ /players/[id]/edit                   3.59 kB         140 kB
+├ ƒ /players/[id]/matches                3.48 kB         155 kB
+├ ƒ /rankings                            4.65 kB         155 kB
+├ ƒ /register                            12.9 kB         160 kB
+├ ƒ /reset-password                      3.91 kB         149 kB
+├ ƒ /teams                               3.98 kB         154 kB
+├ ƒ /teams/[id]                          4.88 kB         157 kB
+├ ƒ /teams/[id]/edit                     6.46 kB         158 kB
+├ ƒ /teams/new                           3.77 kB         155 kB
+├ ƒ /terms                               154 B          87.5 kB
+├ ƒ /test                                1.75 kB         134 kB
+├ ƒ /test-connection                     1 kB            137 kB
+├ ƒ /test-mobile                         459 B          87.8 kB
+├ ƒ /test-player-fetch/[id]              1.17 kB        88.5 kB
+├ ƒ /test-simple                         1.83 kB        89.2 kB
+├ ƒ /test-supabase                       2.57 kB         134 kB
+└ ƒ /update-password                     3.54 kB         155 kB
++ First Load JS shared by all            87.3 kB
+  ├ chunks/2117-0ca3871448d1114f.js      31.6 kB
+  ├ chunks/fd9d1056-23fa514b2e094fc1.js  53.6 kB
+  └ other shared chunks (total)          2.09 kB
 
-./app/page.tsx
-Module not found: Can't resolve './TeamRegisterFile'
 
-https://nextjs.org/docs/messages/module-not-found
+ƒ Middleware                             67.4 kB
 
+ƒ  (Dynamic)  server-rendered on demand
 
-> Build failed because of webpack errors

@@ -1,7 +1,7 @@
 // lib/supabase/serverClient.ts
-import { cookies } from 'next/headers';
-import type { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { cookies } from "next/headers";
+import type { NextRequest, NextResponse } from "next/server";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 /**
  * 共通 ENV 取得（開発時のみ強い警告）
@@ -9,10 +9,10 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-if ((!URL || !ANON) && process.env.NODE_ENV !== 'production') {
+if ((!URL || !ANON) && process.env.NODE_ENV !== "production") {
   // eslint-disable-next-line no-console
   console.error(
-    '[supabase] Missing env: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY'
+    "[supabase] Missing env: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY",
   );
 }
 
@@ -57,7 +57,7 @@ export function createServerSupabaseClient() {
         try {
           cookieStore.set({
             name,
-            value: '',
+            value: "",
             ...toCookieOptions({ ...options, maxAge: 0 }),
           });
         } catch {
@@ -75,7 +75,7 @@ export function createServerSupabaseClient() {
  */
 export function createRouteHandlerSupabaseClient(
   req: NextRequest,
-  res: NextResponse
+  res: NextResponse,
 ) {
   return createServerClient(URL!, ANON!, {
     cookies: {
@@ -92,7 +92,7 @@ export function createRouteHandlerSupabaseClient(
       remove(name: string, options?: CookieOptions) {
         res.cookies.set({
           name,
-          value: '',
+          value: "",
           ...toCookieOptions({ ...options, maxAge: 0 }),
         });
       },
@@ -114,7 +114,7 @@ export function createRouteHandlerSupabaseClient(
  */
 export function createMiddlewareSupabaseClient(
   req: NextRequest,
-  res: NextResponse
+  res: NextResponse,
 ) {
   return createRouteHandlerSupabaseClient(req, res);
 }

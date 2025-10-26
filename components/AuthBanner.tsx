@@ -1,8 +1,8 @@
 // components/AuthBanner.tsx
-import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { cookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default async function AuthBanner() {
   const cookieStore = cookies();
@@ -18,19 +18,22 @@ export default async function AuthBanner() {
           cookieStore.set({ name, value, ...options });
         },
         remove(name: string, options: CookieOptions) {
-          cookieStore.set({ name, value: '', ...options });
+          cookieStore.set({ name, value: "", ...options });
         },
       },
-    }
+    },
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return null;
 
   const name =
-    (user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name)) ||
+    (user.user_metadata &&
+      (user.user_metadata.full_name || user.user_metadata.name)) ||
     user.email ||
-    'サインイン済み';
+    "サインイン済み";
 
   return (
     <div className="border-t border-white/10 bg-green-600/10">

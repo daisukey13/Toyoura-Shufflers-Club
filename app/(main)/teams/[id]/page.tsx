@@ -1,17 +1,17 @@
 // app/(main)/teams/[id]/page.tsx
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   FaArrowLeft,
   FaUsers,
   FaMedal,
   FaChartLine,
   FaTrophy,
-} from 'react-icons/fa';
-import { createClient } from '@/lib/supabase/client';
+} from "react-icons/fa";
+import { createClient } from "@/lib/supabase/client";
 
 /* ============================== Types ============================== */
 type TeamBase = {
@@ -75,15 +75,15 @@ type MatchItem = {
 
 /* ============================== Helpers ============================== */
 function safeDateString(iso?: string | null) {
-  if (!iso) return '-';
+  if (!iso) return "-";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '-';
+  if (Number.isNaN(d.getTime())) return "-";
   try {
-    return d.toLocaleString('ja-JP', {
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+    return d.toLocaleString("ja-JP", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   } catch {
     return d.toLocaleString();
@@ -110,7 +110,7 @@ export default function TeamProfilePage() {
 
   const [team, setTeam] = useState<Team | null>(null);
   const [loadingTeam, setLoadingTeam] = useState(true);
-  const [teamError, setTeamError] = useState<string>('');
+  const [teamError, setTeamError] = useState<string>("");
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(true);
@@ -124,24 +124,28 @@ export default function TeamProfilePage() {
     (async () => {
       if (!teamId) return;
       setLoadingTeam(true);
-      setTeamError('');
+      setTeamError("");
       try {
         // 1) teams から存在確実な列のみ
-        const { data: baseRow, error: baseErr } = await (supabase.from('teams') as any)
-          .select('id, name, avatar_url')
-          .eq('id', teamId)
+        const { data: baseRow, error: baseErr } = await (
+          supabase.from("teams") as any
+        )
+          .select("id, name, avatar_url")
+          .eq("id", teamId)
           .maybeSingle();
         if (baseErr) throw baseErr;
-        if (!baseRow) throw new Error('チームが見つかりませんでした。');
+        if (!baseRow) throw new Error("チームが見つかりませんでした。");
 
         const base: TeamBase = baseRow as TeamBase;
 
         // 2) team_rankings ビュー（あれば）
         let stats: TeamRankStats | null = null;
         try {
-          const { data: r, error: rErr } = await (supabase.from('team_rankings') as any)
-            .select('avg_rp, wins, losses, win_pct, avg_hc, team_size')
-            .eq('id', teamId)
+          const { data: r, error: rErr } = await (
+            supabase.from("team_rankings") as any
+          )
+            .select("avg_rp, wins, losses, win_pct, avg_hc, team_size")
+            .eq("id", teamId)
             .maybeSingle();
           if (!rErr && r) stats = r as TeamRankStats;
         } catch {
@@ -150,7 +154,8 @@ export default function TeamProfilePage() {
 
         const combined: Team = {
           ...base,
-          ranking_points: stats?.avg_rp != null ? Math.round(stats.avg_rp) : null,
+          ranking_points:
+            stats?.avg_rp != null ? Math.round(stats.avg_rp) : null,
           wins: stats?.wins ?? null,
           losses: stats?.losses ?? null,
           handicap: stats?.avg_hc != null ? Math.round(stats.avg_hc) : null,
@@ -160,7 +165,7 @@ export default function TeamProfilePage() {
       } catch (e: any) {
         if (!cancelled) {
           setTeam(null);
-          setTeamError(e?.message || 'チーム情報の取得に失敗しました。');
+          setTeamError(e?.message || "チーム情報の取得に失敗しました。");
         }
       } finally {
         if (!cancelled) setLoadingTeam(false);
@@ -178,9 +183,11 @@ export default function TeamProfilePage() {
       if (!teamId) return;
       setLoadingMembers(true);
       try {
-        const { data, error } = await (supabase.from('team_members') as any)
-          .select('team_id, player_id, role, players:player_id(id, handle_name, avatar_url)')
-          .eq('team_id', teamId);
+        const { data, error } = await (supabase.from("team_members") as any)
+          .select(
+            "team_id, player_id, role, players:player_id(id, handle_name, avatar_url)",
+          )
+          .eq("team_id", teamId);
         if (error) throw error;
 
         const rows = (data ?? []) as MemberRow[];
@@ -197,8 +204,11 @@ export default function TeamProfilePage() {
   }, [supabase, teamId]);
 
   const memberIds = useMemo(
-    () => members.map((m) => m.player_id).filter((v) => typeof v === 'string' && v.length > 0),
-    [members]
+    () =>
+      members
+        .map((m) => m.player_id)
+        .filter((v) => typeof v === "string" && v.length > 0),
+    [members],
   );
 
   /* -------- 直近の試合履歴（チーム出場試合） --------
@@ -218,24 +228,34 @@ export default function TeamProfilePage() {
         }
 
         // 1) チームメンバーが出た試合
-        const { data: mp1, error: e1 } = await (supabase.from('match_players') as any)
-          .select('match_id, player_id, side_no, players:player_id(id, handle_name, avatar_url), matches:matches(id, mode, status, match_date, winner_score, loser_score)')
-          .in('player_id', memberIds)
-          .order('match_date', { foreignTable: 'matches', ascending: false })
+        const { data: mp1, error: e1 } = await (
+          supabase.from("match_players") as any
+        )
+          .select(
+            "match_id, player_id, side_no, players:player_id(id, handle_name, avatar_url), matches:matches(id, mode, status, match_date, winner_score, loser_score)",
+          )
+          .in("player_id", memberIds)
+          .order("match_date", { foreignTable: "matches", ascending: false })
           .limit(50);
         if (e1) throw e1;
 
         const mpRows1 = (mp1 ?? []) as MatchPlayerRow[];
-        const matchIds = Array.from(new Set(mpRows1.map((r) => r.match_id))).filter(Boolean) as string[];
+        const matchIds = Array.from(
+          new Set(mpRows1.map((r) => r.match_id)),
+        ).filter(Boolean) as string[];
         if (matchIds.length === 0) {
           if (!cancelled) setMatches([]);
           return;
         }
 
         // 2) 同試合の全参加者（相手側も含める）
-        const { data: mp2, error: e2 } = await (supabase.from('match_players') as any)
-          .select('match_id, player_id, side_no, players:player_id(id, handle_name, avatar_url)')
-          .in('match_id', matchIds);
+        const { data: mp2, error: e2 } = await (
+          supabase.from("match_players") as any
+        )
+          .select(
+            "match_id, player_id, side_no, players:player_id(id, handle_name, avatar_url)",
+          )
+          .in("match_id", matchIds);
         if (e2) throw e2;
         const mpRows2 = (mp2 ?? []) as MatchPlayerRow[];
 
@@ -254,7 +274,10 @@ export default function TeamProfilePage() {
           // この試合でチームメンバーが立っていたサイド番号（1/2など）
           const teamSideSet = new Set<number>();
           rowsAll.forEach((r) => {
-            if (memberIds.includes(r.player_id) && typeof r.side_no === 'number') {
+            if (
+              memberIds.includes(r.player_id) &&
+              typeof r.side_no === "number"
+            ) {
               teamSideSet.add(r.side_no);
             }
           });
@@ -270,13 +293,17 @@ export default function TeamProfilePage() {
             } else {
               // 相手側：サイドが異なる（または判定不能なら相手扱い）
               const isOtherSide =
-                typeof r.side_no === 'number' ? !teamSideSet.has(r.side_no) : true;
+                typeof r.side_no === "number"
+                  ? !teamSideSet.has(r.side_no)
+                  : true;
               if (isOtherSide) opponents.push(pl);
             }
           });
 
           // matches 情報（mpRows1 由来、または rowsAll から補完）
-          const m1 = mpRows1.find((r) => r.match_id === mid && r.matches?.id)?.matches ?? null;
+          const m1 =
+            mpRows1.find((r) => r.match_id === mid && r.matches?.id)?.matches ??
+            null;
 
           const match: MatchRow = m1 ?? {
             id: mid,
@@ -293,7 +320,7 @@ export default function TeamProfilePage() {
         if (!cancelled) setMatches(items);
       } catch (e) {
         if (!cancelled) {
-          console.warn('[team profile] fetch matches failed:', e);
+          console.warn("[team profile] fetch matches failed:", e);
           setMatches([]);
         }
       } finally {
@@ -304,7 +331,7 @@ export default function TeamProfilePage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, teamId, memberIds.join('|')]); // memberIds に依存
+  }, [supabase, teamId, memberIds.join("|")]); // memberIds に依存
 
   const wr = winRateOf(team);
   const games = gamesOf(team);
@@ -347,7 +374,7 @@ export default function TeamProfilePage() {
                 {/* アイコン */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={team.avatar_url || '/default-avatar.png'}
+                  src={team.avatar_url || "/default-avatar.png"}
                   alt={team.name}
                   className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-2 border-purple-500/40 object-cover"
                 />
@@ -362,7 +389,9 @@ export default function TeamProfilePage() {
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
                       <div className="flex items-center justify-center gap-2 text-purple-200 mb-1">
                         <FaMedal className="text-lg sm:text-xl" />
-                        <span className="text-xs sm:text-sm">ランキングポイント</span>
+                        <span className="text-xs sm:text-sm">
+                          ランキングポイント
+                        </span>
                       </div>
                       <div className="text-3xl sm:text-4xl font-black text-yellow-100 tracking-tight">
                         {team.ranking_points ?? 0}
@@ -372,7 +401,9 @@ export default function TeamProfilePage() {
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/30 p-4 sm:p-5">
                       <div className="flex items-center justify-center gap-2 text-blue-200 mb-1">
                         <FaChartLine className="text-lg sm:text-xl" />
-                        <span className="text-xs sm:text-sm">ハンディキャップ</span>
+                        <span className="text-xs sm:text-sm">
+                          ハンディキャップ
+                        </span>
                       </div>
                       <div className="text-3xl sm:text-4xl font-black text-blue-100 tracking-tight">
                         {team.handicap ?? 0}
@@ -383,13 +414,17 @@ export default function TeamProfilePage() {
                       <div className="text-2xl font-extrabold text-green-400">
                         {team.wins ?? 0}
                       </div>
-                      <div className="text-xs sm:text-sm text-gray-400">勝利</div>
+                      <div className="text-xs sm:text-sm text-gray-400">
+                        勝利
+                      </div>
                     </div>
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
                       <div className="text-2xl font-extrabold text-red-400">
                         {team.losses ?? 0}
                       </div>
-                      <div className="text-xs sm:text-sm text-gray-400">敗北</div>
+                      <div className="text-xs sm:text-sm text-gray-400">
+                        敗北
+                      </div>
                     </div>
                   </div>
 
@@ -399,10 +434,10 @@ export default function TeamProfilePage() {
                       <div
                         className={`h-full rounded-full ${
                           wr >= 60
-                            ? 'bg-green-500'
+                            ? "bg-green-500"
                             : wr >= 40
-                            ? 'bg-yellow-500'
-                            : 'bg-red-500'
+                              ? "bg-yellow-500"
+                              : "bg-red-500"
                         }`}
                         style={{ width: `${wr}%` }}
                       />
@@ -425,7 +460,9 @@ export default function TeamProfilePage() {
               {loadingMembers ? (
                 <div className="text-gray-400">読み込み中...</div>
               ) : members.length === 0 ? (
-                <div className="text-gray-400">メンバーが登録されていません。</div>
+                <div className="text-gray-400">
+                  メンバーが登録されていません。
+                </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
                   {members.map((m) => {
@@ -438,16 +475,18 @@ export default function TeamProfilePage() {
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={p?.avatar_url || '/default-avatar.png'}
-                          alt={p?.handle_name || 'player'}
+                          src={p?.avatar_url || "/default-avatar.png"}
+                          alt={p?.handle_name || "player"}
                           className="w-10 h-10 rounded-full border-2 border-purple-500/40 object-cover"
                         />
                         <div className="min-w-0">
                           <div className="font-semibold text-yellow-100 truncate">
-                            {p?.handle_name ?? '不明なプレイヤー'}
+                            {p?.handle_name ?? "不明なプレイヤー"}
                           </div>
                           {m.role && (
-                            <div className="text-xs text-purple-300 truncate">役割: {m.role}</div>
+                            <div className="text-xs text-purple-300 truncate">
+                              役割: {m.role}
+                            </div>
                           )}
                         </div>
                       </Link>
@@ -481,12 +520,12 @@ export default function TeamProfilePage() {
                           <div className="min-w-0">
                             <div className="text-xs text-gray-400">{when}</div>
                             <div className="font-semibold text-yellow-100 truncate">
-                              {m.mode ?? '試合'} / {m.status ?? ''}
+                              {m.mode ?? "試合"} / {m.status ?? ""}
                             </div>
                           </div>
                           <div className="text-right">
                             <div className="text-lg sm:text-xl font-extrabold text-white">
-                              {m.winner_score ?? '-'} - {m.loser_score ?? '-'}
+                              {m.winner_score ?? "-"} - {m.loser_score ?? "-"}
                             </div>
                           </div>
                         </div>
@@ -494,7 +533,9 @@ export default function TeamProfilePage() {
                         {/* 出場メンバー / 相手 */}
                         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
-                            <div className="text-xs text-gray-400 mb-1">この試合の自チーム</div>
+                            <div className="text-xs text-gray-400 mb-1">
+                              この試合の自チーム
+                            </div>
                             <div className="flex flex-wrap gap-2">
                               {item.teammates.length === 0 && (
                                 <div className="text-gray-500 text-sm">—</div>
@@ -507,18 +548,22 @@ export default function TeamProfilePage() {
                                 >
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img
-                                    src={p.avatar_url || '/default-avatar.png'}
+                                    src={p.avatar_url || "/default-avatar.png"}
                                     alt={p.handle_name}
                                     className="w-6 h-6 rounded-full object-cover"
                                   />
-                                  <span className="text-sm">{p.handle_name}</span>
+                                  <span className="text-sm">
+                                    {p.handle_name}
+                                  </span>
                                 </Link>
                               ))}
                             </div>
                           </div>
 
                           <div>
-                            <div className="text-xs text-gray-400 mb-1">相手側</div>
+                            <div className="text-xs text-gray-400 mb-1">
+                              相手側
+                            </div>
                             <div className="flex flex-wrap gap-2">
                               {item.opponents.length === 0 && (
                                 <div className="text-gray-500 text-sm">—</div>
@@ -531,11 +576,13 @@ export default function TeamProfilePage() {
                                 >
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img
-                                    src={p.avatar_url || '/default-avatar.png'}
+                                    src={p.avatar_url || "/default-avatar.png"}
                                     alt={p.handle_name}
                                     className="w-6 h-6 rounded-full object-cover"
                                   />
-                                  <span className="text-sm">{p.handle_name}</span>
+                                  <span className="text-sm">
+                                    {p.handle_name}
+                                  </span>
                                 </Link>
                               ))}
                             </div>

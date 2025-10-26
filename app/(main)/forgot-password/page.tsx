@@ -1,10 +1,10 @@
 // app/(main)/forgot-password/page.tsx
-'use client';
+"use client";
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { FaEnvelope, FaLock, FaSpinner } from 'react-icons/fa';
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { FaEnvelope, FaLock, FaSpinner } from "react-icons/fa";
 
 /* ---------------- Fallback for Suspense ---------------- */
 function Fallback() {
@@ -25,35 +25,37 @@ function ForgotPasswordInner() {
   const searchParams = useSearchParams();
 
   const [mounted, setMounted] = useState(false);
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState("");
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string>('');
+  const [error, setError] = useState<string>("");
   const [sent, setSent] = useState(false);
 
   useEffect(() => {
     setMounted(true);
-    const qEmail = searchParams?.get('email');
-    if (qEmail && typeof qEmail === 'string') setEmail(qEmail);
+    const qEmail = searchParams?.get("email");
+    if (qEmail && typeof qEmail === "string") setEmail(qEmail);
   }, [searchParams]);
 
   // 元の遷移先 (?redirect=) を受け取り、/reset-password にリダイレクトする絶対URLを生成
   const redirectParam = useMemo(() => {
-    const r = searchParams?.get('redirect');
-    return r && r !== '/login' ? r : '/';
+    const r = searchParams?.get("redirect");
+    return r && r !== "/login" ? r : "/";
   }, [searchParams]);
 
   const siteOrigin = useMemo(() => {
     // 環境変数(本番ドメイン)があれば最優先。なければクライアントで window.origin を使用
-    const env = (process.env.NEXT_PUBLIC_SITE_URL || '').replace(/\/$/, '');
+    const env = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
     if (env) return env;
-    if (typeof window !== 'undefined') return window.location.origin;
-    return '';
+    if (typeof window !== "undefined") return window.location.origin;
+    return "";
   }, [mounted]);
 
   const redirectTo = useMemo(() => {
-    if (!mounted || !siteOrigin) return '';
+    if (!mounted || !siteOrigin) return "";
     const base = `${siteOrigin}/reset-password`;
-    const qs = redirectParam ? `?redirect=${encodeURIComponent(redirectParam)}` : '';
+    const qs = redirectParam
+      ? `?redirect=${encodeURIComponent(redirectParam)}`
+      : "";
     return `${base}${qs}`;
   }, [mounted, siteOrigin, redirectParam]);
 
@@ -62,7 +64,7 @@ function ForgotPasswordInner() {
     if (!email) return;
 
     setSending(true);
-    setError('');
+    setError("");
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         // ※ Supabase Auth の「リダイレクトURL許可リスト」に `redirectTo` のドメインを必ず登録してください
@@ -73,13 +75,15 @@ function ForgotPasswordInner() {
     } catch (err: any) {
       const msg = String(err?.message || err);
       if (/email.*not valid|invalid/i.test(msg)) {
-        setError('メールアドレスの形式が正しくありません。');
+        setError("メールアドレスの形式が正しくありません。");
       } else if (/over request rate|rate/i.test(msg)) {
-        setError('リクエストが多すぎます。しばらくしてからお試しください。');
+        setError("リクエストが多すぎます。しばらくしてからお試しください。");
       } else if (/not (allowed|whitelisted)|URL.*not/i.test(msg)) {
-        setError('リダイレクト先URLが許可されていません。管理者にお問い合わせください。');
+        setError(
+          "リダイレクト先URLが許可されていません。管理者にお問い合わせください。",
+        );
       } else {
-        setError(msg || 'メール送信に失敗しました。');
+        setError(msg || "メール送信に失敗しました。");
       }
     } finally {
       setSending(false);
@@ -96,7 +100,9 @@ function ForgotPasswordInner() {
             <div className="inline-block p-4 rounded-full bg-purple-600/20 mb-4">
               <FaLock className="text-3xl text-purple-400" />
             </div>
-            <h1 className="text-2xl font-bold text-yellow-100">パスワードをお忘れですか？</h1>
+            <h1 className="text-2xl font-bold text-yellow-100">
+              パスワードをお忘れですか？
+            </h1>
             <p className="text-gray-400 mt-2">
               登録済みのメールアドレスを入力すると、再設定用リンクをお送りします。
             </p>
@@ -142,14 +148,15 @@ function ForgotPasswordInner() {
               </button>
 
               <p className="text-xs text-gray-500">
-                ※ 迷惑メールフォルダに振り分けられる場合があります。届かない場合は、メールアドレスの誤りや受信設定をご確認ください。
+                ※
+                迷惑メールフォルダに振り分けられる場合があります。届かない場合は、メールアドレスの誤りや受信設定をご確認ください。
               </p>
             </form>
           )}
 
           <div className="mt-6 text-center">
             <button
-              onClick={() => router.push('/login')}
+              onClick={() => router.push("/login")}
               className="text-sm text-purple-400 hover:text-purple-300 underline-offset-2 hover:underline"
             >
               ログイン画面へ戻る

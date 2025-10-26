@@ -1,9 +1,9 @@
 // app/(main)/notices/[id]/page.tsx
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { FaArrowLeft, FaCalendarAlt } from 'react-icons/fa';
-import { useFetchNoticeDetail } from '@/lib/hooks/useFetchNoticeDetail';
+import Link from "next/link";
+import { FaArrowLeft, FaCalendarAlt } from "react-icons/fa";
+import { useFetchNoticeDetail } from "@/lib/hooks/useFetchNoticeDetail";
 
 type PageProps = { params: { id: string } };
 
@@ -60,14 +60,15 @@ export default function NoticeDetailPage({ params }: PageProps) {
     );
   }
 
-  const title = notice.title ?? '無題';
-  const dateValue =
-  (notice as any).date ??
-  (notice as any).created_at ??
-  null;
- const dateText = dateValue
-  ? new Date(dateValue).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })
-  : '';
+  const title = notice.title ?? "無題";
+  const dateValue = (notice as any).date ?? (notice as any).created_at ?? null;
+  const dateText = dateValue
+    ? new Date(dateValue).toLocaleDateString("ja-JP", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "";
 
   return (
     <main className="min-h-screen bg-[#2a2a3e] text-white">
@@ -96,7 +97,7 @@ export default function NoticeDetailPage({ params }: PageProps) {
 
           {/* プレーンテキスト想定：Markdown にしたい場合は将来パーサ導入 */}
           <div className="prose prose-invert max-w-none whitespace-pre-wrap break-words leading-relaxed">
-            {notice.content ?? ''}
+            {notice.content ?? ""}
           </div>
         </article>
       </div>

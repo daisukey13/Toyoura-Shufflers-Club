@@ -1,13 +1,19 @@
 // app/(main)/players/[id]/edit/page.tsx
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback, useMemo, type ComponentType } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { SupabaseAPI } from '@/lib/api/supabase-api';
-import type { Player } from '@/types/player';
-import { supabaseConfig, supabaseHeaders } from '@/lib/config/supabase';
-import AvatarUploaderRaw from '@/components/ui/AvatarUploader';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  type ComponentType,
+} from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { SupabaseAPI } from "@/lib/api/supabase-api";
+import type { Player } from "@/types/player";
+import { supabaseConfig, supabaseHeaders } from "@/lib/config/supabase";
+import AvatarUploaderRaw from "@/components/ui/AvatarUploader";
 
 // AvatarUploader の想定 Props をこのページで定義し、型キャストして使用する
 type AvatarUploaderProps = {
@@ -16,7 +22,8 @@ type AvatarUploaderProps = {
   onSelected: (publicUrl: string) => void;
   showGallery?: boolean;
 };
-const AvatarUploader = AvatarUploaderRaw as unknown as ComponentType<AvatarUploaderProps>;
+const AvatarUploader =
+  AvatarUploaderRaw as unknown as ComponentType<AvatarUploaderProps>;
 
 export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -30,10 +37,10 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
   const [error, setError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
-    full_name: '',
-    handle_name: '',
-    email: '',
-    avatar_url: '',
+    full_name: "",
+    handle_name: "",
+    email: "",
+    avatar_url: "",
   });
 
   // 認証ユーザーID取得
@@ -56,27 +63,27 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
       const id = encodeURIComponent(params.id);
       const response = await fetch(
         `${supabaseConfig.url}/rest/v1/players?id=eq.${id}&select=*`,
-        { headers: supabaseHeaders, cache: 'no-store' }
+        { headers: supabaseHeaders, cache: "no-store" },
       );
 
-      if (!response.ok) throw new Error('Failed to fetch player data');
+      if (!response.ok) throw new Error("Failed to fetch player data");
 
       const data: Player[] = await response.json();
       if (data?.length) {
         const playerData = data[0];
         setPlayer(playerData);
         setFormData({
-          full_name: playerData.full_name || '',
-          handle_name: playerData.handle_name || '',
+          full_name: playerData.full_name || "",
+          handle_name: playerData.handle_name || "",
           // players に email カラムが無い構成でも落ちないよう any 経由で取得
-          email: (playerData as any).email || '',
-          avatar_url: playerData.avatar_url || '',
+          email: (playerData as any).email || "",
+          avatar_url: playerData.avatar_url || "",
         });
       } else {
-        throw new Error('Player not found');
+        throw new Error("Player not found");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
     }
@@ -101,12 +108,15 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
         updated_at: new Date().toISOString(),
       } as any;
 
-      const { error: updateError } = await SupabaseAPI.updatePlayer(params.id, updateData);
+      const { error: updateError } = await SupabaseAPI.updatePlayer(
+        params.id,
+        updateData,
+      );
       if (updateError) throw updateError;
 
       router.push(`/players/${params.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update player');
+      setError(err instanceof Error ? err.message : "Failed to update player");
     } finally {
       setSaving(false);
     }
@@ -167,7 +177,10 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Full Name */}
           <div>
-            <label htmlFor="full_name" className="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              htmlFor="full_name"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
               Full Name
             </label>
             <input
@@ -183,7 +196,10 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
           {/* Handle Name */}
           <div>
-            <label htmlFor="handle_name" className="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              htmlFor="handle_name"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
               Handle Name
             </label>
             <input
@@ -199,7 +215,10 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
           {/* Email（players に無い場合は無視） */}
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              htmlFor="email"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
               Email
             </label>
             <input
@@ -214,7 +233,9 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
 
           {/* Avatar：本人専用アップローダ + 自分のフォルダのみギャラリー表示 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Avatar</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Avatar
+            </label>
 
             {authUserId ? (
               <AvatarUploader
@@ -244,7 +265,7 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
                       alt="Avatar preview"
                       className="w-20 h-20 rounded-full object-cover"
                       onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
+                        (e.target as HTMLImageElement).style.display = "none";
                       }}
                     />
                   </div>
@@ -267,10 +288,12 @@ export default function EditPlayerPage({ params }: { params: { id: string } }) {
               type="submit"
               disabled={saving}
               className={`px-6 py-2 text-white rounded-md ${
-                saving ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                saving
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-blue-600 hover:bg-blue-700"
               }`}
             >
-              {saving ? 'Saving...' : 'Save Changes'}
+              {saving ? "Saving..." : "Save Changes"}
             </button>
             <button
               type="button"

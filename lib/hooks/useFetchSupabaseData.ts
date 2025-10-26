@@ -1,8 +1,8 @@
 // lib/hooks/useFetchSupabaseData.ts
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 
 /* =========================
  * 環境変数（REST 用ヘッダ）
@@ -14,8 +14,8 @@ function headersJSON() {
   return {
     apikey: SUPABASE_ANON_KEY,
     Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    'Content-Type': 'application/json',
-    Prefer: 'return=representation',
+    "Content-Type": "application/json",
+    Prefer: "return=representation",
   };
 }
 
@@ -69,7 +69,7 @@ type FetchOptions = {
 export function useFetchSupabaseData(options: FetchOptions) {
   const {
     tableName,
-    select = '*',
+    select = "*",
     orderBy,
     limit,
     retryCount = 3,
@@ -86,12 +86,15 @@ export function useFetchSupabaseData(options: FetchOptions) {
       try {
         setError(null);
         const params = new URLSearchParams();
-        params.append('select', select);
+        params.append("select", select);
         if (orderBy) {
-          params.append('order', `${orderBy.column}.${orderBy.ascending ? 'asc' : 'desc'}`);
+          params.append(
+            "order",
+            `${orderBy.column}.${orderBy.ascending ? "asc" : "desc"}`,
+          );
         }
-        if (typeof limit === 'number') {
-          params.append('limit', String(limit));
+        if (typeof limit === "number") {
+          params.append("limit", String(limit));
         }
 
         const url = `${SUPABASE_URL}/rest/v1/${tableName}?${params.toString()}`;
@@ -111,13 +114,13 @@ export function useFetchSupabaseData(options: FetchOptions) {
           await new Promise((r) => setTimeout(r, retryDelay * attempt));
           return fetchData(attempt + 1, signal);
         }
-        setError(e?.message || 'データの読み込みに失敗しました。');
+        setError(e?.message || "データの読み込みに失敗しました。");
         setRetrying(false);
       } finally {
         setLoading(false);
       }
     },
-    [tableName, select, orderBy, limit, retryCount, retryDelay]
+    [tableName, select, orderBy, limit, retryCount, retryDelay],
   );
 
   useEffect(() => {
@@ -142,26 +145,26 @@ export function useFetchSupabaseData(options: FetchOptions) {
  * ========================================================== */
 export function useFetchPlayersData() {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
-    tableName: 'players',
+    tableName: "players",
     select: [
-      'id',
-      'handle_name',
-      'avatar_url',
-      'address',
-      'is_active',
-      'ranking_points',
-      'handicap',
-      'matches_played',
-      'wins',
-      'losses',
-      'created_at',
+      "id",
+      "handle_name",
+      "avatar_url",
+      "address",
+      "is_active",
+      "ranking_points",
+      "handicap",
+      "matches_played",
+      "wins",
+      "losses",
+      "created_at",
       // 'current_rank' は無い環境もあるため要求しない
-    ].join(','),
-    orderBy: { column: 'ranking_points', ascending: false },
+    ].join(","),
+    orderBy: { column: "ranking_points", ascending: false },
   });
 
   const players = (data as PlayerPublic[]).filter(
-    (p) => p.is_active === true && (p as any).is_deleted !== true
+    (p) => p.is_active === true && (p as any).is_deleted !== true,
   );
 
   return { players, loading, error, retrying, refetch };
@@ -172,24 +175,24 @@ export function useFetchPlayersData() {
  *   - venue / tournament_name は要求しない（無い環境があるため）
  * ========================================================== */
 const MATCH_DETAIL_SELECT = [
-  'id',
-  'match_date',
-  'winner_id',
-  'loser_id',
-  'winner_score',
-  'loser_score',
-  'winner_name',
-  'loser_name',
-  'winner_avatar',
-  'loser_avatar',
+  "id",
+  "match_date",
+  "winner_id",
+  "loser_id",
+  "winner_score",
+  "loser_score",
+  "winner_name",
+  "loser_name",
+  "winner_avatar",
+  "loser_avatar",
   // ← venue, tournament_name は要求しない
-].join(',');
+].join(",");
 
 export function useFetchMatchesData(limit?: number) {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
-    tableName: 'match_details',
+    tableName: "match_details",
     select: MATCH_DETAIL_SELECT,
-    orderBy: { column: 'match_date', ascending: false },
+    orderBy: { column: "match_date", ascending: false },
     limit,
   });
 
@@ -220,22 +223,22 @@ export function useFetchPlayerDetail(playerId: string) {
         {
           const params = new URLSearchParams();
           params.append(
-            'select',
+            "select",
             [
-              'id',
-              'handle_name',
-              'avatar_url',
-              'address',
-              'is_active',
-              'ranking_points',
-              'handicap',
-              'matches_played',
-              'wins',
-              'losses',
-              'created_at',
-            ].join(',')
+              "id",
+              "handle_name",
+              "avatar_url",
+              "address",
+              "is_active",
+              "ranking_points",
+              "handicap",
+              "matches_played",
+              "wins",
+              "losses",
+              "created_at",
+            ].join(","),
           );
-          params.append('id', `eq.${playerId}`);
+          params.append("id", `eq.${playerId}`);
 
           const res = await fetch(`${SUPABASE_URL}/rest/v1/players?${params}`, {
             headers: headersJSON(),
@@ -244,22 +247,25 @@ export function useFetchPlayerDetail(playerId: string) {
           if (!res.ok) throw new Error(`Failed to fetch player: ${res.status}`);
           const json = await res.json();
           const row: PlayerPublic | undefined = json?.[0];
-          if (!row) throw new Error('Player not found');
+          if (!row) throw new Error("Player not found");
           setPlayer(row);
         }
 
         // 2) matches（勝者/敗者いずれかに該当）
         {
           const m = new URLSearchParams();
-          m.append('select', MATCH_DETAIL_SELECT);
-          m.append('or', `(winner_id.eq.${playerId},loser_id.eq.${playerId})`);
-          m.append('order', 'match_date.desc');
-          m.append('limit', '50');
+          m.append("select", MATCH_DETAIL_SELECT);
+          m.append("or", `(winner_id.eq.${playerId},loser_id.eq.${playerId})`);
+          m.append("order", "match_date.desc");
+          m.append("limit", "50");
 
-          const res = await fetch(`${SUPABASE_URL}/rest/v1/match_details?${m}`, {
-            headers: headersJSON(),
-            signal,
-          });
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/match_details?${m}`,
+            {
+              headers: headersJSON(),
+              signal,
+            },
+          );
           const json: MatchDetail[] = res.ok ? await res.json() : [];
           setMatches(Array.isArray(json) ? json : []);
         }
@@ -272,13 +278,13 @@ export function useFetchPlayerDetail(playerId: string) {
           await new Promise((r) => setTimeout(r, 1000 * attempt));
           return fetchPlayerData(attempt + 1, signal);
         }
-        setError(e?.message || 'データ取得に失敗しました');
+        setError(e?.message || "データ取得に失敗しました");
         setRetrying(false);
       } finally {
         setLoading(false);
       }
     },
-    [playerId]
+    [playerId],
   );
 
   useEffect(() => {
@@ -317,8 +323,8 @@ export function useFetchNoticeDetail(noticeId: string) {
       try {
         setError(null);
         const params = new URLSearchParams();
-        params.append('select', '*');
-        params.append('id', `eq.${noticeId}`);
+        params.append("select", "*");
+        params.append("id", `eq.${noticeId}`);
 
         const res = await fetch(`${SUPABASE_URL}/rest/v1/notices?${params}`, {
           headers: headersJSON(),
@@ -326,10 +332,10 @@ export function useFetchNoticeDetail(noticeId: string) {
         });
         if (!res.ok) throw new Error(`Failed to fetch notice: ${res.status}`);
         const json = await res.json();
-        if (!json?.[0]) throw new Error('Notice not found');
+        if (!json?.[0]) throw new Error("Notice not found");
         setNotice(json[0]);
       } catch (e: any) {
-        if (!ac.signal.aborted) setError(e?.message || '取得に失敗しました');
+        if (!ac.signal.aborted) setError(e?.message || "取得に失敗しました");
       } finally {
         if (!ac.signal.aborted) setLoading(false);
       }
@@ -344,19 +350,22 @@ export function useFetchNoticeDetail(noticeId: string) {
 /* ==========================================================
  * 更新・作成（書き込みは supabase-js で RLS 通過）
  * ========================================================== */
-export async function updatePlayer(playerId: string, updates: Partial<PlayerPublic>) {
+export async function updatePlayer(
+  playerId: string,
+  updates: Partial<PlayerPublic>,
+) {
   try {
     const { data, error } = await supabase
-      .from('players')
+      .from("players")
       .update(updates)
-      .eq('id', playerId)
+      .eq("id", playerId)
       .select()
       .single();
 
     if (error) throw error;
     return { data, error: null };
   } catch (e: any) {
-    return { data: null, error: e?.message || 'update failed' };
+    return { data: null, error: e?.message || "update failed" };
   }
 }
 
@@ -378,7 +387,7 @@ export async function createMatch(matchData: Record<string, any>) {
     };
 
     const { data, error } = await supabase
-      .from('matches')
+      .from("matches")
       .insert(payload)
       .select()
       .single();
@@ -386,6 +395,6 @@ export async function createMatch(matchData: Record<string, any>) {
     if (error) throw error;
     return { data, error: null };
   } catch (e: any) {
-    return { data: null, error: e?.message || 'create match failed' };
+    return { data: null, error: e?.message || "create match failed" };
   }
 }

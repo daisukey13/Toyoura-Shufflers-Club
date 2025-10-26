@@ -1,14 +1,14 @@
 // components/TurnstileOnce.tsx
-'use client';
+"use client";
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef } from "react";
 
 type Props = {
   siteKey: string;
   onVerify: (token: string) => void;
   action?: string;
   cData?: string;
-  theme?: 'light' | 'dark' | 'auto';
+  theme?: "light" | "dark" | "auto";
   className?: string;
 };
 
@@ -22,7 +22,7 @@ export default function TurnstileOnce({
   onVerify,
   action,
   cData,
-  theme = 'auto',
+  theme = "auto",
   className,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -30,15 +30,16 @@ export default function TurnstileOnce({
   const renderedRef = useRef(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
 
     // スクリプトを一度だけ挿入
-    const SCRIPT_ID = 'cf-turnstile-api';
+    const SCRIPT_ID = "cf-turnstile-api";
     let script = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
     if (!script) {
-      script = document.createElement('script');
+      script = document.createElement("script");
       script.id = SCRIPT_ID;
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.src =
+        "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
       script.async = true;
       script.defer = true;
       document.head.appendChild(script);
@@ -56,12 +57,12 @@ export default function TurnstileOnce({
         action,
         cData,
         callback: (token: string) => onVerify(token),
-        'error-callback': () => {},
-        'expired-callback': () => {},
+        "error-callback": () => {},
+        "expired-callback": () => {},
       });
 
       // 型定義によっては render の戻り値が void になっている場合があるので安全に格納
-      widgetIdRef.current = typeof maybeId === 'string' ? maybeId : null;
+      widgetIdRef.current = typeof maybeId === "string" ? maybeId : null;
 
       clearInterval(poll);
     }, 50);
@@ -73,10 +74,14 @@ export default function TurnstileOnce({
 
       if (!t) return;
       // どちらが存在してもクリーンアップできるように分岐
-      if (id && typeof t.remove === 'function') {
-        try { t.remove(id); } catch {}
-      } else if (typeof t.reset === 'function') {
-        try { t.reset(id); } catch {}
+      if (id && typeof t.remove === "function") {
+        try {
+          t.remove(id);
+        } catch {}
+      } else if (typeof t.reset === "function") {
+        try {
+          t.reset(id);
+        } catch {}
       }
     };
   }, [siteKey, onVerify, action, cData, theme]);

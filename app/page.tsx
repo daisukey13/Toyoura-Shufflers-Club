@@ -1,14 +1,20 @@
-'use client';
+"use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
-import dynamic from 'next/dynamic';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import Link from "next/link";
+import dynamic from "next/dynamic";
 const TeamRegisterFile = dynamic(
-  () => import('@/components/TeamRegisterFile').then((m) => m.default || m),
-  { ssr: false }
+  () => import("@/components/TeamRegisterFile").then((m) => m.default || m),
+  { ssr: false },
 );
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import {
   FaAngleDoubleLeft,
   FaAngleLeft,
@@ -26,7 +32,7 @@ import {
   FaSignOutAlt,
   FaDoorOpen,
   FaPlus,
-} from 'react-icons/fa';
+} from "react-icons/fa";
 
 /* ================================ 型 ================================ */
 type Player = {
@@ -63,7 +69,7 @@ type PickerItem = {
   id?: string;
   fullPath: string;
   url: string;
-  source: 'own' | 'preset';
+  source: "own" | "preset";
   created_at?: string | null;
 };
 
@@ -114,7 +120,8 @@ type RecentMatch = {
 };
 
 const supabase = createClient();
-const cls = (...xs: Array<string | false | null | undefined>) => xs.filter(Boolean).join(' ');
+const cls = (...xs: Array<string | false | null | undefined>) =>
+  xs.filter(Boolean).join(" ");
 
 /* ================================ ページ本体 ================================ */
 export default function MyPage() {
@@ -125,10 +132,10 @@ export default function MyPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
 
-  const [handle, setHandle] = useState('');
+  const [handle, setHandle] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
-  const [profileMsg, setProfileMsg] = useState<string>('');
+  const [profileMsg, setProfileMsg] = useState<string>("");
 
   // 画像アップロード
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -139,12 +146,12 @@ export default function MyPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerItems, setPickerItems] = useState<PickerItem[]>([]);
-  const [pickerMsg, setPickerMsg] = useState<string>('');
+  const [pickerMsg, setPickerMsg] = useState<string>("");
   const PAGE_SIZE = 20;
   const [pickerPage, setPickerPage] = useState(1);
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(pickerItems.length / PAGE_SIZE)),
-    [pickerItems.length]
+    [pickerItems.length],
   );
   const pageSlice = useMemo(() => {
     const s = (pickerPage - 1) * PAGE_SIZE;
@@ -153,15 +160,17 @@ export default function MyPage() {
 
   // 戦績
   const [matchesLoading, setMatchesLoading] = useState(true);
-  const [recentMatches, setRecentMatches] = useState<JoinedMatch[] | null>(null);
+  const [recentMatches, setRecentMatches] = useState<JoinedMatch[] | null>(
+    null,
+  );
   const [matchFetchNote, setMatchFetchNote] = useState<string | null>(null);
 
   // 参加チーム
   const [myTeam, setMyTeam] = useState<TeamLite | null>(null);
-  const [teamSearch, setTeamSearch] = useState('');
+  const [teamSearch, setTeamSearch] = useState("");
   const [teamCandidates, setTeamCandidates] = useState<TeamLite[]>([]);
   const [joinBusy, setJoinBusy] = useState(false);
-  const [joinMsg, setJoinMsg] = useState<string>('');
+  const [joinMsg, setJoinMsg] = useState<string>("");
   const TEAM_CAP = 4;
 
   /* ===== 認証 & 初期化 ===== */
@@ -173,7 +182,7 @@ export default function MyPage() {
           data: { user },
         } = await supabase.auth.getUser();
         if (!user) {
-          router.replace('/login?redirect=/mypage');
+          router.replace("/login?redirect=/mypage");
           return;
         }
         setUserId(user.id);
@@ -181,39 +190,39 @@ export default function MyPage() {
 
         // players
         const { data: player, error } = await supabase
-          .from('players')
+          .from("players")
           .select(
-            'id, handle_name, avatar_url, ranking_points, handicap, wins, losses, matches_played, created_at'
+            "id, handle_name, avatar_url, ranking_points, handicap, wins, losses, matches_played, created_at",
           )
-          .eq('id', user.id)
+          .eq("id", user.id)
           .maybeSingle();
-        if (error && error.code !== 'PGRST116') throw error;
+        if (error && error.code !== "PGRST116") throw error;
 
         let current = player as Player | null;
         if (!current) {
           const initialHandle =
-            (user.email?.split('@')[0] || 'Player') + '-' + user.id.slice(0, 6);
+            (user.email?.split("@")[0] || "Player") + "-" + user.id.slice(0, 6);
           const { data: created, error: iErr } = await supabase
-            .from('players')
+            .from("players")
             .insert([{ id: user.id, handle_name: initialHandle }] as any)
-            .select('*')
+            .select("*")
             .single();
           if (iErr) throw iErr;
           current = created as Player;
         }
 
         setMe(current);
-        setHandle(current.handle_name || '');
+        setHandle(current.handle_name || "");
         setAvatarUrl(current.avatar_url || null);
 
         // 参加チーム
         try {
           const { data: tm, error: tmErr } = await supabase
-            .from('team_members')
-            .select('team_id, teams:team_id(id, name)')
-            .eq('player_id', user.id)
+            .from("team_members")
+            .select("team_id, teams:team_id(id, name)")
+            .eq("player_id", user.id)
             .maybeSingle();
-          if (tmErr && tmErr.code !== 'PGRST116') throw tmErr;
+          if (tmErr && tmErr.code !== "PGRST116") throw tmErr;
 
           if (tm && (tm as any).teams) {
             const t = (tm as any).teams as { id: string; name: string };
@@ -237,15 +246,23 @@ export default function MyPage() {
     // ★★★ ここを堅牢化：order対象列が無くても 400 にせず段階的にフォールバック
     async function loadWithOrderFallback(
       table: string,
-      select = '*',
-      limits = 6
+      select = "*",
+      limits = 6,
     ): Promise<{ ok: true; rows: RecentMatch[] } | { ok: false }> {
       // 1) match_date desc
-      let r = await supabase.from(table).select(select).order('match_date', { ascending: false }).limit(limits);
+      let r = await supabase
+        .from(table)
+        .select(select)
+        .order("match_date", { ascending: false })
+        .limit(limits);
       if (!r.error && r.data) return { ok: true, rows: r.data as any };
 
       // 2) created_at desc
-      r = await supabase.from(table).select(select).order('created_at', { ascending: false }).limit(limits);
+      r = await supabase
+        .from(table)
+        .select(select)
+        .order("created_at", { ascending: false })
+        .limit(limits);
       if (!r.error && r.data) return { ok: true, rows: r.data as any };
 
       // 3) 並び替え無し
@@ -260,26 +277,30 @@ export default function MyPage() {
     setMatchFetchNote(null);
     try {
       // unified_match_feed を最優先
-      let tried = await loadWithOrderFallback('unified_match_feed', '*', 6);
+      let tried = await loadWithOrderFallback("unified_match_feed", "*", 6);
       if (!tried.ok) {
         // 公開ビューがある環境
-        tried = await loadWithOrderFallback('match_details_public', '*', 6);
+        tried = await loadWithOrderFallback("match_details_public", "*", 6);
       }
       if (!tried.ok) {
         // 旧ビュー名
-        tried = await loadWithOrderFallback('match_details', '*', 6);
+        tried = await loadWithOrderFallback("match_details", "*", 6);
       }
 
       if (!tried.ok) {
-        setMatchFetchNote('最近の試合テーブル/ビューが見つからないため表示できません。');
+        setMatchFetchNote(
+          "最近の試合テーブル/ビューが見つからないため表示できません。",
+        );
         setRecentMatches([]);
         return;
       }
 
       // ここでは Top ページ用型との互換だけ確保。MyPage固有の戦績ボックスは別ロジックのため空でもOK。
     } catch (e: any) {
-      console.warn('戦績取得に失敗:', e?.message || e);
-      setMatchFetchNote('戦績テーブル/ビューが未設定のため、最近の試合履歴を表示できません。');
+      console.warn("戦績取得に失敗:", e?.message || e);
+      setMatchFetchNote(
+        "戦績テーブル/ビューが未設定のため、最近の試合履歴を表示できません。",
+      );
       setRecentMatches([]);
     } finally {
       setMatchesLoading(false);
@@ -293,23 +314,32 @@ export default function MyPage() {
   /* ===== プロフィール保存 ===== */
   const saveProfile = async () => {
     if (!userId) return;
-    setProfileMsg('');
+    setProfileMsg("");
     setSavingProfile(true);
     try {
-      const payload = { handle_name: handle.trim(), avatar_url: avatarUrl ?? null };
+      const payload = {
+        handle_name: handle.trim(),
+        avatar_url: avatarUrl ?? null,
+      };
       const { error } = await (supabase as any)
-        .from('players')
+        .from("players")
         .update(payload)
-        .eq('id', userId);
+        .eq("id", userId);
       if (error) throw error;
 
-      setProfileMsg('保存しました。');
+      setProfileMsg("保存しました。");
       setMe((m) =>
-        m ? { ...m, handle_name: payload.handle_name, avatar_url: payload.avatar_url } : m
+        m
+          ? {
+              ...m,
+              handle_name: payload.handle_name,
+              avatar_url: payload.avatar_url,
+            }
+          : m,
       );
-      setTimeout(() => setProfileMsg(''), 2500);
+      setTimeout(() => setProfileMsg(""), 2500);
     } catch (e: any) {
-      setProfileMsg(e?.message || '保存に失敗しました');
+      setProfileMsg(e?.message || "保存に失敗しました");
     } finally {
       setSavingProfile(false);
     }
@@ -319,23 +349,24 @@ export default function MyPage() {
   const onPickAvatar = () => fileRef.current?.click();
   const onAvatarFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = '';
+    e.target.value = "";
     if (!file || !userId) return;
 
     setUploadBusy(true);
     setAvatarBucketMissing(false);
     try {
-      const extFromName = (file.name.split('.').pop() || '').toLowerCase();
-      const mime = file.type || (extFromName === 'png' ? 'image/png' : 'image/jpeg');
+      const extFromName = (file.name.split(".").pop() || "").toLowerCase();
+      const mime =
+        file.type || (extFromName === "png" ? "image/png" : "image/jpeg");
       const ext =
         extFromName ||
-        (mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg');
+        (mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg");
 
       const path = `public/users/${userId}/${Date.now()}.${ext}`;
 
       // contentType を明示、upsert は false
-      const up = await supabase.storage.from('avatars').upload(path, file, {
-        cacheControl: '3600',
+      const up = await supabase.storage.from("avatars").upload(path, file, {
+        cacheControl: "3600",
         upsert: false,
         contentType: mime,
       });
@@ -348,12 +379,12 @@ export default function MyPage() {
         throw new Error(msg);
       }
 
-      const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
+      const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
       const url = pub?.publicUrl || null;
       setAvatarUrl(url);
-      setProfileMsg('アップロード成功。保存ボタンで反映します。');
+      setProfileMsg("アップロード成功。保存ボタンで反映します。");
     } catch (e: any) {
-      setProfileMsg(e?.message || 'アップロードに失敗しました');
+      setProfileMsg(e?.message || "アップロードに失敗しました");
     } finally {
       setUploadBusy(false);
     }
@@ -364,44 +395,48 @@ export default function MyPage() {
     if (!userId) return;
     setPickerOpen(true);
     setPickerLoading(true);
-    setPickerMsg('');
+    setPickerMsg("");
     setPickerItems([]);
     setPickerPage(1);
     try {
       // 自分の画像
       const ownListRes = await supabase.storage
-        .from('avatars')
+        .from("avatars")
         .list(`public/users/${userId}`, {
           limit: 200,
-          sortBy: { column: 'created_at', order: 'desc' },
+          sortBy: { column: "created_at", order: "desc" },
         });
       const ownItems: PickerItem[] = (ownListRes.data || [])
-        .filter((f) => !f.name.endsWith('/'))
+        .filter((f) => !f.name.endsWith("/"))
         .map((f) => {
           const fullPath = `public/users/${userId}/${f.name}`;
-          const { data } = supabase.storage.from('avatars').getPublicUrl(fullPath);
+          const { data } = supabase.storage
+            .from("avatars")
+            .getPublicUrl(fullPath);
           return {
             fullPath,
-            url: data?.publicUrl || '',
-            source: 'own',
+            url: data?.publicUrl || "",
+            source: "own",
             created_at: (f as any).created_at ?? null,
           };
         });
 
       // プリセット
-      const presetRes = await supabase.storage.from('avatars').list(`preset`, {
+      const presetRes = await supabase.storage.from("avatars").list(`preset`, {
         limit: 200,
-        sortBy: { column: 'name', order: 'asc' },
+        sortBy: { column: "name", order: "asc" },
       });
       const presetItems: PickerItem[] = (presetRes.data || [])
-        .filter((f) => !f.name.endsWith('/'))
+        .filter((f) => !f.name.endsWith("/"))
         .map((f) => {
           const fullPath = `preset/${f.name}`;
-          const { data } = supabase.storage.from('avatars').getPublicUrl(fullPath);
+          const { data } = supabase.storage
+            .from("avatars")
+            .getPublicUrl(fullPath);
           return {
             fullPath,
-            url: data?.publicUrl || '',
-            source: 'preset',
+            url: data?.publicUrl || "",
+            source: "preset",
             created_at: (f as any).created_at ?? null,
           };
         });
@@ -409,12 +444,12 @@ export default function MyPage() {
       const all = [...ownItems, ...presetItems].filter((x) => !!x.url);
       if (all.length === 0)
         setPickerMsg(
-          '候補がありません（自分でアップロードするか、管理者にプリセットの追加を依頼してください）。'
+          "候補がありません（自分でアップロードするか、管理者にプリセットの追加を依頼してください）。",
         );
       setPickerItems(all);
     } catch (e: any) {
       setPickerItems([]);
-      setPickerMsg(e?.message || '画像候補の読み込みに失敗しました。');
+      setPickerMsg(e?.message || "画像候補の読み込みに失敗しました。");
     } finally {
       setPickerLoading(false);
     }
@@ -422,7 +457,7 @@ export default function MyPage() {
 
   const chooseFromStorage = (item: PickerItem) => {
     setAvatarUrl(item.url);
-    setProfileMsg('画像を選択しました。保存ボタンで反映します。');
+    setProfileMsg("画像を選択しました。保存ボタンで反映します。");
     setPickerOpen(false);
   };
 
@@ -433,9 +468,10 @@ export default function MyPage() {
     return (
       <div className="flex items-center justify-between gap-3 text-sm text-gray-300">
         <div>
-          全 {pickerItems.length} 件中{' '}
+          全 {pickerItems.length} 件中{" "}
           <span className="text-yellow-100">
-            {(pickerPage - 1) * PAGE_SIZE + 1}–{Math.min(pickerPage * PAGE_SIZE, pickerItems.length)}
+            {(pickerPage - 1) * PAGE_SIZE + 1}–
+            {Math.min(pickerPage * PAGE_SIZE, pickerItems.length)}
           </span>
           件を表示
         </div>
@@ -488,9 +524,9 @@ export default function MyPage() {
     }
     const t = setTimeout(async () => {
       const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .ilike('name', `%${teamSearch.trim()}%`)
+        .from("teams")
+        .select("id, name")
+        .ilike("name", `%${teamSearch.trim()}%`)
         .limit(10);
       if (!error) setTeamCandidates((data || []) as TeamLite[]);
     }, 250);
@@ -499,40 +535,42 @@ export default function MyPage() {
 
   const joinTeam = async (team: TeamLite) => {
     if (!userId) return;
-    setJoinMsg('');
+    setJoinMsg("");
     if (myTeam) {
-      setJoinMsg(`すでに「${myTeam.name}」に参加中です。複数チームへの参加はできません。`);
+      setJoinMsg(
+        `すでに「${myTeam.name}」に参加中です。複数チームへの参加はできません。`,
+      );
       return;
     }
     setJoinBusy(true);
     try {
       const { count } = await supabase
-        .from('team_members')
-        .select('player_id', { count: 'exact', head: true })
-        .eq('team_id', team.id);
+        .from("team_members")
+        .select("player_id", { count: "exact", head: true })
+        .eq("team_id", team.id);
       if ((count ?? 0) >= TEAM_CAP) {
-        setJoinMsg('定員オーバーのため参加できません（各チーム最大4名）。');
+        setJoinMsg("定員オーバーのため参加できません（各チーム最大4名）。");
         return;
       }
       const { data: already } = await supabase
-        .from('team_members')
-        .select('team_id')
-        .eq('player_id', userId)
+        .from("team_members")
+        .select("team_id")
+        .eq("player_id", userId)
         .limit(1);
       if ((already || []).length > 0) {
-        setJoinMsg('すでにチームに参加済みです。');
+        setJoinMsg("すでにチームに参加済みです。");
         return;
       }
       const { error: jErr } = await supabase
-        .from('team_members')
+        .from("team_members")
         .insert([{ team_id: team.id, player_id: userId }] as any);
       if (jErr) throw jErr;
       setMyTeam({ id: team.id, name: team.name });
       setJoinMsg(`「${team.name}」に参加しました！`);
-      setTeamSearch('');
+      setTeamSearch("");
       setTeamCandidates([]);
     } catch (e: any) {
-      setJoinMsg(e?.message || '参加に失敗しました。');
+      setJoinMsg(e?.message || "参加に失敗しました。");
     } finally {
       setJoinBusy(false);
     }
@@ -541,18 +579,18 @@ export default function MyPage() {
   const leaveTeam = async () => {
     if (!userId || !myTeam) return;
     setJoinBusy(true);
-    setJoinMsg('');
+    setJoinMsg("");
     try {
       const { error } = await supabase
-        .from('team_members')
+        .from("team_members")
         .delete()
-        .eq('player_id', userId)
-        .eq('team_id', myTeam.id);
+        .eq("player_id", userId)
+        .eq("team_id", myTeam.id);
       if (error) throw error;
       setMyTeam(null);
-      setJoinMsg('チームを脱退しました。');
+      setJoinMsg("チームを脱退しました。");
     } catch (e: any) {
-      setJoinMsg(e?.message || '脱退に失敗しました。');
+      setJoinMsg(e?.message || "脱退に失敗しました。");
     } finally {
       setJoinBusy(false);
     }
@@ -562,21 +600,21 @@ export default function MyPage() {
   const signOut = async () => {
     await supabase.auth.signOut();
     try {
-      await fetch('/auth/callback', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ event: 'SIGNED_OUT', session: null }),
+      await fetch("/auth/callback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "SIGNED_OUT", session: null }),
       });
     } catch {}
-    router.replace('/');
+    router.replace("/");
   };
 
   /* ============================ 試合登録 UI/処理（個人） ============================ */
   const [regOpen, setRegOpen] = useState(false);
   const [regSaving, setRegSaving] = useState(false);
-  const [regError, setRegError] = useState<string>('');
-  const [regDone, setRegDone] = useState<string>('');
-  const [regMode, setRegMode] = useState<'SINGLES' | 'DOUBLES'>('SINGLES');
+  const [regError, setRegError] = useState<string>("");
+  const [regDone, setRegDone] = useState<string>("");
+  const [regMode, setRegMode] = useState<"SINGLES" | "DOUBLES">("SINGLES");
   const [regAt, setRegAt] = useState<string>(() => {
     const d = new Date();
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -585,11 +623,13 @@ export default function MyPage() {
   const [regMy, setRegMy] = useState<number>(0);
   const [regOpp, setRegOpp] = useState<number>(0);
 
-  const [oppoQuery, setOppoQuery] = useState('');
+  const [oppoQuery, setOppoQuery] = useState("");
   const [oppoOptions, setOppoOptions] = useState<
     Array<{ id: string; handle_name: string; avatar_url?: string | null }>
   >([]);
-  const [oppo, setOppo] = useState<{ id: string; handle_name: string } | null>(null);
+  const [oppo, setOppo] = useState<{ id: string; handle_name: string } | null>(
+    null,
+  );
 
   // 相手検索
   useEffect(() => {
@@ -600,10 +640,10 @@ export default function MyPage() {
         return;
       }
       const { data } = await supabase
-        .from('players')
-        .select('id, handle_name, avatar_url')
-        .ilike('handle_name', `%${oppoQuery.trim()}%`)
-        .neq('id', userId)
+        .from("players")
+        .select("id, handle_name, avatar_url")
+        .ilike("handle_name", `%${oppoQuery.trim()}%`)
+        .neq("id", userId)
         .limit(10);
       setOppoOptions(data || []);
     }, 250);
@@ -612,19 +652,21 @@ export default function MyPage() {
 
   const submitRegister = async () => {
     if (!userId) return;
-    setRegError('');
-    setRegDone('');
+    setRegError("");
+    setRegDone("");
     if (!oppo) {
-      setRegError('対戦相手を選択してください。');
+      setRegError("対戦相手を選択してください。");
       return;
     }
     if (regMy === regOpp) {
-      setRegError('同点は登録できません。どちらかが勝利するようにスコアを入力してください。');
+      setRegError(
+        "同点は登録できません。どちらかが勝利するようにスコアを入力してください。",
+      );
       return;
     }
     const dt = new Date(regAt);
     if (Number.isNaN(dt.getTime())) {
-      setRegError('試合日時の形式が正しくありません。');
+      setRegError("試合日時の形式が正しくありません。");
       return;
     }
 
@@ -635,49 +677,43 @@ export default function MyPage() {
 
       // matches を挿入し id を厳密に取得
       const insertRes = await supabase
-        .from('matches')
-        .insert(
-          [
-            {
-              mode: regMode,
-              status: 'completed',
-              match_date: dt.toISOString(),
-              winner_score,
-              loser_score,
-            },
-          ] as any
-        )
-        .select('id')
+        .from("matches")
+        .insert([
+          {
+            mode: regMode,
+            status: "completed",
+            match_date: dt.toISOString(),
+            winner_score,
+            loser_score,
+          },
+        ] as any)
+        .select("id")
         .single();
 
       if (insertRes.error) throw insertRes.error;
 
       const row = insertRes.data as { id: string } | null;
-      if (!row) throw new Error('試合IDの取得に失敗しました。');
+      if (!row) throw new Error("試合IDの取得に失敗しました。");
 
       const matchId: string = row.id;
 
       // match_players（自分=side 1、相手=side 2）
-      const { error: mpErr } = await supabase
-        .from('match_players')
-        .insert(
-          [
-            { match_id: matchId, player_id: userId, side_no: 1 },
-            { match_id: matchId, player_id: oppo.id, side_no: 2 },
-          ] as any
-        );
+      const { error: mpErr } = await supabase.from("match_players").insert([
+        { match_id: matchId, player_id: userId, side_no: 1 },
+        { match_id: matchId, player_id: oppo.id, side_no: 2 },
+      ] as any);
       if (mpErr) throw mpErr;
 
-      setRegDone('試合を登録しました。');
+      setRegDone("試合を登録しました。");
       setRegOpen(false);
       setRegMy(0);
       setRegOpp(0);
       setOppo(null);
-      setOppoQuery('');
+      setOppoQuery("");
       await fetchRecentMatches();
     } catch (e: any) {
       setRegError(
-        e?.message || '登録に失敗しました。スキーマとRLSをご確認ください。'
+        e?.message || "登録に失敗しました。スキーマとRLSをご確認ください。",
       );
     } finally {
       setRegSaving(false);
@@ -715,7 +751,7 @@ export default function MyPage() {
               ログイン中: <span className="text-purple-300">{email}</span>
             </>
           ) : (
-            'ログイン中'
+            "ログイン中"
           )}
         </p>
       </div>
@@ -723,12 +759,15 @@ export default function MyPage() {
       {/* プロフィール編集 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
-          <h2 className="text-lg font-semibold text-purple-200 mb-4">プロフィール編集</h2>
+          <h2 className="text-lg font-semibold text-purple-200 mb-4">
+            プロフィール編集
+          </h2>
 
           {avatarBucketMissing && (
             <div className="mb-4 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-yellow-300 text-sm">
               <FaExclamationTriangle className="inline mr-2" />
-              Supabase Storage の <code>avatars</code> バケットが見つかりません。作成して公開設定を有効にしてください。
+              Supabase Storage の <code>avatars</code>{" "}
+              バケットが見つかりません。作成して公開設定を有効にしてください。
             </div>
           )}
 
@@ -737,7 +776,7 @@ export default function MyPage() {
             <div className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={avatarUrl || '/default-avatar.png'}
+                src={avatarUrl || "/default-avatar.png"}
                 alt="avatar"
                 className="w-24 h-24 rounded-full border-2 border-purple-500 object-cover"
               />
@@ -754,8 +793,8 @@ export default function MyPage() {
                   onClick={onPickAvatar}
                   disabled={uploadBusy}
                   className={cls(
-                    'px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2',
-                    'bg-purple-600 hover:bg-purple-700 disabled:opacity-60'
+                    "px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2",
+                    "bg-purple-600 hover:bg-purple-700 disabled:opacity-60",
                   )}
                 >
                   <FaUpload /> 画像をアップロード
@@ -788,7 +827,9 @@ export default function MyPage() {
                       読み込み中…
                     </div>
                   ) : pickerItems.length === 0 ? (
-                    <div className="text-sm text-gray-400">{pickerMsg || '候補なし'}</div>
+                    <div className="text-sm text-gray-400">
+                      {pickerMsg || "候補なし"}
+                    </div>
                   ) : (
                     <>
                       <div className="grid grid-cols-4 gap-2 max-h-64 overflow-auto pr-1">
@@ -800,7 +841,11 @@ export default function MyPage() {
                             title={it.fullPath}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={it.url} alt="" className="w-full h-16 object-cover" />
+                            <img
+                              src={it.url}
+                              alt=""
+                              className="w-full h-16 object-cover"
+                            />
                           </button>
                         ))}
                       </div>
@@ -815,7 +860,9 @@ export default function MyPage() {
 
             {/* Fields */}
             <div className="flex-1 w-full">
-              <label className="block text-sm text-gray-300 mb-2">ハンドルネーム</label>
+              <label className="block text-sm text-gray-300 mb-2">
+                ハンドルネーム
+              </label>
               <input
                 value={handle}
                 onChange={(e) => setHandle(e.target.value)}
@@ -829,11 +876,16 @@ export default function MyPage() {
                   onClick={saveProfile}
                   disabled={savingProfile}
                   className={cls(
-                    'px-4 py-2 rounded-lg inline-flex items-center gap-2',
-                    'bg-green-600 hover:bg-green-700 disabled:opacity-60'
+                    "px-4 py-2 rounded-lg inline-flex items-center gap-2",
+                    "bg-green-600 hover:bg-green-700 disabled:opacity-60",
                   )}
                 >
-                  {savingProfile ? <FaSpinner className="animate-spin" /> : <FaSave />} 保存
+                  {savingProfile ? (
+                    <FaSpinner className="animate-spin" />
+                  ) : (
+                    <FaSave />
+                  )}{" "}
+                  保存
                 </button>
 
                 <button
@@ -842,26 +894,26 @@ export default function MyPage() {
                     if (!userId) return;
                     const payload: any = {};
                     const { data: p } = await supabase
-                      .from('players')
-                      .select('*')
-                      .eq('id', userId)
+                      .from("players")
+                      .select("*")
+                      .eq("id", userId)
                       .single();
                     payload.player = p || null;
                     try {
                       const { data: mp } = await supabase
-                        .from('match_players')
-                        .select('*, matches:matches(*)')
-                        .eq('player_id', userId)
+                        .from("match_players")
+                        .select("*, matches:matches(*)")
+                        .eq("player_id", userId)
                         .limit(200);
                       payload.matches = mp || [];
                     } catch {
                       payload.matches = [];
                     }
                     const blob = new Blob([JSON.stringify(payload, null, 2)], {
-                      type: 'application/json',
+                      type: "application/json",
                     });
                     const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
+                    const a = document.createElement("a");
                     a.href = url;
                     a.download = `mydata-${userId.slice(0, 8)}.json`;
                     a.click();
@@ -873,7 +925,9 @@ export default function MyPage() {
                 </button>
               </div>
 
-              {profileMsg && <p className="mt-3 text-sm text-gray-300">{profileMsg}</p>}
+              {profileMsg && (
+                <p className="mt-3 text-sm text-gray-300">{profileMsg}</p>
+              )}
             </div>
           </div>
         </div>
@@ -891,21 +945,27 @@ export default function MyPage() {
                 <div className="text-xs text-gray-400">ポイント</div>
               </div>
               <div className="rounded-lg bg-purple-900/30 p-3">
-                <div className="text-2xl font-bold text-yellow-100">{me.handicap ?? 0}</div>
+                <div className="text-2xl font-bold text-yellow-100">
+                  {me.handicap ?? 0}
+                </div>
                 <div className="text-xs text-gray-400">ハンディ</div>
               </div>
               {/* ▼ ここ修正：bg紫色-900/30 → bg-purple-900/30 */}
               <div className="rounded-lg bg-purple-900/30 p-3">
-                <div className="text-2xl font-bold text-green-400">{me.wins ?? 0}</div>
+                <div className="text-2xl font-bold text-green-400">
+                  {me.wins ?? 0}
+                </div>
                 <div className="text-xs text-gray-400">勝</div>
               </div>
               <div className="rounded-lg bg-purple-900/30 p-3">
-                <div className="text-2xl font-bold text-red-400">{me.losses ?? 0}</div>
+                <div className="text-2xl font-bold text-red-400">
+                  {me.losses ?? 0}
+                </div>
                 <div className="text-xs text-gray-400">敗</div>
               </div>
               <div className="col-span-2 rounded-lg bg-purple-900/30 p-3">
                 <div className="text-2xl font-bold text-blue-400">
-                  {games > 0 ? `${winRate}%` : '—'}
+                  {games > 0 ? `${winRate}%` : "—"}
                 </div>
                 <div className="text-xs text-gray-400">勝率</div>
               </div>
@@ -943,7 +1003,9 @@ export default function MyPage() {
               <div className="p-3 rounded-lg bg-purple-900/30 border border-purple-500/30">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-yellow-100 font-semibold">{myTeam.name}</div>
+                    <div className="text-yellow-100 font-semibold">
+                      {myTeam.name}
+                    </div>
                     <div className="text-xs text-gray-400">参加中</div>
                   </div>
                   <button
@@ -955,7 +1017,9 @@ export default function MyPage() {
                     <FaDoorOpen /> 脱退
                   </button>
                 </div>
-                {joinMsg && <p className="mt-2 text-sm text-gray-300">{joinMsg}</p>}
+                {joinMsg && (
+                  <p className="mt-2 text-sm text-gray-300">{joinMsg}</p>
+                )}
               </div>
             ) : (
               <>
@@ -984,15 +1048,23 @@ export default function MyPage() {
                           onClick={() => joinTeam(t)}
                           className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 inline-flex items-center gap-2 text-sm"
                         >
-                          {joinBusy ? <FaSpinner className="animate-spin" /> : <FaPlus />}{' '}
+                          {joinBusy ? (
+                            <FaSpinner className="animate-spin" />
+                          ) : (
+                            <FaPlus />
+                          )}{" "}
                           参加する
                         </button>
                       </div>
                     ))}
                   </div>
                 )}
-                {joinMsg && <p className="mt-2 text-sm text-gray-300">{joinMsg}</p>}
-                <div className="mt-3 text-xs text-gray-500">※ 定員（{TEAM_CAP}名）を超える場合は参加できません。</div>
+                {joinMsg && (
+                  <p className="mt-2 text-sm text-gray-300">{joinMsg}</p>
+                )}
+                <div className="mt-3 text-xs text-gray-500">
+                  ※ 定員（{TEAM_CAP}名）を超える場合は参加できません。
+                </div>
               </>
             )}
           </div>
@@ -1006,7 +1078,9 @@ export default function MyPage() {
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-purple-200">最近の試合</h2>
+            <h2 className="text-lg font-semibold text-purple-200">
+              最近の試合
+            </h2>
             <Link
               href="/rankings"
               className="px-3 py-2 rounded-lg bg-purple-700/70 hover:bg-purple-700 inline-flex items-center gap-2"
@@ -1024,7 +1098,9 @@ export default function MyPage() {
             <div className="space-y-3">
               {recentMatches.map((r) => {
                 const m = r.matches!;
-                const when = m.match_date ? new Date(m.match_date).toLocaleString() : '-';
+                const when = m.match_date
+                  ? new Date(m.match_date).toLocaleString()
+                  : "-";
                 return (
                   <div
                     key={r.match_id}
@@ -1033,7 +1109,7 @@ export default function MyPage() {
                     <div className="min-w-0">
                       <div className="text-xs text-gray-400">{when}</div>
                       <div className="text-sm text-yellow-100 truncate">
-                        {m.mode} / {m.status || '-'}
+                        {m.mode} / {m.status || "-"}
                       </div>
                       {r.opponent && (
                         <div className="text-xs text-gray-400 truncate">
@@ -1043,7 +1119,7 @@ export default function MyPage() {
                     </div>
                     <div className="text-right">
                       <div className="text-lg font-bold text-white">
-                        {m.winner_score ?? '-'} - {m.loser_score ?? '-'}
+                        {m.winner_score ?? "-"} - {m.loser_score ?? "-"}
                       </div>
                     </div>
                   </div>
@@ -1051,7 +1127,9 @@ export default function MyPage() {
               })}
             </div>
           ) : (
-            <div className="p-6 text-center text-gray-400">試合がありません。</div>
+            <div className="p-6 text-center text-gray-400">
+              試合がありません。
+            </div>
           )}
 
           {matchFetchNote && (
@@ -1061,7 +1139,9 @@ export default function MyPage() {
 
         {/* 予備スペース／お知らせ等 */}
         <div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
-          <h2 className="text-lg font-semibold text-purple-200 mb-3">お知らせ</h2>
+          <h2 className="text-lg font-semibold text-purple-200 mb-3">
+            お知らせ
+          </h2>
           <p className="text-sm text-gray-300">
             チーム戦の登録は右側「チーム試合登録」タイルから行えます。所属していない場合は、まず参加チームを設定してください。
           </p>

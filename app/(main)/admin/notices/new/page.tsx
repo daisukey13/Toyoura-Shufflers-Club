@@ -1,10 +1,10 @@
 // app/admin/notices/new/page.tsx
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useState, useEffect } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 const supabase = createClient();
 
@@ -13,7 +13,7 @@ type PlayerFlagRow = { is_admin: boolean | null };
 type NoticeInsert = {
   title: string;
   content: string;
-  date: string;          // YYYY-MM-DD （DBは date 型想定）
+  date: string; // YYYY-MM-DD （DBは date 型想定）
   is_published: boolean;
   created_by: string;
 };
@@ -22,10 +22,12 @@ export default function NewNoticePage() {
   const router = useRouter();
 
   // フォーム状態
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
   // DBの型が "date" 前提：YYYY-MM-DD を入れる
-  const [date, setDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState<string>(
+    () => new Date().toISOString().split("T")[0],
+  );
   const [isPublished, setIsPublished] = useState(false);
 
   // 画面状態
@@ -37,32 +39,37 @@ export default function NewNoticePage() {
   useEffect(() => {
     (async () => {
       try {
-        const { data: { user }, error: userErr } = await supabase.auth.getUser();
+        const {
+          data: { user },
+          error: userErr,
+        } = await supabase.auth.getUser();
         if (userErr) throw userErr;
 
         if (!user) {
           // 未ログイン → 遷移
-          router.replace('/');
+          router.replace("/");
           return;
         }
 
         // players.is_admin で権限判定（I/O境界は any にして、ローカル型で受ける）
-        const { data: pRow, error: plErr } = await (supabase.from('players') as any)
-          .select('is_admin')
-          .eq('id', user.id)
+        const { data: pRow, error: plErr } = await (
+          supabase.from("players") as any
+        )
+          .select("is_admin")
+          .eq("id", user.id)
           .maybeSingle();
 
         if (plErr) throw plErr;
         const player = (pRow ?? null) as PlayerFlagRow | null;
         if (!player?.is_admin) {
-          router.replace('/');
+          router.replace("/");
           return;
         }
 
         setIsAdmin(true);
       } catch (e) {
-        console.error('[admin/notices/new] admin check error:', e);
-        router.replace('/');
+        console.error("[admin/notices/new] admin check error:", e);
+        router.replace("/");
       } finally {
         setBooting(false);
       }
@@ -75,41 +82,47 @@ export default function NewNoticePage() {
     if (loading) return;
 
     if (!title.trim() || !content.trim()) {
-      alert('タイトルと内容を入力してください');
+      alert("タイトルと内容を入力してください");
       return;
     }
 
     setLoading(true);
     try {
-      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
       if (userErr) throw userErr;
-      if (!user) throw new Error('Not authenticated');
+      if (!user) throw new Error("Not authenticated");
 
       // notices: title, content, date, is_published, created_by
       const payload: NoticeInsert = {
         title: title.trim(),
-        content: content,         // Markdown/テキストそのまま
-        date,                     // "YYYY-MM-DD"
+        content: content, // Markdown/テキストそのまま
+        date, // "YYYY-MM-DD"
         is_published: isPublished,
         created_by: user.id,
       };
 
-      const { error: insErr } = await (supabase.from('notices') as any)
-        .insert(payload as any);
+      const { error: insErr } = await (supabase.from("notices") as any).insert(
+        payload as any,
+      );
 
       if (insErr) throw insErr;
 
-      alert('お知らせを作成しました');
-      router.replace('/admin/notices');
+      alert("お知らせを作成しました");
+      router.replace("/admin/notices");
     } catch (err: any) {
-      console.error('[admin/notices/new] create error:', err);
+      console.error("[admin/notices/new] create error:", err);
       const msg = String(err?.message || err);
-      let hint = '';
+      let hint = "";
       if (/row-level security|RLS/i.test(msg)) {
-        hint = '\n（Supabase の RLS ポリシーで、管理者のみ INSERT を許可しているか確認してください）';
+        hint =
+          "\n（Supabase の RLS ポリシーで、管理者のみ INSERT を許可しているか確認してください）";
       }
       if (/column .* does not exist|relation .* does not exist/i.test(msg)) {
-        hint = '\n（notices テーブルのカラム: title, content, date, is_published, created_by を確認してください）';
+        hint =
+          "\n（notices テーブルのカラム: title, content, date, is_published, created_by を確認してください）";
       }
       alert(`お知らせの作成に失敗しました。\n詳細: ${msg}${hint}`);
     } finally {
@@ -124,8 +137,13 @@ export default function NewNoticePage() {
     <div className="min-h-screen p-4">
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-yellow-100 mb-2">新規お知らせ作成</h1>
-          <Link href="/admin/notices" className="text-purple-400 hover:text-purple-300">
+          <h1 className="text-3xl font-bold text-yellow-100 mb-2">
+            新規お知らせ作成
+          </h1>
+          <Link
+            href="/admin/notices"
+            className="text-purple-400 hover:text-purple-300"
+          >
             ← お知らせ一覧に戻る
           </Link>
         </div>
@@ -134,7 +152,9 @@ export default function NewNoticePage() {
           <div className="space-y-6">
             {/* タイトル */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">タイトル</label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                タイトル
+              </label>
               <input
                 type="text"
                 value={title}
@@ -147,7 +167,9 @@ export default function NewNoticePage() {
 
             {/* 日付（date 型） */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">日付</label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                日付
+              </label>
               <input
                 type="date"
                 value={date}
@@ -159,7 +181,9 @@ export default function NewNoticePage() {
 
             {/* 内容 */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">内容</label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                内容
+              </label>
               <textarea
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
@@ -168,7 +192,8 @@ export default function NewNoticePage() {
                 required
               />
               <p className="text-sm text-gray-400 mt-1">
-                ※ Markdownで書式設定ができます（<b>**太字**</b>、<i>*斜体*</i>、- リスト など）
+                ※ Markdownで書式設定ができます（<b>**太字**</b>、<i>*斜体*</i>
+                、- リスト など）
               </p>
             </div>
 
@@ -193,7 +218,7 @@ export default function NewNoticePage() {
                 disabled={loading}
                 className="flex-1 px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {loading ? '作成中...' : 'お知らせを作成'}
+                {loading ? "作成中..." : "お知らせを作成"}
               </button>
               <Link
                 href="/admin/notices"

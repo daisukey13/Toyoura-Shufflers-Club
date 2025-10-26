@@ -1,12 +1,12 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import Link from 'next/link';
-import { FaBullhorn, FaSearch, FaCalendarAlt } from 'react-icons/fa';
-import { useNotices } from '@/lib/hooks/useNotices';
+import { useState } from "react";
+import Link from "next/link";
+import { FaBullhorn, FaSearch, FaCalendarAlt } from "react-icons/fa";
+import { useNotices } from "@/lib/hooks/useNotices";
 
 export default function NoticesListPage() {
-  const [kw, setKw] = useState('');
+  const [kw, setKw] = useState("");
   const { notices, loading, error, refetch } = useNotices({
     enabled: true,
     includeUnpublished: false,
@@ -23,7 +23,9 @@ export default function NoticesListPage() {
             <FaBullhorn className="text-4xl text-yellow-300" />
           </div>
           <h1 className="text-3xl font-bold text-yellow-100">お知らせ</h1>
-          <p className="text-gray-400 mt-1">クラブからの最新インフォメーション</p>
+          <p className="text-gray-400 mt-1">
+            クラブからの最新インフォメーション
+          </p>
         </div>
 
         {/* 検索 */}
@@ -48,7 +50,10 @@ export default function NoticesListPage() {
         {error && (
           <div className="max-w-3xl mx-auto glass-card rounded-xl p-6 border border-red-500/30 bg-red-500/10">
             <p className="text-red-300">お知らせの取得に失敗しました。</p>
-            <button onClick={refetch} className="mt-3 underline text-purple-300">
+            <button
+              onClick={refetch}
+              className="mt-3 underline text-purple-300"
+            >
               再読み込み
             </button>
           </div>
@@ -72,15 +77,15 @@ export default function NoticesListPage() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <h3 className="text-lg sm:text-xl font-bold text-yellow-100 break-words">
-                          {n.title || '無題'}
+                          {n.title || "無題"}
                         </h3>
                         <p
                           className="mt-2 text-sm text-gray-300 overflow-hidden text-ellipsis"
                           style={{
-                            display: '-webkit-box',
+                            display: "-webkit-box",
                             WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            whiteSpace: 'normal',
+                            WebkitBoxOrient: "vertical",
+                            whiteSpace: "normal",
                           }}
                           title={n.content}
                         >
@@ -91,12 +96,15 @@ export default function NoticesListPage() {
                         <FaCalendarAlt />
                         <span>
                           {n?.date
-                           ? new Date(n.date as string).toLocaleDateString('ja-JP', {
-                              year: 'numeric',
-                              month: '2-digit',
-                              day: '2-digit',
-                             })
-                          : '-'}
+                            ? new Date(n.date as string).toLocaleDateString(
+                                "ja-JP",
+                                {
+                                  year: "numeric",
+                                  month: "2-digit",
+                                  day: "2-digit",
+                                },
+                              )
+                            : "-"}
                         </span>
                       </div>
                     </div>

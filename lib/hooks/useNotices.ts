@@ -1,14 +1,14 @@
 // lib/hooks/useNotices.ts
-'use client';
+"use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 export type Notice = {
   id: string;
   title: string;
   content: string;
-  date: string | null;         // YYYY-MM-DD or null
+  date: string | null; // YYYY-MM-DD or null
   is_published: boolean;
   created_at?: string | null;
   updated_at?: string | null;
@@ -37,13 +37,13 @@ export function useNotices(opts: UseNoticesOptions = {}) {
     setLoading(true);
     setError(null);
     try {
-      let q = supabase.from('notices').select('*');
+      let q = supabase.from("notices").select("*");
 
       if (!opts.includeUnpublished) {
-        q = q.eq('is_published', true);
+        q = q.eq("is_published", true);
       }
 
-      const s = (opts.search ?? '').trim();
+      const s = (opts.search ?? "").trim();
       if (s) {
         q = q.or(`title.ilike.%${s}%,content.ilike.%${s}%`);
       }
@@ -65,8 +65,8 @@ export function useNotices(opts: UseNoticesOptions = {}) {
 
       setNotices(sorted);
     } catch (e: any) {
-      console.error('[useNotices] fetch error:', e);
-      setError(e?.message || 'failed to fetch notices');
+      console.error("[useNotices] fetch error:", e);
+      setError(e?.message || "failed to fetch notices");
     } finally {
       setLoading(false);
     }

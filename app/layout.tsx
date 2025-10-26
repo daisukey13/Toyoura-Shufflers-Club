@@ -1,10 +1,10 @@
 // app/layout.tsx
-import type { Metadata, Viewport } from 'next';
-import './globals.css';
-import Link from 'next/link';
-import AuthCookieSync from './AuthCookieSync';
-import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import type { Metadata, Viewport } from "next";
+import "./globals.css";
+import Link from "next/link";
+import AuthCookieSync from "./AuthCookieSync";
+import { cookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import {
   FaHome,
   FaTrophy,
@@ -12,25 +12,29 @@ import {
   FaFlagCheckered,
   FaIdBadge,
   FaUserCircle,
-} from 'react-icons/fa';
+} from "react-icons/fa";
 
 export const metadata: Metadata = {
-  title: 'Toyoura Shufflers Club',
-  description: 'Toyoura Shufflers Club – ランキング・試合・メンバー情報',
+  title: "Toyoura Shufflers Club",
+  description: "Toyoura Shufflers Club – ランキング・試合・メンバー情報",
 };
 
 export const viewport: Viewport = {
-  width: 'device-width',
+  width: "device-width",
   initialScale: 1,
-  viewportFit: 'cover',
-  themeColor: '#111827',
+  viewportFit: "cover",
+  themeColor: "#111827",
 };
 
 // 最新のログイン状態を反映
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   // サーバで認証状態チェック（Server Component では cookie の set/remove が禁止のため try/catch で握り潰す）
   let authed = false;
   try {
@@ -53,13 +57,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           },
           remove(name: string, options: CookieOptions) {
             try {
-              cookieStore.set({ name, value: '', ...options });
+              cookieStore.set({ name, value: "", ...options });
             } catch {
               /* no-op on server component render */
             }
           },
         },
-      }
+      },
     );
     const { data } = await supabase.auth.getUser();
     authed = !!data.user;
@@ -67,14 +71,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     authed = false;
   }
 
-  const statusRing = authed ? 'ring-2 ring-green-400/70' : 'ring-2 ring-purple-400/60';
+  const statusRing = authed
+    ? "ring-2 ring-green-400/70"
+    : "ring-2 ring-purple-400/60";
   const statusDotClass =
-    'absolute -right-0.5 -top-0.5 w-3.5 h-3.5 rounded-full ' +
+    "absolute -right-0.5 -top-0.5 w-3.5 h-3.5 rounded-full " +
     (authed
-      ? 'bg-green-400 shadow-[0_0_12px_2px_rgba(74,222,128,0.6)]'
-      : 'bg-purple-400 shadow-[0_0_12px_2px_rgba(192,132,252,0.6)]');
+      ? "bg-green-400 shadow-[0_0_12px_2px_rgba(74,222,128,0.6)]"
+      : "bg-purple-400 shadow-[0_0_12px_2px_rgba(192,132,252,0.6)]");
 
-  const loginStatusHref = authed ? '/mypage' : '/login?redirect=/mypage';
+  const loginStatusHref = authed ? "/mypage" : "/login?redirect=/mypage";
 
   return (
     <html lang="ja" suppressHydrationWarning>
@@ -145,8 +151,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 href={loginStatusHref}
                 prefetch={false}
                 className={`relative p-3 sm:p-4 rounded-2xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/30 ${statusRing}`}
-                aria-label={authed ? 'ログイン中' : '未ログイン'}
-                title={authed ? 'ログイン中' : '未ログイン'}
+                aria-label={authed ? "ログイン中" : "未ログイン"}
+                title={authed ? "ログイン中" : "未ログイン"}
               >
                 <FaUserCircle className="text-3xl sm:text-4xl" />
                 <span className={statusDotClass} />

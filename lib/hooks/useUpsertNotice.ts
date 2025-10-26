@@ -1,8 +1,8 @@
 // lib/hooks/useUpsertNotice.ts
-'use client';
+"use client";
 
-import { createClient } from '@/lib/supabase/client';
-import type { Notice } from './useNotices';
+import { createClient } from "@/lib/supabase/client";
+import type { Notice } from "./useNotices";
 
 export type NoticeInput = {
   title: string;
@@ -24,8 +24,10 @@ type NoticeRow = {
   updated_at: string | null;
 };
 
-type NoticeInsert = Omit<NoticeRow, 'id' | 'created_at' | 'updated_at'>;
-type NoticeUpdate = Partial<Pick<NoticeRow, 'title' | 'content' | 'date' | 'is_published'>> & {
+type NoticeInsert = Omit<NoticeRow, "id" | "created_at" | "updated_at">;
+type NoticeUpdate = Partial<
+  Pick<NoticeRow, "title" | "content" | "date" | "is_published">
+> & {
   updated_at?: string | null;
 };
 
@@ -37,7 +39,7 @@ export function useUpsertNotice() {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw new Error(error.message);
     const session = data?.session;
-    if (!session) throw new Error('ログインが必要です');
+    if (!session) throw new Error("ログインが必要です");
     return session;
   };
 
@@ -51,9 +53,9 @@ export function useUpsertNotice() {
     };
 
     // ★ 型地獄回避：from のジェネリクスは使わず any に寄せる
-    const { data, error } = await (supabase.from('notices') as any)
+    const { data, error } = await (supabase.from("notices") as any)
       .insert(payload as any)
-      .select('*')
+      .select("*")
       .single();
 
     if (error) throw new Error(error.message);
@@ -61,7 +63,10 @@ export function useUpsertNotice() {
   };
 
   /** お知らせ更新 */
-  const updateNotice = async (id: string, input: Partial<NoticeInput>): Promise<Notice> => {
+  const updateNotice = async (
+    id: string,
+    input: Partial<NoticeInput>,
+  ): Promise<Notice> => {
     await requireSession();
 
     const updatePayload: NoticeUpdate = {
@@ -69,10 +74,10 @@ export function useUpsertNotice() {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await (supabase.from('notices') as any)
+    const { data, error } = await (supabase.from("notices") as any)
       .update(updatePayload as any)
-      .eq('id', id)
-      .select('*')
+      .eq("id", id)
+      .select("*")
       .single();
 
     if (error) throw new Error(error.message);
@@ -83,7 +88,9 @@ export function useUpsertNotice() {
   const deleteNotice = async (id: string): Promise<void> => {
     await requireSession();
 
-    const { error } = await (supabase.from('notices') as any).delete().eq('id', id);
+    const { error } = await (supabase.from("notices") as any)
+      .delete()
+      .eq("id", id);
     if (error) throw new Error(error.message);
   };
 

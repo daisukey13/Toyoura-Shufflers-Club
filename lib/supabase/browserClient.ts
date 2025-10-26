@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@supabase/ssr";
 
 // 型
 type SB = ReturnType<typeof createBrowserClient>;
@@ -18,12 +18,12 @@ const supabase =
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       auth: {
-        storageKey: 'tsc-auth', // アプリ固有キー
+        storageKey: "tsc-auth", // アプリ固有キー
       },
-    }
+    },
   );
 
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   globalThis.__supabase_browser__ = supabase;
 }
 

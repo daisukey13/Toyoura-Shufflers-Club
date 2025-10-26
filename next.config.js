@@ -3,7 +3,7 @@
 // ---- Security Headers (CSP for Supabase + Cloudflare Turnstile + Cloudflare Insights) ----
 const securityHeaders = [
   {
-    key: 'Content-Security-Policy',
+    key: "Content-Security-Policy",
     value: [
       // Baseline
       "default-src 'self'",
@@ -11,7 +11,7 @@ const securityHeaders = [
       "object-src 'none'",
       "form-action 'self'",
       "frame-ancestors 'self'",
-      'upgrade-insecure-requests',
+      "upgrade-insecure-requests",
 
       // --- Scripts ---
       // Nextのインライン/ハイドレーション, Turnstile, Cloudflare Insights(スクリプトCDN)
@@ -43,15 +43,18 @@ const securityHeaders = [
 
       // 任意だが noise を減らす
       "manifest-src 'self'",
-      "media-src 'self' blob: data:"
+      "media-src 'self' blob: data:",
       // ⬇️ ここにあった prefetch-src は削除（仕様外でブラウザ警告の原因）
-    ].join('; ')
+    ].join("; "),
   },
-  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
   // 互換のため残す（実質は frame-ancestors が有効）
-  { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' }
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=()",
+  },
 ];
 
 const nextConfig = {
@@ -59,28 +62,48 @@ const nextConfig = {
 
   images: {
     remotePatterns: [
-      { protocol: 'https', hostname: '*.supabase.co', pathname: '/storage/v1/object/public/**' },
-      { protocol: 'https', hostname: '*.supabase.in', pathname: '/storage/v1/object/public/**' },
-      { protocol: 'https', hostname: '*.supabase.net', pathname: '/storage/v1/object/public/**' }
-    ]
+      {
+        protocol: "https",
+        hostname: "*.supabase.co",
+        pathname: "/storage/v1/object/public/**",
+      },
+      {
+        protocol: "https",
+        hostname: "*.supabase.in",
+        pathname: "/storage/v1/object/public/**",
+      },
+      {
+        protocol: "https",
+        hostname: "*.supabase.net",
+        pathname: "/storage/v1/object/public/**",
+      },
+    ],
   },
 
   async headers() {
     return [
       {
-        source: '/(.*)',
-        headers: securityHeaders
-      }
+        source: "/(.*)",
+        headers: securityHeaders,
+      },
     ];
   },
 
   // 旧パスを新へ統一
   async redirects() {
     return [
-      { source: '/matches/register', destination: '/matches/register/singles', permanent: true },
-      { source: '/matches/register/', destination: '/matches/register/singles', permanent: true }
+      {
+        source: "/matches/register",
+        destination: "/matches/register/singles",
+        permanent: true,
+      },
+      {
+        source: "/matches/register/",
+        destination: "/matches/register/singles",
+        permanent: true,
+      },
     ];
-  }
+  },
 };
 
 module.exports = nextConfig;

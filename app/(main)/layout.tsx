@@ -1,8 +1,12 @@
 // app/(main)/layout.tsx
-import { cookies as nextCookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { cookies as nextCookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-export default function MainLayout({ children }: { children: React.ReactNode }) {
+export default function MainLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   // ── Supabase SSR: レイアウト（RSC）では Cookie を書き換えない（dev のクラッシュ回避）
   const cookieStore = nextCookies();
   const supabase = createServerClient(
@@ -21,7 +25,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           /* no-op in RSC */
         },
       },
-    }
+    },
   );
   void supabase; // 未使用警告の抑止
 

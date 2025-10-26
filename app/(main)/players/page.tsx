@@ -1,17 +1,17 @@
 // app/(main)/players/page.tsx
-'use client';
+"use client";
 
-import { useState, useMemo, memo, useCallback } from 'react';
-import Link from 'next/link';
+import { useState, useMemo, memo, useCallback } from "react";
+import Link from "next/link";
 import {
   FaUsers,
   FaSearch,
   FaFilter,
   FaChartLine,
   FaCrown,
-} from 'react-icons/fa';
-import { useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
-import { MobileLoadingState } from '@/components/MobileLoadingState';
+} from "react-icons/fa";
+import { useFetchPlayersData } from "@/lib/hooks/useFetchSupabaseData";
+import { MobileLoadingState } from "@/components/MobileLoadingState";
 
 /* ───────────────────────────── LazyImage ───────────────────────────── */
 const LazyImage = memo(function LazyImage({
@@ -32,7 +32,7 @@ const LazyImage = memo(function LazyImage({
       loading="lazy"
       decoding="async"
       onError={(e) => {
-        (e.target as HTMLImageElement).src = '/default-avatar.png';
+        (e.target as HTMLImageElement).src = "/default-avatar.png";
       }}
     />
   );
@@ -53,7 +53,7 @@ interface Player {
 
 /* ───────────────────────────── Helpers ───────────────────────────── */
 function safeLower(s?: string | null) {
-  return (s ?? '').toLowerCase();
+  return (s ?? "").toLowerCase();
 }
 
 /** 勝率は wins / (wins + losses) を採用（ゼロ試合は 0%） */
@@ -67,15 +67,15 @@ function gamesOf(p: Player) {
   return (p.wins ?? 0) + (p.losses ?? 0);
 }
 function ringForRank(rank: number) {
-  if (rank === 1) return 'from-yellow-400 to-yellow-600';
-  if (rank === 2) return 'from-gray-300 to-gray-500';
-  if (rank === 3) return 'from-orange-400 to-orange-600';
-  return 'from-purple-500/40 to-pink-600/40';
+  if (rank === 1) return "from-yellow-400 to-yellow-600";
+  if (rank === 2) return "from-gray-300 to-gray-500";
+  if (rank === 3) return "from-orange-400 to-orange-600";
+  return "from-purple-500/40 to-pink-600/40";
 }
 function emojiForRank(rank: number) {
-  if (rank === 1) return '🥇';
-  if (rank === 2) return '🥈';
-  if (rank === 3) return '🥉';
+  if (rank === 1) return "🥇";
+  if (rank === 2) return "🥈";
+  if (rank === 3) return "🥉";
   return null;
 }
 
@@ -89,13 +89,13 @@ const RankBadge = memo(function RankBadge({
 }) {
   const isTop3 = rank <= 3;
   const base =
-    'flex items-center justify-center rounded-full font-bold shadow-md';
+    "flex items-center justify-center rounded-full font-bold shadow-md";
   const size = prominent
-    ? 'w-10 h-10 text-base sm:w-12 sm:h-12 sm:text-lg'
-    : 'w-8 h-8 text-sm sm:w-9 sm:h-9 sm:text-sm';
+    ? "w-10 h-10 text-base sm:w-12 sm:h-12 sm:text-lg"
+    : "w-8 h-8 text-sm sm:w-9 sm:h-9 sm:text-sm";
   const theme = isTop3
     ? `bg-gradient-to-br ${ringForRank(rank)} text-gray-900`
-    : 'bg-purple-900/30 text-purple-300 border border-purple-500/40';
+    : "bg-purple-900/30 text-purple-300 border border-purple-500/40";
   return (
     <div className="relative">
       {isTop3 && (
@@ -114,11 +114,11 @@ const PlayerCard = memo(function PlayerCard({
 }: {
   player: Player;
   rank: number;
-  sortBy: 'ranking' | 'handicap' | 'wins' | 'matches' | string;
+  sortBy: "ranking" | "handicap" | "wins" | "matches" | string;
 }) {
   const isTop3 = rank <= 3;
   const ring = ringForRank(rank);
-  const badgeEmoji = sortBy === 'ranking' ? emojiForRank(rank) : null;
+  const badgeEmoji = sortBy === "ranking" ? emojiForRank(rank) : null;
   const wr = winRateOf(player);
   const games = gamesOf(player);
 
@@ -130,13 +130,15 @@ const PlayerCard = memo(function PlayerCard({
     >
       <div
         className={`relative glass-card rounded-xl p-4 sm:p-5 lg:p-6 transition-all cursor-pointer
-          ${isTop3 ? 'border-2' : 'border'} border-gradient bg-gradient-to-r from-purple-700/10 to-pink-700/10
+          ${isTop3 ? "border-2" : "border"} border-gradient bg-gradient-to-r from-purple-700/10 to-pink-700/10
           hover:scale-[1.02]`}
       >
         {/* 順位バッジ（右上） */}
         <div className="absolute top-2 right-2 flex items-center gap-1">
           <RankBadge rank={rank} prominent />
-          {badgeEmoji && <span className="text-xl sm:text-2xl">{badgeEmoji}</span>}
+          {badgeEmoji && (
+            <span className="text-xl sm:text-2xl">{badgeEmoji}</span>
+          )}
         </div>
 
         {/* 管理者バッジ（左上） */}
@@ -160,10 +162,10 @@ const PlayerCard = memo(function PlayerCard({
               />
             )}
             <LazyImage
-              src={player.avatar_url || '/default-avatar.png'}
+              src={player.avatar_url || "/default-avatar.png"}
               alt={player.handle_name}
               className={`relative w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-full object-cover
-              ${isTop3 ? 'border-2 border-transparent' : 'border-2 border-purple-500/30'}`}
+              ${isTop3 ? "border-2 border-transparent" : "border-2 border-purple-500/30"}`}
             />
           </div>
 
@@ -172,7 +174,7 @@ const PlayerCard = memo(function PlayerCard({
               {player.handle_name}
             </h3>
             <p className="text-xs sm:text-sm text-gray-400 truncate">
-              {player.address || '—'}
+              {player.address || "—"}
             </p>
           </div>
         </div>
@@ -182,7 +184,7 @@ const PlayerCard = memo(function PlayerCard({
           <div className="text-center">
             <div
               className={`text-xl sm:text-2xl font-extrabold ${
-                isTop3 ? 'text-yellow-100' : 'text-purple-300'
+                isTop3 ? "text-yellow-100" : "text-purple-300"
               }`}
             >
               {player.ranking_points ?? 0}
@@ -200,7 +202,7 @@ const PlayerCard = memo(function PlayerCard({
         {/* 戦績行（試合数は wins+losses を採用） */}
         <div className="flex justify-between items-center text-xs sm:text-sm">
           <div className="text-gray-400">
-            試合数:{' '}
+            試合数:{" "}
             <span className="text-yellow-100 font-semibold">{games}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -217,10 +219,10 @@ const PlayerCard = memo(function PlayerCard({
             <span
               className={`text-xs sm:text-sm font-bold ${
                 wr >= 60
-                  ? 'text-green-400'
+                  ? "text-green-400"
                   : wr >= 40
-                  ? 'text-yellow-400'
-                  : 'text-red-400'
+                    ? "text-yellow-400"
+                    : "text-red-400"
               }`}
             >
               {wr}%
@@ -230,10 +232,10 @@ const PlayerCard = memo(function PlayerCard({
             <div
               className={`h-full rounded-full transition-all duration-500 ${
                 wr >= 60
-                  ? 'bg-green-500'
+                  ? "bg-green-500"
                   : wr >= 40
-                  ? 'bg-yellow-500'
-                  : 'bg-red-500'
+                    ? "bg-yellow-500"
+                    : "bg-red-500"
               }`}
               style={{ width: `${wr}%` }}
             />
@@ -268,50 +270,50 @@ const PageHeader = memo(function PageHeader({
 /* ───────────────────────── Page ───────────────────────── */
 export default function PlayersPage() {
   const { players, loading, error, retrying, refetch } = useFetchPlayersData();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterAddress, setFilterAddress] = useState('all');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterAddress, setFilterAddress] = useState("all");
   const [sortBy, setSortBy] = useState<
-    'ranking' | 'handicap' | 'wins' | 'matches'
-  >('ranking');
+    "ranking" | "handicap" | "wins" | "matches"
+  >("ranking");
 
   const addressOptions = useMemo(
     () => [
-      '豊浦町',
-      '洞爺湖町',
-      '壮瞥町',
-      '伊達市',
-      '室蘭市',
-      '登別市',
-      '倶知安町',
-      'ニセコ町',
-      '札幌市',
-      'その他道内',
-      '内地',
-      '外国（Visitor)',
+      "豊浦町",
+      "洞爺湖町",
+      "壮瞥町",
+      "伊達市",
+      "室蘭市",
+      "登別市",
+      "倶知安町",
+      "ニセコ町",
+      "札幌市",
+      "その他道内",
+      "内地",
+      "外国（Visitor)",
     ],
-    []
+    [],
   );
 
   // フィルタ & ソート
   const filteredAndSortedPlayers = useMemo(() => {
     const list = (players as Player[]).filter((p) => {
       const matchesSearch = safeLower(p.handle_name).includes(
-        safeLower(searchTerm)
+        safeLower(searchTerm),
       );
       const matchesAddress =
-        filterAddress === 'all' || (p.address ?? '') === filterAddress;
+        filterAddress === "all" || (p.address ?? "") === filterAddress;
       return matchesSearch && matchesAddress;
     });
 
     return list.sort((a, b) => {
       switch (sortBy) {
-        case 'ranking':
+        case "ranking":
           return (b.ranking_points ?? 0) - (a.ranking_points ?? 0);
-        case 'handicap':
+        case "handicap":
           return (a.handicap ?? 0) - (b.handicap ?? 0);
-        case 'wins':
+        case "wins":
           return (b.wins ?? 0) - (a.wins ?? 0);
-        case 'matches': {
+        case "matches": {
           const ga = gamesOf(a);
           const gb = gamesOf(b);
           return gb - ga; // 試合数は wins+losses を採用
@@ -327,19 +329,19 @@ export default function PlayersPage() {
     (e: React.ChangeEvent<HTMLInputElement>) => {
       setSearchTerm(e.target.value);
     },
-    []
+    [],
   );
   const handleAddressFilterChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       setFilterAddress(e.target.value);
     },
-    []
+    [],
   );
   const handleSortChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       setSortBy(e.target.value as typeof sortBy);
     },
-    []
+    [],
   );
 
   return (

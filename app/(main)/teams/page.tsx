@@ -1,5 +1,5 @@
 // app/(main)/teams/page.tsx
-'use client';
+"use client";
 
 import React, {
   useState,
@@ -11,13 +11,13 @@ import React, {
   useDeferredValue,
   useTransition,
   useEffect,
-} from 'react';
-import Link from 'next/link';
-import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { FaUsers, FaTrophy, FaPercent, FaSearch } from 'react-icons/fa';
+} from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { FaUsers, FaTrophy, FaPercent, FaSearch } from "react-icons/fa";
 
-import { useTeamRankings, TeamRankItem } from '@/lib/hooks/useTeamRankings';
-import { MobileLoadingState } from '@/components/MobileLoadingState';
+import { useTeamRankings, TeamRankItem } from "@/lib/hooks/useTeamRankings";
+import { MobileLoadingState } from "@/components/MobileLoadingState";
 
 /* ---------------- Suspense fallback ---------------- */
 function Fallback() {
@@ -29,7 +29,7 @@ function Fallback() {
 }
 
 /* ---------------- Virtual list (for many rows) ---------------- */
-const VirtualList = lazy(() => import('@/components/VirtualList'));
+const VirtualList = lazy(() => import("@/components/VirtualList"));
 
 /* ---------------- Rank Badge ---------------- */
 const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
@@ -81,20 +81,24 @@ const TeamCard = memo(function TeamCard({
   const isTop3 = rank <= 3;
   const frame =
     rank === 1
-      ? 'from-yellow-400/50 to-yellow-600/50'
+      ? "from-yellow-400/50 to-yellow-600/50"
       : rank === 2
-      ? 'from-gray-300/50 to-gray-500/50'
-      : rank === 3
-      ? 'from-orange-400/50 to-orange-600/50'
-      : 'from-purple-600/20 to-pink-600/20';
+        ? "from-gray-300/50 to-gray-500/50"
+        : rank === 3
+          ? "from-orange-400/50 to-orange-600/50"
+          : "from-purple-600/20 to-pink-600/20";
 
   const href = `/teams/${encodeURIComponent(String(team.id))}`;
 
   return (
-    <Link href={href} prefetch={false} aria-label={`${team.name} のプロフィール`}>
+    <Link
+      href={href}
+      prefetch={false}
+      aria-label={`${team.name} のプロフィール`}
+    >
       <div
         className={`glass-card rounded-xl p-4 sm:p-6 hover:scale-[1.02] transition-all cursor-pointer ${
-          isTop3 ? 'border-2' : 'border'
+          isTop3 ? "border-2" : "border"
         } border-gradient bg-gradient-to-r ${frame} min-h-[140px]`}
       >
         <div className="flex items-center gap-3 sm:gap-4">
@@ -118,7 +122,9 @@ const TeamCard = memo(function TeamCard({
           </div>
 
           <div className="text-right flex-shrink-0">
-            <div className={`text-2xl sm:text-3xl font-bold ${isTop3 ? 'text-yellow-100' : 'text-purple-300'}`}>
+            <div
+              className={`text-2xl sm:text-3xl font-bold ${isTop3 ? "text-yellow-100" : "text-purple-300"}`}
+            >
               {Math.round(team.avg_rp ?? 0)}
             </div>
             <div className="text-xs sm:text-sm text-gray-400">平均RP</div>
@@ -127,20 +133,28 @@ const TeamCard = memo(function TeamCard({
 
         <div className="mt-3 sm:mt-4 grid grid-cols-4 gap-2 sm:gap-4 text-center">
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-            <div className="text-yellow-300 font-bold text-sm sm:text-base">{team.played ?? 0}</div>
+            <div className="text-yellow-300 font-bold text-sm sm:text-base">
+              {team.played ?? 0}
+            </div>
             <div className="text-xs text-gray-500">試合</div>
           </div>
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-            <div className="text-green-400 font-bold text-sm sm:text-base">{team.wins ?? 0}</div>
+            <div className="text-green-400 font-bold text-sm sm:text-base">
+              {team.wins ?? 0}
+            </div>
             <div className="text-xs text-gray-500">勝</div>
           </div>
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-            <div className="text-red-400 font-bold text-sm sm:text-base">{team.losses ?? 0}</div>
+            <div className="text-red-400 font-bold text-sm sm:text-base">
+              {team.losses ?? 0}
+            </div>
             <div className="text-xs text-gray-500">敗</div>
           </div>
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
             <div className="text-blue-400 font-bold text-sm sm:text-base">
-              {team.win_pct != null ? `${(team.win_pct * 100).toFixed(1)}%` : '—'}
+              {team.win_pct != null
+                ? `${(team.win_pct * 100).toFixed(1)}%`
+                : "—"}
             </div>
             <div className="text-xs text-gray-500">勝率</div>
           </div>
@@ -151,7 +165,7 @@ const TeamCard = memo(function TeamCard({
 });
 
 /* ---------------- Page Inner (wrapped by Suspense) ---------------- */
-type SortKey = 'avg_rp' | 'win_pct' | 'name';
+type SortKey = "avg_rp" | "win_pct" | "name";
 
 function TeamsInner() {
   const router = useRouter();
@@ -159,23 +173,24 @@ function TeamsInner() {
   const search = useSearchParams();
 
   // URL 同期: ?q= / ?sort= / ?dir=
-  const initialQ = search.get('q') ?? '';
-  const initialSort = (search.get('sort') as SortKey) ?? 'avg_rp';
+  const initialQ = search.get("q") ?? "";
+  const initialSort = (search.get("sort") as SortKey) ?? "avg_rp";
   const initialDir =
-    (search.get('dir') as 'asc' | 'desc') ?? (initialSort === 'name' ? 'asc' : 'desc');
+    (search.get("dir") as "asc" | "desc") ??
+    (initialSort === "name" ? "asc" : "desc");
 
   const [q, setQ] = useState(initialQ);
   const [sortBy, setSortBy] = useState<SortKey>(initialSort);
-  const [dir, setDir] = useState<'asc' | 'desc'>(initialDir);
+  const [dir, setDir] = useState<"asc" | "desc">(initialDir);
   const [isPending, startTransition] = useTransition();
 
   // URL を置換（履歴を汚さない & 空クエリで ? を残さない）
   useEffect(() => {
     const sp = new URLSearchParams();
-    if (q.trim()) sp.set('q', q.trim());
-    if (!(sortBy === 'avg_rp' && dir === 'desc')) {
-      sp.set('sort', sortBy);
-      sp.set('dir', dir);
+    if (q.trim()) sp.set("q", q.trim());
+    if (!(sortBy === "avg_rp" && dir === "desc")) {
+      sp.set("sort", sortBy);
+      sp.set("dir", dir);
     }
     const qs = sp.toString();
     const next = qs ? `${pathname}?${qs}` : `${pathname}`;
@@ -183,29 +198,29 @@ function TeamsInner() {
   }, [q, sortBy, dir, router, pathname]);
 
   // 取得（VIEW: team_rankings）
- const { teams, loading, error, retrying, refetch } = useTeamRankings({
-  enabled: true,
-  order: 'avg_rp',
-  direction: 'desc',
-});
+  const { teams, loading, error, retrying, refetch } = useTeamRankings({
+    enabled: true,
+    order: "avg_rp",
+    direction: "desc",
+  });
 
   // 検索はクライアント側でフィルタ
   const deferredQ = useDeferredValue(q);
   const filtered = useMemo(() => {
     const kw = deferredQ.trim().toLowerCase();
     if (!kw) return teams;
-    return teams.filter((t) => (t.name ?? '').toLowerCase().includes(kw));
+    return teams.filter((t) => (t.name ?? "").toLowerCase().includes(kw));
   }, [teams, deferredQ]);
 
   // ソートは念のためクライアントでも実施（安定）
   const sorted = useMemo(() => {
     const arr = [...filtered];
     arr.sort((a, b) => {
-      const sign = dir === 'asc' ? 1 : -1;
-      if (sortBy === 'name') {
-        return sign * (a.name ?? '').localeCompare(b.name ?? '');
+      const sign = dir === "asc" ? 1 : -1;
+      if (sortBy === "name") {
+        return sign * (a.name ?? "").localeCompare(b.name ?? "");
       }
-      if (sortBy === 'win_pct') {
+      if (sortBy === "win_pct") {
         return sign * ((a.win_pct ?? 0) - (b.win_pct ?? 0));
       }
       // avg_rp
@@ -220,7 +235,7 @@ function TeamsInner() {
       if (!t) return null;
       return <TeamCard key={t.id} team={t} rank={index + 1} />;
     },
-    [sorted]
+    [sorted],
   );
 
   return (
@@ -230,8 +245,12 @@ function TeamsInner() {
         <div className="inline-block p-3 sm:p-4 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-purple-400/20 to-pink-600/20">
           <FaUsers className="text-4xl sm:text-5xl text-purple-300" />
         </div>
-        <h1 className="text-3xl sm:text-4xl font-bold mb-2 sm:mb-3 text-yellow-100">チーム一覧</h1>
-        <p className="text-gray-400 text-sm sm:text-base">チームの戦績と平均RPをチェック</p>
+        <h1 className="text-3xl sm:text-4xl font-bold mb-2 sm:mb-3 text-yellow-100">
+          チーム一覧
+        </h1>
+        <p className="text-gray-400 text-sm sm:text-base">
+          チームの戦績と平均RPをチェック
+        </p>
       </div>
 
       {/* 検索・ソート */}
@@ -253,71 +272,74 @@ function TeamsInner() {
             <button
               onClick={() => {
                 startTransition(() => {
-                  if (sortBy === 'avg_rp') setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                  if (sortBy === "avg_rp")
+                    setDir((d) => (d === "asc" ? "desc" : "asc"));
                   else {
-                    setSortBy('avg_rp');
-                    setDir('desc');
+                    setSortBy("avg_rp");
+                    setDir("desc");
                   }
                 });
               }}
               className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
-                sortBy === 'avg_rp'
-                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
-                  : 'bg-purple-900/30 text-gray-400 hover:text-white'
+                sortBy === "avg_rp"
+                  ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white"
+                  : "bg-purple-900/30 text-gray-400 hover:text-white"
               }`}
-              aria-pressed={sortBy === 'avg_rp'}
+              aria-pressed={sortBy === "avg_rp"}
               title="平均RP順"
             >
               <FaTrophy className="inline mr-2" />
-              平均RP {isPending && sortBy === 'avg_rp' ? '…' : ''}
+              平均RP {isPending && sortBy === "avg_rp" ? "…" : ""}
             </button>
             <button
               onClick={() => {
                 startTransition(() => {
-                  if (sortBy === 'win_pct') setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                  if (sortBy === "win_pct")
+                    setDir((d) => (d === "asc" ? "desc" : "asc"));
                   else {
-                    setSortBy('win_pct');
-                    setDir('desc');
+                    setSortBy("win_pct");
+                    setDir("desc");
                   }
                 });
               }}
               className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
-                sortBy === 'win_pct'
-                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
-                  : 'bg-purple-900/30 text-gray-400 hover:text-white'
+                sortBy === "win_pct"
+                  ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white"
+                  : "bg-purple-900/30 text-gray-400 hover:text-white"
               }`}
-              aria-pressed={sortBy === 'win_pct'}
+              aria-pressed={sortBy === "win_pct"}
               title="勝率順"
             >
               <FaPercent className="inline mr-2" />
-              勝率 {isPending && sortBy === 'win_pct' ? '…' : ''}
+              勝率 {isPending && sortBy === "win_pct" ? "…" : ""}
             </button>
             <button
               onClick={() => {
                 startTransition(() => {
-                  if (sortBy === 'name') setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                  if (sortBy === "name")
+                    setDir((d) => (d === "asc" ? "desc" : "asc"));
                   else {
-                    setSortBy('name');
-                    setDir('asc');
+                    setSortBy("name");
+                    setDir("asc");
                   }
                 });
               }}
               className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
-                sortBy === 'name'
-                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
-                  : 'bg-purple-900/30 text-gray-400 hover:text-white'
+                sortBy === "name"
+                  ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white"
+                  : "bg-purple-900/30 text-gray-400 hover:text-white"
               }`}
-              aria-pressed={sortBy === 'name'}
+              aria-pressed={sortBy === "name"}
               title="名前順"
             >
-              名前 {isPending && sortBy === 'name' ? '…' : ''}
+              名前 {isPending && sortBy === "name" ? "…" : ""}
             </button>
           </div>
         </div>
 
         {/* 現在の並び方向 */}
         <div className="mt-2 text-center sm:text-right text-xs text-gray-400">
-          並び: {sortBy} / {dir === 'asc' ? '昇順' : '降順'}
+          並び: {sortBy} / {dir === "asc" ? "昇順" : "降順"}
         </div>
       </div>
 
@@ -341,25 +363,36 @@ function TeamsInner() {
               <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
                 {teams.length}
               </div>
-              <div className="text-gray-400 text-xs sm:text-base">登録チーム</div>
+              <div className="text-gray-400 text-xs sm:text-base">
+                登録チーム
+              </div>
             </div>
             <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20">
               <FaTrophy className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
               <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
                 {Math.round(
-                  [...teams].sort((a, b) => (b.avg_rp ?? 0) - (a.avg_rp ?? 0))[0]?.avg_rp ?? 0
+                  [...teams].sort(
+                    (a, b) => (b.avg_rp ?? 0) - (a.avg_rp ?? 0),
+                  )[0]?.avg_rp ?? 0,
                 )}
               </div>
-              <div className="text-gray-400 text-xs sm:text-base">最高平均RP</div>
+              <div className="text-gray-400 text-xs sm:text-base">
+                最高平均RP
+              </div>
             </div>
             <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-purple-500/20">
               <FaPercent className="text-3xl sm:text-4xl text-purple-400 mx-auto mb-2 sm:mb-3" />
               <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
                 {teams.length > 0
-                  ? Math.round(teams.reduce((s, r) => s + (r.avg_rp ?? 0), 0) / teams.length)
+                  ? Math.round(
+                      teams.reduce((s, r) => s + (r.avg_rp ?? 0), 0) /
+                        teams.length,
+                    )
                   : 0}
               </div>
-              <div className="text-gray-400 text-xs sm:text-base">平均RPの平均</div>
+              <div className="text-gray-400 text-xs sm:text-base">
+                平均RPの平均
+              </div>
             </div>
           </div>
 
@@ -370,7 +403,11 @@ function TeamsInner() {
               ))}
             </div>
           ) : (
-            <Suspense fallback={<div className="text-center py-6">リストを読み込み中…</div>}>
+            <Suspense
+              fallback={
+                <div className="text-center py-6">リストを読み込み中…</div>
+              }
+            >
               <VirtualList
                 items={sorted}
                 height={600}

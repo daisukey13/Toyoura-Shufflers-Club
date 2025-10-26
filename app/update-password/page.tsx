@@ -1,17 +1,17 @@
 // app/update-password/page.tsx
-'use client';
+"use client";
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
-import { FaKey, FaArrowLeft, FaCheck } from 'react-icons/fa';
-import { createClient } from '@/lib/supabase/client';
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { FaKey, FaArrowLeft, FaCheck } from "react-icons/fa";
+import { createClient } from "@/lib/supabase/client";
 
 // Supabase client storageKey を 'tsc-auth' にしている前提。
 // PKCE の code_verifier は `${storageKey}-code-verifier` に保存されます。
-const PKCE_VERIFIER_KEY = 'tsc-auth-code-verifier';
+const PKCE_VERIFIER_KEY = "tsc-auth-code-verifier";
 
-type Stage = 'checking' | 'ready' | 'done' | 'error';
+type Stage = "checking" | "ready" | "done" | "error";
 
 /* ───────── Suspense Fallback ───────── */
 function Fallback() {
@@ -30,14 +30,14 @@ function UpdatePasswordInner() {
   const router = useRouter();
   const params = useSearchParams();
 
-  const code = useMemo(() => params.get('code') || '', [params]);
-  const redirectTo = useMemo(() => params.get('redirect') || '', [params]);
+  const code = useMemo(() => params.get("code") || "", [params]);
+  const redirectTo = useMemo(() => params.get("redirect") || "", [params]);
 
-  const [stage, setStage] = useState<Stage>('checking');
+  const [stage, setStage] = useState<Stage>("checking");
   const [error, setError] = useState<string | null>(null);
 
-  const [pw, setPw] = useState('');
-  const [pw2, setPw2] = useState('');
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
   const [loading, setLoading] = useState(false);
 
   // メールリンクの code をセッションに交換（PKCE）
@@ -45,7 +45,7 @@ function UpdatePasswordInner() {
     let cancelled = false;
     (async () => {
       try {
-        if (!code) throw new Error('無効なリンクです（code がありません）。');
+        if (!code) throw new Error("無効なリンクです（code がありません）。");
 
         const { error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) throw error;
@@ -55,18 +55,22 @@ function UpdatePasswordInner() {
           localStorage.removeItem(PKCE_VERIFIER_KEY);
         } catch {}
 
-        if (!cancelled) setStage('ready');
+        if (!cancelled) setStage("ready");
       } catch (e: any) {
         const msg = String(e?.message || e);
         // PKCE 関連のエラーメッセージをユーザー向けに言い換え
         if (/both auth code and code verifier/i.test(msg)) {
-          setError('検証に必要な情報が見つかりませんでした。もう一度メールを送信してやり直してください。');
+          setError(
+            "検証に必要な情報が見つかりませんでした。もう一度メールを送信してやり直してください。",
+          );
         } else if (/unmarshal.*auth_code.*string/i.test(msg)) {
-          setError('リンクの形式が不正です。メールを再送して再度お試しください。');
+          setError(
+            "リンクの形式が不正です。メールを再送して再度お試しください。",
+          );
         } else {
           setError(msg);
         }
-        if (!cancelled) setStage('error');
+        if (!cancelled) setStage("error");
       }
     })();
     return () => {
@@ -77,11 +81,11 @@ function UpdatePasswordInner() {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (pw.length < 6) {
-      setError('パスワードは6文字以上で設定してください。');
+      setError("パスワードは6文字以上で設定してください。");
       return;
     }
     if (pw !== pw2) {
-      setError('パスワードが一致しません。');
+      setError("パスワードが一致しません。");
       return;
     }
 
@@ -90,13 +94,13 @@ function UpdatePasswordInner() {
     try {
       const { error } = await supabase.auth.updateUser({ password: pw });
       if (error) throw error;
-      setStage('done');
+      setStage("done");
 
       // 少し待ってからログインへ。?reset=success と元の遷移先を引き継ぐ
       setTimeout(() => {
         const next = redirectTo
           ? `/login?reset=success&redirect=${encodeURIComponent(redirectTo)}`
-          : '/login?reset=success';
+          : "/login?reset=success";
         router.replace(next);
       }, 1200);
     } catch (e: any) {
@@ -106,15 +110,20 @@ function UpdatePasswordInner() {
     }
   };
 
-  if (stage === 'checking') return <Fallback />;
+  if (stage === "checking") return <Fallback />;
 
-  if (stage === 'error') {
+  if (stage === "error") {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
-          <h1 className="text-2xl font-bold text-yellow-100 mb-2">リンクエラー</h1>
+          <h1 className="text-2xl font-bold text-yellow-100 mb-2">
+            リンクエラー
+          </h1>
           <p className="text-red-400 mb-4">{error}</p>
-          <Link href="/forgot-password" className="text-purple-400 hover:text-purple-300">
+          <Link
+            href="/forgot-password"
+            className="text-purple-400 hover:text-purple-300"
+          >
             もう一度やり直す
           </Link>
         </div>
@@ -122,12 +131,14 @@ function UpdatePasswordInner() {
     );
   }
 
-  if (stage === 'done') {
+  if (stage === "done") {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="w-full max-w-md glass-card rounded-xl p-8 text-center">
           <FaCheck className="text-4xl text-green-400 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-yellow-100 mb-2">パスワードを更新しました</h1>
+          <h1 className="text-2xl font-bold text-yellow-100 mb-2">
+            パスワードを更新しました
+          </h1>
           <p className="text-gray-300">ログインページへ移動します...</p>
         </div>
       </div>
@@ -150,8 +161,12 @@ function UpdatePasswordInner() {
             <div className="inline-block p-4 rounded-full bg-purple-600/20 mb-4">
               <FaKey className="text-3xl text-purple-400" />
             </div>
-            <h1 className="text-2xl font-bold text-yellow-100">新しいパスワードを設定</h1>
-            <p className="text-gray-400 mt-2">新しいパスワードを入力してください。</p>
+            <h1 className="text-2xl font-bold text-yellow-100">
+              新しいパスワードを設定
+            </h1>
+            <p className="text-gray-400 mt-2">
+              新しいパスワードを入力してください。
+            </p>
           </div>
 
           <form onSubmit={handleUpdate} className="space-y-6">
@@ -198,7 +213,7 @@ function UpdatePasswordInner() {
               disabled={loading}
               className="w-full px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
-              {loading ? '更新中...' : 'パスワードを更新'}
+              {loading ? "更新中..." : "パスワードを更新"}
             </button>
           </form>
         </div>

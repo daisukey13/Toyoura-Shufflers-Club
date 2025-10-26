@@ -1,6 +1,6 @@
 // components/MatchRowMobileSafe.tsx
-'use client';
-import { FaTrophy } from 'react-icons/fa';
+"use client";
+import { FaTrophy } from "react-icons/fa";
 
 type Side = {
   name: string;
@@ -19,16 +19,16 @@ export default function MatchRowMobileSafe({
 }: {
   a: Side;
   b: Side;
-  mode: 'singles' | 'teams' | string;
+  mode: "singles" | "teams" | string;
   at: string | Date;
 }) {
   const atStr =
-    typeof at === 'string'
+    typeof at === "string"
       ? new Date(at).toLocaleString()
       : new Date(at).toLocaleString();
 
-  const aWin = typeof a.winner === 'boolean' ? a.winner : a.score > b.score;
-  const bWin = typeof b.winner === 'boolean' ? b.winner : b.score > a.score;
+  const aWin = typeof a.winner === "boolean" ? a.winner : a.score > b.score;
+  const bWin = typeof b.winner === "boolean" ? b.winner : b.score > a.score;
 
   return (
     <div className="rounded-2xl border border-purple-500/30 bg-gray-900/50 p-3 sm:p-4">
@@ -53,16 +53,16 @@ function Participant({ side, win }: { side: Side; win: boolean }) {
   return (
     <div
       className={[
-        'flex items-center gap-3 flex-1 min-w-0 rounded-xl border p-3',
+        "flex items-center gap-3 flex-1 min-w-0 rounded-xl border p-3",
         win
-          ? 'border-emerald-500/40 bg-emerald-500/10'
-          : 'border-gray-600/40 bg-gray-800/30',
-      ].join(' ')}
+          ? "border-emerald-500/40 bg-emerald-500/10"
+          : "border-gray-600/40 bg-gray-800/30",
+      ].join(" ")}
     >
       {/* 画像 */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={side.avatarUrl || '/default-avatar.png'}
+        src={side.avatarUrl || "/default-avatar.png"}
         alt=""
         className="w-9 h-9 rounded-full object-cover shrink-0"
       />
@@ -70,7 +70,9 @@ function Participant({ side, win }: { side: Side; win: boolean }) {
       {/* テキストは min-w-0 を付与してはみ出しを抑制 */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <div className="truncate text-yellow-100 font-semibold">{side.name}</div>
+          <div className="truncate text-yellow-100 font-semibold">
+            {side.name}
+          </div>
           {win && <FaTrophy className="text-emerald-400 shrink-0" />}
         </div>
         <div className="text-xs text-gray-400">
@@ -78,7 +80,9 @@ function Participant({ side, win }: { side: Side; win: boolean }) {
         </div>
       </div>
 
-      <div className={`text-2xl font-bold shrink-0 ${win ? 'text-white' : 'text-gray-300'}`}>
+      <div
+        className={`text-2xl font-bold shrink-0 ${win ? "text-white" : "text-gray-300"}`}
+      >
         {side.score}
       </div>
     </div>

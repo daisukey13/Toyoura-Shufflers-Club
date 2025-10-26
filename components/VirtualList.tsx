@@ -1,6 +1,6 @@
 // components/VirtualList.tsx
 
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback } from "react";
 
 interface VirtualListProps {
   items: any[];
@@ -16,8 +16,8 @@ export default function VirtualList({
   height,
   itemHeight,
   renderItem,
-  className = '',
-  overscan = 3
+  className = "",
+  overscan = 3,
 }: VirtualListProps) {
   const [scrollTop, setScrollTop] = useState(0);
   const scrollElementRef = useRef<HTMLDivElement>(null);
@@ -25,7 +25,7 @@ export default function VirtualList({
   const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
   const endIndex = Math.min(
     items.length - 1,
-    Math.ceil((scrollTop + height) / itemHeight) + overscan
+    Math.ceil((scrollTop + height) / itemHeight) + overscan,
   );
 
   const visibleItems = [];
@@ -34,15 +34,15 @@ export default function VirtualList({
       <div
         key={i}
         style={{
-          position: 'absolute',
+          position: "absolute",
           top: i * itemHeight,
           left: 0,
           right: 0,
-          height: itemHeight
+          height: itemHeight,
         }}
       >
         {renderItem(i)}
-      </div>
+      </div>,
     );
   }
 
@@ -55,8 +55,8 @@ export default function VirtualList({
     const scrollElement = scrollElementRef.current;
     if (!scrollElement) return;
 
-    scrollElement.addEventListener('scroll', handleScroll, { passive: true });
-    return () => scrollElement.removeEventListener('scroll', handleScroll);
+    scrollElement.addEventListener("scroll", handleScroll, { passive: true });
+    return () => scrollElement.removeEventListener("scroll", handleScroll);
   }, [handleScroll]);
 
   return (
@@ -65,7 +65,7 @@ export default function VirtualList({
       className={`relative overflow-auto ${className}`}
       style={{ height }}
     >
-      <div style={{ height: items.length * itemHeight, position: 'relative' }}>
+      <div style={{ height: items.length * itemHeight, position: "relative" }}>
         {visibleItems}
       </div>
     </div>

@@ -1,10 +1,10 @@
 // app/api/my/teams/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type Team = { id: string; name: string };
 type TeamMemberRow = { team_id: string | null };
@@ -49,8 +49,8 @@ export async function GET(_req: NextRequest) {
   const user = userRes?.user;
   if (!user) {
     return NextResponse.json(
-      { ok: false, message: 'Unauthorized' },
-      { status: 401 }
+      { ok: false, message: "Unauthorized" },
+      { status: 401 },
     );
   }
 
@@ -58,9 +58,9 @@ export async function GET(_req: NextRequest) {
   let admin = false;
   try {
     const { data: priv, error: privErr } = await supabase
-      .from('players_private')
-      .select('is_admin')
-      .eq('id', user.id)
+      .from("players_private")
+      .select("is_admin")
+      .eq("id", user.id)
       .maybeSingle();
     if (!privErr && priv) admin = !!(priv as any).is_admin;
   } catch {
@@ -71,16 +71,16 @@ export async function GET(_req: NextRequest) {
   let teamIds: string[] = [];
   try {
     const { data, error } = await supabase
-      .from('team_members')
-      .select('team_id')
-      .eq('player_id', user.id);
+      .from("team_members")
+      .select("team_id")
+      .eq("player_id", user.id);
 
     if (error) throw error;
 
     const rawIds: string[] = [];
     const rows = (data || []) as TeamMemberRow[];
     for (let i = 0; i < rows.length; i++) {
-      const id = rows[i].team_id ? String(rows[i].team_id) : '';
+      const id = rows[i].team_id ? String(rows[i].team_id) : "";
       if (id) rawIds[rawIds.length] = id;
     }
     teamIds = uniqStrings(rawIds);
@@ -96,9 +96,9 @@ export async function GET(_req: NextRequest) {
   if (admin) {
     try {
       const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .order('name', { ascending: true });
+        .from("teams")
+        .select("id, name")
+        .order("name", { ascending: true });
       if (error) throw error;
       teams = (data || []) as Team[];
     } catch {
@@ -110,9 +110,9 @@ export async function GET(_req: NextRequest) {
   if (teams.length === 0 && teamIds.length > 0) {
     try {
       const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .in('id', teamIds);
+        .from("teams")
+        .select("id, name")
+        .in("id", teamIds);
       if (error) throw error;
       teams = (data || []) as Team[];
     } catch {

@@ -1,11 +1,11 @@
 // components/GlobalNavigation.tsx
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import {
   FaHome,
   FaUsers,
@@ -19,17 +19,18 @@ import {
   FaSignOutAlt,
   FaPlus,
   FaIdCard,
-} from 'react-icons/fa';
+} from "react-icons/fa";
 
 export default function GlobalNavigation() {
-  const { user, player, isAdmin, signOut, refreshAuth, loading } = useAuth() as {
-    user?: any;
-    player?: { id: string; handle_name?: string; display_name?: string };
-    isAdmin?: boolean;
-    signOut: () => Promise<void>;
-    refreshAuth: () => Promise<void> | void;
-    loading?: boolean;
-  };
+  const { user, player, isAdmin, signOut, refreshAuth, loading } =
+    useAuth() as {
+      user?: any;
+      player?: { id: string; handle_name?: string; display_name?: string };
+      isAdmin?: boolean;
+      signOut: () => Promise<void>;
+      refreshAuth: () => Promise<void> | void;
+      loading?: boolean;
+    };
 
   const pathname = usePathname();
   const router = useRouter();
@@ -38,14 +39,14 @@ export default function GlobalNavigation() {
 
   // ログインモーダル関連（※ ハンドル名ではなくメールでログインに統一）
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loginError, setLoginError] = useState<string>('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState<string>("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // refreshAuth を安定化して依存警告を回避
   const doRefreshAuth = useCallback(() => {
-    if (typeof refreshAuth === 'function') {
+    if (typeof refreshAuth === "function") {
       return refreshAuth();
     }
   }, [refreshAuth]);
@@ -70,23 +71,23 @@ export default function GlobalNavigation() {
   // モバイルメニュー開閉に合わせて body スクロール制御
   useEffect(() => {
     if (isMobileMenuOpen) {
-      document.body.style.overflow = 'hidden';
+      document.body.style.overflow = "hidden";
     } else {
-      document.body.style.overflow = '';
+      document.body.style.overflow = "";
     }
     return () => {
-      document.body.style.overflow = '';
+      document.body.style.overflow = "";
     };
   }, [isMobileMenuOpen]);
 
   const isActive = (href: string) => {
-    if (href === '/') return pathname === '/';
+    if (href === "/") return pathname === "/";
     return pathname.startsWith(href);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoginError('');
+    setLoginError("");
     setIsLoggingIn(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({
@@ -94,28 +95,28 @@ export default function GlobalNavigation() {
         password: password,
       });
       if (error) {
-        if (error.message?.toLowerCase().includes('invalid login')) {
-          throw new Error('メールまたはパスワードが正しくありません');
+        if (error.message?.toLowerCase().includes("invalid login")) {
+          throw new Error("メールまたはパスワードが正しくありません");
         }
         throw error;
       }
       await doRefreshAuth();
       setShowLoginModal(false);
-      setEmail('');
-      setPassword('');
+      setEmail("");
+      setPassword("");
 
       // ログイン後の遷移（管理者はダッシュボード、一般はマイページ）
       setTimeout(() => {
         if (isAdmin) {
-          router.push('/admin/dashboard');
+          router.push("/admin/dashboard");
         } else if (player?.id) {
           router.push(`/players/${player.id}`);
         } else {
-          router.push('/mypage'); // 最低限のフォールバック
+          router.push("/mypage"); // 最低限のフォールバック
         }
       }, 50);
     } catch (err: any) {
-      setLoginError(err?.message || 'ログインに失敗しました');
+      setLoginError(err?.message || "ログインに失敗しました");
     } finally {
       setIsLoggingIn(false);
     }
@@ -123,14 +124,14 @@ export default function GlobalNavigation() {
 
   const handleLogout = async () => {
     await signOut();
-    router.push('/');
+    router.push("/");
   };
 
   const navItems = [
-    { href: '/', icon: FaHome, label: 'ホーム' },
-    { href: '/players', icon: FaUsers, label: 'プレイヤー' },
-    { href: '/rankings', icon: FaTrophy, label: 'ランキング' },
-    { href: '/matches', icon: FaGamepad, label: '試合' },
+    { href: "/", icon: FaHome, label: "ホーム" },
+    { href: "/players", icon: FaUsers, label: "プレイヤー" },
+    { href: "/rankings", icon: FaTrophy, label: "ランキング" },
+    { href: "/matches", icon: FaGamepad, label: "試合" },
   ];
 
   // ローディング中は描画を抑止（チラつき回避）
@@ -160,8 +161,8 @@ export default function GlobalNavigation() {
                   href={item.href}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
                     isActive(item.href)
-                      ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
-                      : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
+                      ? "bg-purple-600/20 text-purple-400 border border-purple-500/50"
+                      : "text-gray-300 hover:text-white hover:bg-purple-600/10"
                   }`}
                 >
                   <item.icon className="text-lg" />
@@ -174,9 +175,9 @@ export default function GlobalNavigation() {
                 <Link
                   href="/admin/dashboard"
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
-                    pathname.startsWith('/admin')
-                      ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
-                      : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
+                    pathname.startsWith("/admin")
+                      ? "bg-purple-600/20 text-purple-400 border border-purple-500/50"
+                      : "text-gray-300 hover:text-white hover:bg-purple-600/10"
                   }`}
                 >
                   <FaShieldAlt className="text-lg" />
@@ -205,7 +206,9 @@ export default function GlobalNavigation() {
                       <FaUser className="text-white text-sm" />
                     </div>
                     <span className="text-sm font-medium text-gray-300">
-                      {player.handle_name ?? player.display_name ?? 'マイページ'}
+                      {player.handle_name ??
+                        player.display_name ??
+                        "マイページ"}
                     </span>
                   </Link>
 
@@ -257,7 +260,11 @@ export default function GlobalNavigation() {
                 onClick={() => setIsMobileMenuOpen((v) => !v)}
                 className="p-2 text-white hover:bg-purple-600/20 rounded-lg transition-colors"
               >
-                {isMobileMenuOpen ? <FaTimes className="text-2xl" /> : <FaBars className="text-2xl" />}
+                {isMobileMenuOpen ? (
+                  <FaTimes className="text-2xl" />
+                ) : (
+                  <FaBars className="text-2xl" />
+                )}
               </button>
             </div>
           </div>
@@ -274,8 +281,8 @@ export default function GlobalNavigation() {
                       href={item.href}
                       className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                         isActive(item.href)
-                          ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
-                          : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
+                          ? "bg-purple-600/20 text-purple-400 border border-purple-500/50"
+                          : "text-gray-300 hover:text-white hover:bg-purple-600/10"
                       }`}
                       onClick={() => setIsMobileMenuOpen(false)}
                     >
@@ -288,9 +295,9 @@ export default function GlobalNavigation() {
                     <Link
                       href="/admin/dashboard"
                       className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                        pathname.startsWith('/admin')
-                          ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
-                          : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
+                        pathname.startsWith("/admin")
+                          ? "bg-purple-600/20 text-purple-400 border border-purple-500/50"
+                          : "text-gray-300 hover:text-white hover:bg-purple-600/10"
                       }`}
                       onClick={() => setIsMobileMenuOpen(false)}
                     >
@@ -349,7 +356,10 @@ export default function GlobalNavigation() {
       {/* ログインモーダル（メール＋パスワード） */}
       {showLoginModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowLoginModal(false)} />
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowLoginModal(false)}
+          />
           <div className="relative bg-gray-900 rounded-2xl p-8 max-w-md w-full border border-purple-500/30">
             <button
               onClick={() => setShowLoginModal(false)}
@@ -358,7 +368,9 @@ export default function GlobalNavigation() {
               <FaTimes />
             </button>
 
-            <h2 className="text-2xl font-bold text-yellow-100 mb-6 text-center">ログイン</h2>
+            <h2 className="text-2xl font-bold text-yellow-100 mb-6 text-center">
+              ログイン
+            </h2>
 
             <form onSubmit={handleLogin} className="space-y-4">
               {loginError && (
@@ -368,7 +380,10 @@ export default function GlobalNavigation() {
               )}
 
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium text-gray-300 mb-2"
+                >
                   メールアドレス
                 </label>
                 <input
@@ -385,7 +400,10 @@ export default function GlobalNavigation() {
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium text-gray-300 mb-2"
+                >
                   パスワード
                 </label>
                 <input
@@ -406,14 +424,17 @@ export default function GlobalNavigation() {
                 disabled={isLoggingIn}
                 className="w-full bg-gradient-to-r from-purple-600 to-pink-600 py-3 rounded-lg text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:from-purple-700 hover:to-pink-700 transition-all"
               >
-                {isLoggingIn ? 'ログイン中...' : 'ログイン'}
+                {isLoggingIn ? "ログイン中..." : "ログイン"}
               </button>
             </form>
 
             <div className="mt-6 text-center">
               <p className="text-sm text-gray-400">
                 アカウントをお持ちでない方は
-                <Link href="/register" className="text-purple-400 hover:text-purple-300 ml-1">
+                <Link
+                  href="/register"
+                  className="text-purple-400 hover:text-purple-300 ml-1"
+                >
                   新規登録
                 </Link>
               </p>

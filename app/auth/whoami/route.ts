@@ -1,9 +1,9 @@
 // app/auth/whoami/route.ts
-import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-export const dynamic = 'force-dynamic'; // 常に最新の判定
+export const dynamic = "force-dynamic"; // 常に最新の判定
 export const revalidate = 0;
 
 export async function GET() {
@@ -24,21 +24,21 @@ export async function GET() {
               name,
               value,
               ...options,
-              path: options?.path ?? '/',
+              path: options?.path ?? "/",
             });
           },
           remove(name: string, options: CookieOptions) {
             // 削除は maxAge=0 / path=/ を明示
             cookieStore.set({
               name,
-              value: '',
+              value: "",
               ...options,
-              path: options?.path ?? '/',
+              path: options?.path ?? "/",
               maxAge: 0,
             });
           },
         },
-      }
+      },
     );
 
     const {
@@ -47,12 +47,12 @@ export async function GET() {
 
     return NextResponse.json(
       { authenticated: !!user, userId: user?.id ?? null },
-      { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
+      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } },
     );
   } catch (e: any) {
     return NextResponse.json(
       { authenticated: false, userId: null, error: String(e?.message || e) },
-      { status: 500, headers: { 'Cache-Control': 'no-store' } }
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

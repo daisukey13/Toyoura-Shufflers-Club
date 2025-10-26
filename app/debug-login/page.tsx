@@ -1,8 +1,8 @@
 // app/debug-login/page.tsx
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
 
@@ -15,19 +15,20 @@ type PlayerRow = {
 };
 
 export default function DebugLoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [handleName, setHandleName] = useState('');
-  const [message, setMessage] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [handleName, setHandleName] = useState("");
+  const [message, setMessage] = useState("");
 
   // メールアドレスで直接ログイン
   const handleDirectLogin = async () => {
-    setMessage('メールアドレスでログイン中...');
+    setMessage("メールアドレスでログイン中...");
     try {
-      const { data: signInData, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data: signInData, error } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
       if (error) {
         setMessage(`エラー: ${error.message}`);
@@ -36,17 +37,17 @@ export default function DebugLoginPage() {
 
       const user = signInData?.user;
       if (!user) {
-        setMessage('ログイン結果: ユーザー情報が取得できませんでした。');
+        setMessage("ログイン結果: ユーザー情報が取得できませんでした。");
         return;
       }
 
-      setMessage('ログイン成功！ユーザー情報を確認中...');
+      setMessage("ログイン成功！ユーザー情報を確認中...");
 
       // players テーブルの該当行を取得
       const { data: playerData, error: pErr } = await supabase
-        .from('players')
-        .select('id, handle_name, email, is_admin, is_active')
-        .eq('id', user.id)
+        .from("players")
+        .select("id, handle_name, email, is_admin, is_active")
+        .eq("id", user.id)
         .maybeSingle();
 
       if (pErr) {
@@ -59,22 +60,22 @@ export default function DebugLoginPage() {
       if (player) {
         setMessage(
           [
-            'ログイン成功！',
+            "ログイン成功！",
             `ユーザーID: ${user.id}`,
-            `メール: ${user.email ?? '(不明)'}`,
+            `メール: ${user.email ?? "(不明)"}`,
             `ハンドルネーム: ${player.handle_name}`,
-            `管理者: ${player.is_admin ? 'はい' : 'いいえ'}`,
-            `アクティブ: ${player.is_active ? 'はい' : 'いいえ'}`,
-          ].join('\n')
+            `管理者: ${player.is_admin ? "はい" : "いいえ"}`,
+            `アクティブ: ${player.is_active ? "はい" : "いいえ"}`,
+          ].join("\n"),
         );
       } else {
         setMessage(
           [
-            'ログイン成功！',
-            'playersテーブルにユーザー情報がありません',
+            "ログイン成功！",
+            "playersテーブルにユーザー情報がありません",
             `ユーザーID: ${user.id}`,
-            `メール: ${user.email ?? '(不明)'}`
-          ].join('\n')
+            `メール: ${user.email ?? "(不明)"}`,
+          ].join("\n"),
         );
       }
     } catch (err: any) {
@@ -84,12 +85,12 @@ export default function DebugLoginPage() {
 
   // ハンドルネームでユーザー検索
   const handleSearchByHandleName = async () => {
-    setMessage('ハンドルネームで検索中...');
+    setMessage("ハンドルネームで検索中...");
     try {
       const { data, error } = await supabase
-        .from('players')
-        .select('id, handle_name, email, is_admin, is_active')
-        .eq('handle_name', handleName)
+        .from("players")
+        .select("id, handle_name, email, is_admin, is_active")
+        .eq("handle_name", handleName)
         .maybeSingle();
 
       if (error) {
@@ -100,19 +101,19 @@ export default function DebugLoginPage() {
       const row = (data ?? null) as PlayerRow | null;
 
       if (!row) {
-        setMessage('該当ユーザーが見つかりませんでした');
+        setMessage("該当ユーザーが見つかりませんでした");
         return;
       }
 
       setMessage(
         [
-          'ユーザー情報:',
+          "ユーザー情報:",
           `ID: ${row.id}`,
           `ハンドルネーム: ${row.handle_name}`,
-          `メール: ${row.email ?? '(未登録)'}`,
-          `管理者: ${row.is_admin ? 'はい' : 'いいえ'}`,
-          `アクティブ: ${row.is_active ? 'はい' : 'いいえ'}`,
-        ].join('\n')
+          `メール: ${row.email ?? "(未登録)"}`,
+          `管理者: ${row.is_admin ? "はい" : "いいえ"}`,
+          `アクティブ: ${row.is_active ? "はい" : "いいえ"}`,
+        ].join("\n"),
       );
     } catch (err: any) {
       setMessage(`エラー: ${err?.message ?? String(err)}`);
@@ -127,12 +128,14 @@ export default function DebugLoginPage() {
       } = await supabase.auth.getUser();
       if (user) {
         setMessage(
-          ['現在のユーザー:', `ID: ${user.id}`, `メール: ${user.email ?? '(不明)'}`].join(
-            '\n'
-          )
+          [
+            "現在のユーザー:",
+            `ID: ${user.id}`,
+            `メール: ${user.email ?? "(不明)"}`,
+          ].join("\n"),
         );
       } else {
-        setMessage('ログインしていません');
+        setMessage("ログインしていません");
       }
     } catch (err: any) {
       setMessage(`エラー: ${err?.message ?? String(err)}`);
@@ -141,12 +144,12 @@ export default function DebugLoginPage() {
 
   // 管理者一覧を表示
   const showAdmins = async () => {
-    setMessage('管理者を検索中...');
+    setMessage("管理者を検索中...");
     try {
       const { data, error } = await supabase
-        .from('players')
-        .select('id, handle_name, email, is_admin, is_active')
-        .eq('is_admin', true);
+        .from("players")
+        .select("id, handle_name, email, is_admin, is_active")
+        .eq("is_admin", true);
 
       if (error) {
         setMessage(`エラー: ${error.message}`);
@@ -158,12 +161,12 @@ export default function DebugLoginPage() {
         const adminList = admins
           .map(
             (admin) =>
-              `ハンドルネーム: ${admin.handle_name}, メール: ${admin.email ?? '(未登録)'}, アクティブ: ${admin.is_active ? 'はい' : 'いいえ'}`
+              `ハンドルネーム: ${admin.handle_name}, メール: ${admin.email ?? "(未登録)"}, アクティブ: ${admin.is_active ? "はい" : "いいえ"}`,
           )
-          .join('\n');
+          .join("\n");
         setMessage(`管理者一覧:\n${adminList}`);
       } else {
-        setMessage('管理者が見つかりません');
+        setMessage("管理者が見つかりません");
       }
     } catch (err: any) {
       setMessage(`エラー: ${err?.message ?? String(err)}`);
@@ -177,7 +180,9 @@ export default function DebugLoginPage() {
 
         {/* メールアドレスでログイン */}
         <div className="bg-gray-800 rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-bold mb-4">メールアドレスで直接ログイン</h2>
+          <h2 className="text-xl font-bold mb-4">
+            メールアドレスで直接ログイン
+          </h2>
           <div className="space-y-4">
             <input
               type="email"
@@ -204,7 +209,9 @@ export default function DebugLoginPage() {
 
         {/* ハンドルネームで検索 */}
         <div className="bg-gray-800 rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-bold mb-4">ハンドルネームでユーザー検索</h2>
+          <h2 className="text-xl font-bold mb-4">
+            ハンドルネームでユーザー検索
+          </h2>
           <div className="space-y-4">
             <input
               type="text"

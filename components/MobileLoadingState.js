@@ -1,14 +1,14 @@
 // components/MobileLoadingState.js
 
-import { FaSync } from 'react-icons/fa';
+import { FaSync } from "react-icons/fa";
 
 export function MobileLoadingState({
   loading,
   error,
   retrying,
   onRetry,
-  emptyMessage = 'データがありません',
-  dataLength = 0
+  emptyMessage = "データがありません",
+  dataLength = 0,
 }) {
   if (loading && !retrying) {
     return (
