@@ -1,152 +1,215 @@
 // app/api/matches/[id]/report/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
+import { createClient as createServerSupabase } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/server';
 
+/* ========= JSON ヘルパー ========= */
+type Json = Record<string, any>;
+const json = (obj: Json, init?: number | ResponseInit) =>
+  new Response(JSON.stringify(obj), {
+    status: typeof init === 'number' ? init : (init as ResponseInit | undefined)?.status ?? 200,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    ...(typeof init === 'object' ? (init as ResponseInit) : {}),
+  });
+
+/* ========= メイン処理 ========= */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient();
-  const matchId = params.id;
+  /* --- Reporter 判定（SSR Auth or SYSTEM_REPORTER_ID） --- */
+  const supaSSR = createServerSupabase();
+  const {
+    data: { user },
+  } = await supaSSR.auth.getUser();
 
-  // 受信ボディ
-  const body = await req.json().catch(() => null) as {
-    winner_id?: string;
-    loser_id?: string;
-    loser_score?: number;
-    a_id?: string; // 画面側が分かっているときだけ送る（任意）
-    b_id?: string;
-  } | null;
-
-  if (!body?.winner_id || !body?.loser_id || typeof body.loser_score !== 'number') {
-    return NextResponse.json(
-      { error: 'invalid body: require winner_id, loser_id, loser_score(number)' },
-      { status: 400 }
-    );
-  }
-
-  // 試合取得
-  const { data: m, error: me } = await supabase
-    .from('matches')
-    .select('*')
-    .eq('id', matchId)
-    .single();
-
-  if (me || !m) {
-    return NextResponse.json({ error: 'match not found' }, { status: 404 });
-  }
-
-  // point cap 取得（大会があれば優先）
-  let pointCap = 15;
-  if (m.tournament_id) {
-    const { data: t } = await supabase
-      .from('tournaments')
-      .select('point_cap')
-      .eq('id', m.tournament_id)
-      .single();
-    if (t?.point_cap && Number.isFinite(t.point_cap)) pointCap = Number(t.point_cap);
-  }
-
-  // 敗者スコアを安全化
-  let loserScore = Math.floor(Number(body.loser_score));
-  if (!Number.isFinite(loserScore) || loserScore < 0) loserScore = 0;
-  if (loserScore >= pointCap) loserScore = pointCap - 1;
-
-  // モード
-  const mode: 'singles' | 'teams' = m.mode === 'teams' ? 'teams' : 'singles';
-
-  // A/B の ID を決定（matches に無ければ body の a_id / b_id で補完）
-  const aOnMatch =
-    mode === 'singles'
-      ? (m as any).player_a_id ?? body.a_id
-      : (m as any).team_a_id ?? body.a_id;
-
-  const bOnMatch =
-    mode === 'singles'
-      ? (m as any).player_b_id ?? body.b_id
-      : (m as any).team_b_id ?? body.b_id;
-
-  if (!aOnMatch || !bOnMatch) {
-    // ここで止める理由は「A/B どちらか欠けていると winner/loser の正当性確認ができない」ため
-    return NextResponse.json(
+  const reporterId = user?.id ?? process.env.SYSTEM_REPORTER_ID ?? null;
+  if (!reporterId) {
+    return json(
       {
-        error: 'entries incomplete',
-        detail: `match ${matchId} needs both A and B ids`,
-        need: { a_id_missing: !aOnMatch, b_id_missing: !bOnMatch },
+        error: 'missing reporter_id',
+        detail:
+          'ログインユーザーがいないため reporter_id を決定できません。環境変数 SYSTEM_REPORTER_ID に既存ユーザーのUUIDを設定してください。',
       },
-      { status: 400 }
+      401
     );
   }
 
-  // winner/loser が A/B に含まれているか検証
-  const idsOnCard = new Set([String(aOnMatch), String(bOnMatch)]);
-  if (!idsOnCard.has(String(body.winner_id)) || !idsOnCard.has(String(body.loser_id))) {
-    return NextResponse.json(
-      {
-        error: 'winner/loser not on this match card',
-        detail: { aOnMatch, bOnMatch, received: { winner_id: body.winner_id, loser_id: body.loser_id } },
-      },
-      { status: 400 }
-    );
-  }
-  if (body.winner_id === body.loser_id) {
-    return NextResponse.json({ error: 'winner and loser must be different' }, { status: 400 });
-  }
+  /* --- DB操作は Service Role で（RLS回避） --- */
+  const db = createServiceClient();
 
-  // 更新パッチ（足りない A/B はここで補完して保存）
-  const patch: any = {
-    winner_id: body.winner_id,
-    loser_id: body.loser_id,
-    winner_score: pointCap,
-    loser_score: loserScore,
-    status: 'finalized', // 制約: matches_status_check が 'pending' | 'finalized' を許容
-    updated_at: new Date().toISOString(),
-  };
-
-  if (mode === 'singles') {
-    if (!(m as any).player_a_id) patch.player_a_id = aOnMatch;
-    if (!(m as any).player_b_id) patch.player_b_id = bOnMatch;
-  } else {
-    // もし teams モードに移行したらこちら
-    if (!(m as any).team_a_id) patch.team_a_id = aOnMatch;
-    if (!(m as any).team_b_id) patch.team_b_id = bOnMatch;
-  }
-
-  const { error: ue } = await supabase.from('matches').update(patch).eq('id', matchId);
-  if (ue) {
-    // ここで DB 制約や RLS で落ちた場合に詳細を返す
-    return NextResponse.json(
-      { error: 'update failed', detail: ue.message, patch, matchId },
-      { status: 400 }
-    );
-  }
-
-  // 次ラウンドへ勝者を流し込み（存在する場合のみ）
+  /* --- 入力チェック --- */
+  let body: { winner_id?: string; loser_id?: string; loser_score?: number };
   try {
-    if (m.tournament_id && Number.isFinite(m.round) && Number.isFinite(m.match_no)) {
-      const nextRound = Number(m.round) + 1;
-      const nextNo = Math.ceil(Number(m.match_no) / 2);
-      const goesToA = (Number(m.match_no) % 2) === 1; // 奇数→A, 偶数→B
-
-      const { data: nextMatch } = await supabase
-        .from('matches')
-        .select('id, mode, player_a_id, player_b_id')
-        .eq('tournament_id', m.tournament_id)
-        .eq('round', nextRound)
-        .eq('match_no', nextNo)
-        .single();
-
-      if (nextMatch?.id) {
-        if ((nextMatch as any).mode === 'teams') {
-          // 将来 teams 対応に備えた雛形（今回は singles 想定）
-          const payload: any = goesToA ? { team_a_id: body.winner_id } : { team_b_id: body.winner_id };
-          await supabase.from('matches').update(payload).eq('id', nextMatch.id);
-        } else {
-          const payload: any = goesToA ? { player_a_id: body.winner_id } : { player_b_id: body.winner_id };
-          await supabase.from('matches').update(payload).eq('id', nextMatch.id);
-        }
-      }
-    }
+    body = await req.json();
   } catch {
-    // R2 未生成などは無視
+    return json({ error: 'bad request', detail: 'JSON body required' }, 400);
+  }
+  const { winner_id, loser_id, loser_score } = body ?? {};
+  if (!winner_id || !loser_id || typeof loser_score !== 'number') {
+    return json(
+      { error: 'bad request', detail: 'winner_id, loser_id, loser_score は必須です' },
+      400
+    );
   }
 
-  return NextResponse.json({ ok: true });
+  const matchId = params.id;
+  const nowIso = new Date().toISOString();
+
+  /* --- 試合取得 --- */
+  const { data: match, error: matchErr } = await db
+    .from('matches')
+    .select(
+      `
+      id, tournament_id, tournament_name,
+      round, match_no,
+      status, mode, is_tournament,
+      a_id, b_id,
+      player_a_id, player_b_id
+    `
+    )
+    .eq('id', matchId)
+    .maybeSingle();
+
+  if (matchErr) return json({ error: 'fetch failed', detail: matchErr.message }, 500);
+  if (!match) return json({ error: 'not found', detail: 'match not found' }, 404);
+  if (match.status === 'finalized') return json({ ok: true, message: 'already finalized' }, 200);
+  if (!match.a_id || !match.b_id) {
+    return json(
+      { error: 'missing sides', detail: `a_id/b_id が未設定です（match_id=${match.id}）` },
+      409
+    );
+  }
+
+  /* --- 大会情報（point_cap / name） --- */
+  let pointCap = 15;
+  let tournamentName: string | null = match.tournament_name ?? null;
+  if (match.tournament_id) {
+    const { data: t, error: tErr } = await db
+      .from('tournaments')
+      .select('id, name, point_cap, size')
+      .eq('id', match.tournament_id)
+      .maybeSingle();
+    if (tErr) return json({ error: 'fetch failed', detail: tErr.message }, 500);
+    if (t) {
+      pointCap = Number.isFinite(t.point_cap) ? Number(t.point_cap) : 15;
+      tournamentName ??= t.name ?? null;
+    }
+  }
+
+  /* --- match_entries 補完 --- */
+  const { data: entries, error: entErr } = await db
+    .from('match_entries')
+    .select('id, match_id, side, player_id')
+    .eq('match_id', matchId);
+
+  if (entErr)
+    return json({ error: 'update failed', detail: `entries fetch failed: ${entErr.message}` }, 500);
+
+  const needA = !(entries ?? []).some((e) => e.side === 'a');
+  const needB = !(entries ?? []).some((e) => e.side === 'b');
+  if (needA || needB) {
+    const rows: Array<{ match_id: string; side: 'a' | 'b'; player_id: string }> = [];
+    if (needA) rows.push({ match_id: matchId, side: 'a', player_id: match.a_id });
+    if (needB) rows.push({ match_id: matchId, side: 'b', player_id: match.b_id });
+    const { error: insErr } = await db.from('match_entries').insert(rows);
+    if (insErr)
+      return json(
+        { error: 'update failed', detail: `match_entries の補完に失敗: ${insErr.message}` },
+        500
+      );
+  }
+
+  /* --- 試合確定 --- */
+  const patch = {
+    winner_id,
+    loser_id,
+    winner_score: pointCap,
+    loser_score: Math.max(0, Math.floor(loser_score)),
+    status: 'finalized' as const,
+    updated_at: nowIso,
+    player_a_id: match.a_id,
+    player_b_id: match.b_id,
+    is_tournament: true,
+    tournament_name: tournamentName,
+    reporter_id: reporterId,
+    ...(match.tournament_id ? { tournament_id: match.tournament_id } : {}),
+  };
+  const { error: updErr } = await db.from('matches').update(patch).eq('id', matchId);
+  if (updErr) return json({ error: 'update failed', detail: updErr.message, patch, matchId }, 500);
+
+  /* --- R1 → R2 Final 自動生成（型ゆれ対応・安全版） --- */
+  const roundStr = String(match.round ?? '').trim().toLowerCase();
+  const matchStr = String(match.match_no ?? '').trim().toLowerCase();
+  const isRound1 = ['1', 'r1'].includes(roundStr);
+  const isMatch1 = ['1', 'm1'].includes(matchStr);
+
+  if (isRound1 && match.tournament_id) {
+    const slotSide: 'a_id' | 'b_id' = isMatch1 ? 'a_id' : 'b_id';
+    const { data: final, error: finalSelErr } = await db
+      .from('matches')
+      .select('id, a_id, b_id')
+      .eq('tournament_id', match.tournament_id)
+      .in('round', [2, '2'])
+      .in('match_no', [1, '1'])
+      .maybeSingle();
+
+    if (finalSelErr)
+      return json({
+        ok: true,
+        match_id: matchId,
+        warning: 'final select failed',
+        detail: finalSelErr.message,
+      });
+
+    if (!final) {
+      const newFinal = {
+        mode: match.mode ?? 'singles',
+        tournament_id: match.tournament_id,
+        tournament_name: tournamentName,
+        is_tournament: true,
+        status: 'scheduled' as const,
+        round: '2',
+        match_no: '1',
+        a_id: slotSide === 'a_id' ? winner_id : null,
+        b_id: slotSide === 'b_id' ? winner_id : null,
+        winner_type: 'player',
+        winner_score: pointCap,
+        loser_score: null,
+        reporter_id: reporterId,
+        played_at: nowIso,
+        match_date: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+      const { error: insFinalErr } = await db.from('matches').insert([newFinal]);
+      if (insFinalErr)
+        return json({
+          ok: true,
+          match_id: matchId,
+          warning: 'final create failed',
+          detail: insFinalErr.message,
+        });
+    } else {
+      const set: Record<'a_id' | 'b_id', string | null> = { a_id: final.a_id, b_id: final.b_id };
+      set[slotSide] = winner_id;
+      const { error: updFinalErr } = await db
+        .from('matches')
+        .update({
+          ...set,
+          is_tournament: true,
+          tournament_name: tournamentName,
+          reporter_id: reporterId,
+          updated_at: nowIso,
+        })
+        .eq('id', final.id);
+      if (updFinalErr)
+        return json({
+          ok: true,
+          match_id: matchId,
+          warning: 'final update failed',
+          detail: updFinalErr.message,
+        });
+    }
+  }
+
+  /* --- 完了 --- */
+  return json({ ok: true, match_id: matchId });
 }
