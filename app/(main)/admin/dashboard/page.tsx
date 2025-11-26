@@ -19,6 +19,7 @@ import {
   FaEdit,
   FaEye,
   FaEyeSlash,
+  FaListUl, // ★ 大会インデックス用
 } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
@@ -45,6 +46,14 @@ type PlayerFlagRow = { is_admin: boolean | null };
 type PlayerStatRow = { id: string; is_active: boolean | null };
 type MatchRow = { id: string; created_at: string | null };
 
+// ★ 大会の一覧用
+type TournamentRow = {
+  id: string;
+  name: string | null;
+  tournament_date: string | null;
+  mode: string | null;
+};
+
 export default function AdminDashboard() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -65,7 +74,6 @@ export default function AdminDashboard() {
   // ★ ランキング設定（API 連携版）
   const [config, setConfig] = useState<RankingConfig>({
     k_factor: 32,
-    // 既存UIのレンジに合わせた初期値（localStorageではなくAPIへ保存）
     score_diff_multiplier: 0.05,
     handicap_diff_multiplier: 0.02,
     win_threshold_handicap_change: 10,
@@ -76,6 +84,11 @@ export default function AdminDashboard() {
   // お知らせ
   const [notices, setNotices] = useState<Notice[]>([]);
   const [nLoading, setNLoading] = useState(true);
+
+  // ★ 大会一覧
+  const [tournaments, setTournaments] = useState<TournamentRow[]>([]);
+  const [tLoading, setTLoading] = useState(true);
+  const [tError, setTError] = useState<string | null>(null);
 
   /** サーバ側Cookieベースでログインかを確認 → その後に管理者判定 */
   useEffect(() => {
@@ -119,8 +132,9 @@ export default function AdminDashboard() {
 
         setAuthz('ok');
         void fetchStats();
-        void loadConfig();     // ← ★ APIから設定取得
+        void loadConfig();
         void fetchNotices();
+        void fetchTournaments();
       } catch {
         setAuthz('no');
       }
@@ -173,6 +187,26 @@ export default function AdminDashboard() {
     }
   };
 
+  /** ★ 大会一覧取得（直近10件くらい） */
+  const fetchTournaments = async () => {
+    setTLoading(true);
+    setTError(null);
+    try {
+      const { data, error } = await (supabase.from('tournaments') as any)
+        .select('id,name,tournament_date,mode')
+        .order('tournament_date', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+      setTournaments((data ?? []) as TournamentRow[]);
+    } catch (e: any) {
+      console.error('[admin/dashboard] tournaments fetch error:', e);
+      setTError('大会一覧の取得に失敗しました。');
+    } finally {
+      setTLoading(false);
+    }
+  };
+
   /** 公開トグル */
   const togglePublish = async (target: Notice) => {
     const next = !target.is_published;
@@ -196,13 +230,11 @@ export default function AdminDashboard() {
      ★ ランキング設定の API 連携
      ============================== */
 
-  // APIから設定を読み込む
   const loadConfig = async () => {
     try {
       const r = await fetch('/api/admin/ranking-config', { cache: 'no-store' });
       const j = await r.json();
       if (r.ok && j?.ok && j.config) {
-        // 既存UIのスライダー範囲に軽くクランプ（安全策）
         const clamp = (v: number, min: number, max: number) =>
           Math.min(max, Math.max(min, Number(v)));
         const cfg = j.config as RankingConfig;
@@ -220,7 +252,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // 設定を保存（PUT）— API側で is_admin を二重チェック
   const saveConfig = async () => {
     try {
       setSaving(true);
@@ -267,9 +298,8 @@ export default function AdminDashboard() {
     if (!den || den <= 0) return 0;
     const v = (num / den) * 100;
     return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
-    };
+  };
 
-  // 認証中
   if (authz === 'checking') {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
@@ -278,7 +308,6 @@ export default function AdminDashboard() {
     );
   }
 
-  // 権限なし
   if (authz === 'no') {
     return (
       <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
@@ -287,7 +316,6 @@ export default function AdminDashboard() {
     );
   }
 
-  // --- 管理者のみ表示 ---
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
       <div className="container mx-auto px-4 py-8">
@@ -351,7 +379,10 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full" style={{ width: '100%' }} />
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full"
+                    style={{ width: '100%' }}
+                  />
                 </div>
               </div>
 
@@ -384,7 +415,10 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full" style={{ width: '100%' }} />
+                  <div
+                    className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full"
+                    style={{ width: '100%' }}
+                  />
                 </div>
               </div>
 
@@ -407,8 +441,83 @@ export default function AdminDashboard() {
               </div>
             </div>
 
+            {/* ★ 大会クイック操作（最小追加・UIトーン維持） */}
+            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-2xl font-bold flex items-center gap-3">
+                  <FaTrophy className="text-yellow-300" />
+                  大会クイック操作
+                </h2>
+                <Link
+                  href="/admin/tournaments"
+                  className="inline-flex items-center gap-2 px-3 py-1 text-xs rounded-full border border-purple-500/40 hover:bg-purple-900/20 transition-colors"
+                >
+                  <FaListUl />
+                  大会インデックスへ
+                </Link>
+              </div>
+              <p className="text-xs text-gray-400 mb-4">
+                ここから「大会一覧 → ブロック管理 → 試合登録 → 公開確認」まで迷わず移動できます。
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Link
+                  href="/admin/tournaments"
+                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl group-hover:shadow-lg group-hover:shadow-emerald-500/20 transition-all">
+                      <FaListUl className="text-xl text-white" />
+                    </div>
+                    <div>
+                      <div className="font-semibold">大会一覧・新規作成</div>
+                      <div className="text-xs text-gray-400">
+                        大会作成/編集、リーグブロック作成へ
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/matches"
+                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl group-hover:shadow-lg group-hover:shadow-yellow-500/20 transition-all">
+                      <FaGamepad className="text-xl text-white" />
+                    </div>
+                    <div>
+                      <div className="font-semibold">試合結果を登録</div>
+                      <div className="text-xs text-gray-400">
+                        大会紐付け含めて結果入力（既存UI）
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/tournaments"
+                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl group-hover:shadow-lg group-hover:shadow-pink-500/20 transition-all">
+                      <FaEye className="text-xl text-white" />
+                    </div>
+                    <div>
+                      <div className="font-semibold">公開ページ確認</div>
+                      <div className="text-xs text-gray-400">
+                        一般公開側の大会/リーグ表示チェック
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              </div>
+            </div>
+
             {/* 管理リンク */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               <Link
                 href="/players"
                 className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
@@ -447,6 +556,122 @@ export default function AdminDashboard() {
                 </div>
                 <p className="text-gray-400">お知らせの作成・公開設定・編集・削除</p>
               </Link>
+
+              <Link
+                href="/admin/tournaments"
+                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
+              >
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="p-4 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl group-hover:shadow-lg group-hover:shadow-emerald-500/30 transition-all">
+                    <FaListUl className="text-3xl text-white" />
+                  </div>
+                  <h3 className="text-2xl font-bold">大会管理</h3>
+                </div>
+                <p className="text-gray-400">
+                  大会インデックスからリーグブロックの作成・確認ができます
+                </p>
+              </Link>
+            </div>
+
+            {/* ★ 最近の大会一覧（ブロック管理 & 公開ページリンク + 試合登録リンク） */}
+            <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-2xl font-bold flex items-center gap-3">
+                  <FaTrophy className="text-yellow-300" />
+                  最近の大会一覧
+                </h2>
+                <Link
+                  href="/admin/tournaments"
+                  className="inline-flex items-center gap-2 px-3 py-1 text-xs rounded-full border border-purple-500/40 hover:bg-purple-900/20 transition-colors"
+                >
+                  <FaListUl />
+                  大会インデックスへ
+                </Link>
+              </div>
+              <p className="text-xs text-gray-400 mb-3">
+                「ブロック管理」→リーグブロック作成・集計、「試合登録」→大会を紐付けて結果追加、「公開リーグ」→一般公開ページ確認。
+              </p>
+
+              {tLoading ? (
+                <div className="text-sm text-gray-400">読み込み中...</div>
+              ) : tError ? (
+                <div className="text-sm text-red-400">{tError}</div>
+              ) : tournaments.length === 0 ? (
+                <div className="text-sm text-gray-400">まだ大会が登録されていません。</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="bg-gray-800 text-gray-100 text-xs">
+                        <th className="border border-gray-700 px-2 py-1 text-left">大会名</th>
+                        <th className="border border-gray-700 px-2 py-1 text-left">開催日</th>
+                        <th className="border border-gray-700 px-2 py-1 text-left">形式</th>
+                        <th className="border border-gray-700 px-2 py-1 text-left">管理</th>
+                        <th className="border border-gray-700 px-2 py-1 text-left">試合登録</th>
+                        <th className="border border-gray-700 px-2 py-1 text-left">公開リーグ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tournaments.map((t) => {
+                        const dateLabel = t.tournament_date
+                          ? new Date(t.tournament_date).toLocaleDateString('ja-JP', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                            })
+                          : '-';
+
+                        const modeLabel =
+                          t.mode === 'player' || t.mode === 'singles'
+                            ? '個人戦'
+                            : t.mode === 'teams'
+                            ? 'チーム戦'
+                            : t.mode || '-';
+
+                        return (
+                          <tr key={t.id} className="hover:bg-gray-800/60">
+                            <td className="border border-gray-700 px-2 py-1">
+                              {t.name || '(名称未設定)'}
+                            </td>
+                            <td className="border border-gray-700 px-2 py-1">{dateLabel}</td>
+                            <td className="border border-gray-700 px-2 py-1">{modeLabel}</td>
+
+                            <td className="border border-gray-700 px-2 py-1">
+                              <Link
+                                href={`/admin/tournaments/${t.id}/league`}
+                                className="text-xs text-blue-300 underline hover:text-blue-200"
+                              >
+                                ブロック管理
+                              </Link>
+                            </td>
+
+                            {/* ★ 安全：/matches は既存。クエリは未対応でも壊れない */}
+                            <td className="border border-gray-700 px-2 py-1">
+                              <Link
+                                href={`/matches?tournament_id=${encodeURIComponent(t.id)}`}
+                                className="text-xs text-yellow-300 underline hover:text-yellow-200"
+                              >
+                                この大会で登録
+                              </Link>
+                            </td>
+
+                            <td className="border border-gray-700 px-2 py-1">
+                              <Link
+                                href={`/tournaments/${t.id}/league/results`}
+                                className="text-xs text-green-300 underline hover:text-green-200"
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                公開リーグを開く
+                              </Link>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             {/* 最新のお知らせ（管理ウィジェット） */}

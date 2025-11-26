@@ -19,13 +19,13 @@ type OrderBy =
 
 type BaseOptions = {
   tableName: string;
-  select?: string;                  // default: '*'
-  orderBy?: OrderBy;                // 複数列候補を順に試す
+  select?: string; // default: '*'
+  orderBy?: OrderBy; // 複数列候補を順に試す
   limit?: number;
-  retryCount?: number;              // default: 3
-  retryDelay?: number;              // default: 1000 (指数バックオフ気味に使用)
-  enabled?: boolean;                // default: true
-  requireAuth?: boolean;            // default: true（読み取り系ラッパでは false を指定）
+  retryCount?: number; // default: 3
+  retryDelay?: number; // default: 1000 (指数バックオフ気味に使用)
+  enabled?: boolean; // default: true
+  requireAuth?: boolean; // default: true（読み取り系ラッパでは false を指定）
   queryParams?: Record<string, string>; // 追加クエリ（eq系など）
 };
 
@@ -214,20 +214,145 @@ export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: bo
   return { players: filtered, loading, error, retrying, refetch };
 }
 
+/* ===== ここから: match_details の不足フィールドを players で補完する最小パッチ ===== */
+
+type PlayerLite = { id: string; ranking_points: number | null; handicap: number | null };
+
+async function fetchPlayersLite(playerIds: string[], requireAuth: boolean) {
+  const token = await getAccessToken(requireAuth);
+  if (requireAuth && !token) throw new Error('認証トークンが見つかりません（ログインが必要です）');
+
+  // REST の in は "..." で囲うのが安全
+  const inPlayers = playerIds.map((id) => `"${id}"`).join(',');
+  const url =
+    `${SUPABASE_URL}/rest/v1/players` +
+    `?id=in.(${inPlayers})&select=id,ranking_points,handicap`;
+
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    // 補完に失敗しても一覧自体は出したいので、呼び元で握りつぶす想定
+    const t = await res.text();
+    throw new Error(`players fetch failed: ${t}`);
+  }
+
+  const rows = (await res.json()) as PlayerLite[];
+  const map = new Map<string, PlayerLite>();
+  (rows ?? []).forEach((p) => map.set(String(p.id), p));
+  return map;
+}
+
 export function useFetchMatchesData(
   limit?: number,
   opts?: { enabled?: boolean; requireAuth?: boolean }
 ) {
-  const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
+  const requireAuth = opts?.requireAuth ?? false;
+
+  const {
+    data: rawMatches,
+    loading,
+    error,
+    retrying,
+    refetch,
+  } = useFetchSupabaseData({
     tableName: 'match_details', // VIEW（読み取り専用）
     select: '*',
     orderBy: { columns: ['match_date', 'created_at', 'id'], ascending: false }, // 列が無ければ自動で次候補/順不同へ
     limit,
     enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
+    requireAuth, // 公開閲覧を許容
   });
 
-  return { matches: data, loading, error, retrying, refetch };
+  // 表示用（補完後）データ
+  const [matches, setMatches] = useState<any[]>([]);
+
+  useEffect(() => {
+    setMatches(rawMatches as any[]);
+  }, [rawMatches]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const arr = (rawMatches as any[]) ?? [];
+      if (arr.length === 0) return;
+
+      // singles の RP/HC が穴あきかチェック（teams は除外）
+      const needPlayerIds = new Set<string>();
+
+      const isNil = (v: any) => v === null || v === undefined;
+
+      for (const m of arr) {
+        const mode = m?.mode ?? null;
+        const isTeams = mode === 'teams' || !!m?.winner_team_id || !!m?.loser_team_id;
+        if (isTeams) continue;
+
+        const wid = m?.winner_id ? String(m.winner_id) : '';
+        const lid = m?.loser_id ? String(m.loser_id) : '';
+        if (!wid || !lid) continue;
+
+        // match_details が RP/HC を返していない (= null) 場合に補完
+        if (isNil(m?.winner_current_points) || isNil(m?.winner_current_handicap)) needPlayerIds.add(wid);
+        if (isNil(m?.loser_current_points) || isNil(m?.loser_current_handicap)) needPlayerIds.add(lid);
+      }
+
+      const ids = Array.from(needPlayerIds);
+      if (ids.length === 0) return; // 補完不要
+
+      try {
+        const pmap = await fetchPlayersLite(ids, requireAuth);
+        if (cancelled) return;
+
+        const next = arr.map((m) => {
+          const mode = m?.mode ?? null;
+          const isTeams = mode === 'teams' || !!m?.winner_team_id || !!m?.loser_team_id;
+          if (isTeams) return m;
+
+          const wid = m?.winner_id ? String(m.winner_id) : '';
+          const lid = m?.loser_id ? String(m.loser_id) : '';
+          if (!wid || !lid) return m;
+
+          const wp = pmap.get(wid);
+          const lp = pmap.get(lid);
+
+          // 既に入っている値は尊重し、null のときだけ埋める
+          return {
+            ...m,
+            winner_current_points: isNil(m?.winner_current_points)
+              ? (wp?.ranking_points ?? null)
+              : m.winner_current_points,
+            winner_current_handicap: isNil(m?.winner_current_handicap)
+              ? (wp?.handicap ?? null)
+              : m.winner_current_handicap,
+            loser_current_points: isNil(m?.loser_current_points)
+              ? (lp?.ranking_points ?? null)
+              : m.loser_current_points,
+            loser_current_handicap: isNil(m?.loser_current_handicap)
+              ? (lp?.handicap ?? null)
+              : m.loser_current_handicap,
+          };
+        });
+
+        setMatches(next);
+      } catch {
+        // 補完失敗しても一覧は出す（何もしない）
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rawMatches, requireAuth]);
+
+  return { matches, loading, error, retrying, refetch };
 }
 
 /** チームランキング（team_rankings VIEW） */
@@ -256,8 +381,7 @@ export function useTeamRankings(opts?: {
 
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData<TeamRankingRow>({
     tableName: 'team_rankings',
-    select:
-      'id,name,team_size,avg_rp,avg_hc,played,wins,losses,win_pct,last_match_at',
+    select: 'id,name,team_size,avg_rp,avg_hc,played,wins,losses,win_pct,last_match_at',
     orderBy: { column: orderCol, ascending: asc },
     limit: opts?.limit,
     enabled: opts?.enabled ?? true,
@@ -411,11 +535,6 @@ export async function updatePlayer(playerId: string, updates: any) {
   }
 }
 
-/**
- * 試合作成: 書き込みは `matches` テーブルへ
- * - 必須カラム（例: reporter_id / registered_by など）は呼び出し側でセットしてください
- * - RLS 例: with check (reporter_id = auth.uid()) or (registered_by = auth.uid())
- */
 export async function createMatch(matchData: any) {
   try {
     const supabase = createClient();

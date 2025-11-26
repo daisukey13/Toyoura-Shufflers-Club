@@ -22,13 +22,15 @@ import {
   FaUser,
 } from 'react-icons/fa';
 import Link from 'next/link';
-import { useFetchMatchesData as useMatchesData } from '@/lib/hooks/useFetchSupabaseData';
+import { useFetchMatchesData as useMatchesData } from '@/lib/hooks/useFetchMatchesData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
+import { useRouter } from 'next/navigation';
+
 
 // 仮想スクロール（大画面＆件数多い時のみ使用）
 const VirtualList = lazy(() => import('@/components/VirtualList'));
 
-/* ─────────────── REST (チームメンバー取得に使用) ─────────────── */
+/* ─────────────── REST (チームメンバー取得/プレイヤー補完に使用) ─────────────── */
 const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 async function restGet<T = any>(path: string) {
@@ -101,12 +103,23 @@ interface MatchDetails {
   tournament_name?: string | null;
   venue?: string | null;
   notes?: string | null;
+
+  // （ビュー側が別名で返す可能性に備えて any で拾えるようにする）
+  [key: string]: any;
 }
 
 type MemberProfile = {
   id: string;
   handle_name: string;
   avatar_url?: string | null;
+};
+
+type PlayerLite = {
+  id: string;
+  handle_name: string;
+  avatar_url?: string | null;
+  ranking_points?: number | null;
+  handicap?: number | null;
 };
 
 /* 画像の遅延読み込み（next/image を使わず最軽量） */
@@ -131,6 +144,22 @@ const LazyImage = ({
     }}
   />
 );
+
+/* ─────────────── 値のフォールバック（ビューの列名揺れ対策） ─────────────── */
+function pickNumber(m: any, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = m?.[k];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+function pickString(m: any, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = m?.[k];
+    if (typeof v === 'string' && v.trim() !== '') return v;
+  }
+  return null;
+}
 
 /* ─────────────── 共通UI ─────────────── */
 
@@ -220,26 +249,86 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
 
 /* ─────────────── 個人戦カード ─────────────── */
 
-const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
+const SinglesCard = memo(function SinglesCard({
+  m,
+  playersById,
+}: {
+  m: MatchDetails;
+  playersById: Record<string, PlayerLite>;
+}) {
   const loserScore = m.loser_score ?? 0;
   const scoreDiff = 15 - loserScore;
 
-  const wAvatar = m.winner_avatar ?? m.winner_avatar_url;
-  const lAvatar = m.loser_avatar ?? m.loser_avatar_url;
+  const wid = m.winner_id ?? '';
+  const lid = m.loser_id ?? '';
+
+  // ✅ ビューが返さなくなっても players から補完
+  const wProfile = wid ? playersById[wid] : undefined;
+  const lProfile = lid ? playersById[lid] : undefined;
+
+  const wName =
+    m.winner_name ??
+    pickString(m, ['winner_handle_name', 'winner_player_name']) ??
+    wProfile?.handle_name ??
+    '';
+  const lName =
+    m.loser_name ??
+    pickString(m, ['loser_handle_name', 'loser_player_name']) ??
+    lProfile?.handle_name ??
+    '';
+
+  const wAvatar =
+    m.winner_avatar ??
+    m.winner_avatar_url ??
+    pickString(m, ['winner_avatar_url', 'winner_avatar']) ??
+    wProfile?.avatar_url ??
+    null;
+
+  const lAvatar =
+    m.loser_avatar ??
+    m.loser_avatar_url ??
+    pickString(m, ['loser_avatar_url', 'loser_avatar']) ??
+    lProfile?.avatar_url ??
+    null;
+
+  const wRP =
+    m.winner_current_points ??
+    pickNumber(m, ['winner_ranking_points', 'winner_points', 'winner_rp']) ??
+    wProfile?.ranking_points ??
+    0;
+
+  const wHC =
+    m.winner_current_handicap ??
+    pickNumber(m, ['winner_handicap', 'winner_hc']) ??
+    wProfile?.handicap ??
+    0;
+
+  const lRP =
+    m.loser_current_points ??
+    pickNumber(m, ['loser_ranking_points', 'loser_points', 'loser_rp']) ??
+    lProfile?.ranking_points ??
+    0;
+
+  const lHC =
+    m.loser_current_handicap ??
+    pickNumber(m, ['loser_handicap', 'loser_hc']) ??
+    lProfile?.handicap ??
+    0;
+
+  const wDelta =
+    m.winner_points_change ??
+    pickNumber(m, ['winner_points_delta', 'winner_change']) ??
+    0;
+
+  const lDelta =
+    m.loser_points_change ??
+    pickNumber(m, ['loser_points_delta', 'loser_change']) ??
+    0;
 
   const isUpset = useMemo(() => {
-    const wp = m.winner_current_points ?? null;
-    const lp = m.loser_current_points ?? null;
-    const wh = m.winner_current_handicap ?? null;
-    const lh = m.loser_current_handicap ?? null;
-    if (wp == null || lp == null || wh == null || lh == null) return false;
-    return wp < lp - 100 || wh > lh + 5;
-  }, [
-    m.winner_current_points,
-    m.loser_current_points,
-    m.winner_current_handicap,
-    m.loser_current_handicap,
-  ]);
+    // 今は表示値（補完後）で判定
+    return wRP < lRP - 100 || wHC > lHC + 5;
+  }, [wRP, lRP, wHC, lHC]);
 
   return (
     <div
@@ -263,7 +352,7 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
       <div className="grid grid-cols-1 gap-3 sm:gap-4">
         <div className="sm:grid sm:grid-cols-3 sm:items-center gap-3 sm:gap-4">
           {/* 勝者 */}
-          <Link href={`/players/${m.winner_id ?? ''}`} prefetch={false} className="group">
+          <Link href={`/players/${wid}`} prefetch={false} className="group">
             <div
               className={`flex items-center gap-3 p-3 sm:p-4 rounded-lg border transition-all ${
                 isUpset
@@ -273,14 +362,14 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
             >
               <LazyImage
                 src={wAvatar}
-                alt={m.winner_name || ''}
+                alt={wName || ''}
                 className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${
                   isUpset ? 'border-yellow-500/50' : 'border-green-500/50'
                 }`}
               />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.winner_name}
+                  {wName}
                 </p>
                 <p
                   className={`text-xs sm:text-sm ${
@@ -290,21 +379,19 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
                   勝利
                 </p>
                 <div className="flex gap-3 text-xs text-gray-400">
-                  <span>RP: {m.winner_current_points ?? 0}</span>
-                  <span>HC: {m.winner_current_handicap ?? 0}</span>
+                  <span>RP: {wRP}</span>
+                  <span>HC: {wHC}</span>
                 </div>
               </div>
               <div className="text-right">
                 <p className="text-xl sm:text-2xl font-bold text-white">15</p>
                 <p
                   className={`text-xs sm:text-sm font-medium ${
-                    (m.winner_points_change ?? 0) > 0
-                      ? 'text-green-400'
-                      : 'text-red-400'
+                    wDelta > 0 ? 'text-green-400' : 'text-red-400'
                   }`}
                 >
-                  {(m.winner_points_change ?? 0) > 0 ? '+' : ''}
-                  {m.winner_points_change ?? 0}pt
+                  {wDelta > 0 ? '+' : ''}
+                  {wDelta}pt
                 </p>
               </div>
             </div>
@@ -322,21 +409,21 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
           </div>
 
           {/* 敗者 */}
-          <Link href={`/players/${m.loser_id ?? ''}`} prefetch={false} className="group">
+          <Link href={`/players/${lid}`} prefetch={false} className="group">
             <div className="flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 group-hover:border-red-400/50 transition-all">
               <LazyImage
                 src={lAvatar}
-                alt={m.loser_name || ''}
+                alt={lName || ''}
                 className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-red-500/50"
               />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.loser_name}
+                  {lName}
                 </p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
                 <div className="flex gap-3 text-xs text-gray-400">
-                  <span>RP: {m.loser_current_points ?? 0}</span>
-                  <span>HC: {m.loser_current_handicap ?? 0}</span>
+                  <span>RP: {lRP}</span>
+                  <span>HC: {lHC}</span>
                 </div>
               </div>
               <div className="text-right">
@@ -344,7 +431,7 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
                   {loserScore}
                 </p>
                 <p className="text-xs sm:text-sm text-red-400 font-medium">
-                  {m.loser_points_change ?? 0}pt
+                  {lDelta}pt
                 </p>
               </div>
             </div>
@@ -364,6 +451,8 @@ const SinglesCard = memo(function SinglesCard({ m }: { m: MatchDetails }) {
 /* ─────────────── 団体戦カード（チームのメンバー表示付き） ─────────────── */
 
 function TeamMembersRow({ members }: { members: MemberProfile[] }) {
+  const router = useRouter();
+
   if (!members?.length) return null;
   const shown = members.slice(0, 4);
   const rest = members.length - shown.length;
@@ -373,12 +462,18 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
       {/* アバター重ね表示 */}
       <div className="flex -space-x-3">
         {shown.map((p) => (
-          <Link
+          <button
             key={p.id}
-            href={`/players/${p.id}`}
-            prefetch={false}
+            type="button"
             title={p.handle_name}
+            onClick={(e) => {
+              e.preventDefault(); // 親の Link クリックを止める
+              e.stopPropagation();
+              router.push(`/players/${p.id}`);
+            }}
+            className="block"
           >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={p.avatar_url || '/default-avatar.png'}
               alt={p.handle_name}
@@ -389,7 +484,7 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
                 (e.target as HTMLImageElement).src = '/default-avatar.png';
               }}
             />
-          </Link>
+          </button>
         ))}
         {rest > 0 && (
           <div className="w-7 h-7 rounded-full border-2 border-gray-900 bg-gray-700 text-white text-[10px] flex items-center justify-center">
@@ -397,6 +492,7 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
           </div>
         )}
       </div>
+
       {/* 名前リスト（小さく・折り返し） */}
       <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">
         {members.map((m) => m.handle_name).join(' / ')}
@@ -404,6 +500,7 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
     </div>
   );
 }
+
 
 const TeamsCard = memo(function TeamsCard({
   m,
@@ -499,6 +596,7 @@ const TeamsCard = memo(function TeamsCard({
 
 export default function MatchesPage() {
   const { matches, loading, error, retrying, refetch } = useMatchesData();
+
   const isSmall = useIsSmallScreen();
 
   // フィルタ
@@ -514,7 +612,6 @@ export default function MatchesPage() {
     const now = new Date();
 
     const filtered = (matches as MatchDetails[]).filter((m) => {
-      // 検索文字列：個人名 or チーム名 or 会場/大会
       const searchHit =
         !term ||
         (m.winner_name ?? '').toLowerCase().includes(term) ||
@@ -524,11 +621,13 @@ export default function MatchesPage() {
         (m.venue ?? '').toLowerCase().includes(term) ||
         (m.tournament_name ?? '').toLowerCase().includes(term);
 
-      // 大会/通常
       const typeHit =
-        filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
+        filter === 'all'
+          ? true
+          : filter === 'tournament'
+            ? !!m.is_tournament
+            : !m.is_tournament;
 
-      // 期間
       const d = new Date(m.match_date);
       let dateHit = true;
       if (dateFilter === 'today') {
@@ -542,19 +641,61 @@ export default function MatchesPage() {
       return searchHit && typeHit && dateHit;
     });
 
-    // 日付降順（保険）
-    filtered.sort(
-      (a, b) => +new Date(b.match_date) - +new Date(a.match_date)
-    );
+    filtered.sort((a, b) => +new Date(b.match_date) - +new Date(a.match_date));
     return filtered;
   }, [matches, searchTerm, filter, dateFilter]);
 
-  /* ── ここから追加：表示対象のチームのメンバープロフィールを一括取得 ── */
-  const [membersByTeam, setMembersByTeam] = useState<
-    Record<string, MemberProfile[]>
-  >({});
+  /* ── 追加：表示対象のプレイヤー(RP/HC/Avatar/Name)を players から補完 ── */
+  const [playersById, setPlayersById] = useState<Record<string, PlayerLite>>({});
 
-  // 画面に表示している試合に出てくるチームIDを抽出（winner/loser）
+  const visiblePlayerIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of filteredSortedMatches) {
+      // 個人戦だけ対象
+      const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
+      if (isTeams) continue;
+      if (m.winner_id) ids.add(m.winner_id);
+      if (m.loser_id) ids.add(m.loser_id);
+    }
+    return Array.from(ids);
+  }, [filteredSortedMatches]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (visiblePlayerIds.length === 0) {
+        if (!cancelled) setPlayersById({});
+        return;
+      }
+      try {
+        const inPlayers = visiblePlayerIds.map((id) => `"${id}"`).join(',');
+        const rows = await restGet<PlayerLite[]>(
+          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url,ranking_points,handicap`
+        );
+        const dict: Record<string, PlayerLite> = {};
+        for (const r of rows ?? []) {
+          if (!r?.id) continue;
+          dict[String(r.id)] = {
+            id: String(r.id),
+            handle_name: r.handle_name,
+            avatar_url: r.avatar_url ?? null,
+            ranking_points: typeof r.ranking_points === 'number' ? r.ranking_points : null,
+            handicap: typeof r.handicap === 'number' ? r.handicap : null,
+          };
+        }
+        if (!cancelled) setPlayersById(dict);
+      } catch {
+        // 補完に失敗しても一覧自体は表示（0表示のままでも落とさない）
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visiblePlayerIds]);
+
+  /* ── チームメンバー取得（既存のまま） ── */
+  const [membersByTeam, setMembersByTeam] = useState<Record<string, MemberProfile[]>>({});
+
   const visibleTeamIds = useMemo(() => {
     const ids = new Set<string>();
     for (const m of filteredSortedMatches) {
@@ -572,7 +713,6 @@ export default function MatchesPage() {
         return;
       }
       try {
-        // team_members を取得
         const inTeams = visibleTeamIds.map((id) => `"${id}"`).join(',');
         const tm = await restGet<{ team_id: string; player_id: string }[]>(
           `/rest/v1/team_members?team_id=in.(${inTeams})&select=team_id,player_id`
@@ -597,7 +737,6 @@ export default function MatchesPage() {
           (grouped[r.team_id] ||= []).push(p);
         }
 
-        // 表示整形：ハンドルネーム昇順で揃える
         for (const k of Object.keys(grouped)) {
           grouped[k] = grouped[k].sort((a, b) =>
             a.handle_name.localeCompare(b.handle_name, 'ja')
@@ -606,7 +745,7 @@ export default function MatchesPage() {
 
         if (!cancelled) setMembersByTeam(grouped);
       } catch {
-        // 読み込み失敗時は黙って空のまま（一覧自体は見える）
+        // 失敗時は黙って空のまま
       }
     })();
     return () => {
@@ -620,9 +759,7 @@ export default function MatchesPage() {
     const totalMatches = arr.length;
     const todayMatches =
       arr.filter(
-        (m) =>
-          new Date(m.match_date).toDateString() ===
-          new Date().toDateString()
+        (m) => new Date(m.match_date).toDateString() === new Date().toDateString()
       ).length;
     const tournamentMatches = arr.filter((m) => !!m.is_tournament).length;
     const avgScoreDiff =
@@ -634,22 +771,21 @@ export default function MatchesPage() {
 
   // 仮想化は PC 以上のみ。モバイルでは通常レンダリング（クリップ防止）
   const useVirtual = !isSmall && filteredSortedMatches.length > 20;
-  const virtualItemHeight = useMemo(() => 240, []); // PCでも十分な高さ
+  const virtualItemHeight = useMemo(() => 240, []);
 
   // 仮想スクロール描画
   const renderItem = useCallback(
     (index: number) => {
       const m = filteredSortedMatches[index];
       if (!m) return null;
-      const isTeams =
-        m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
+      const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
       return isTeams ? (
         <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
       ) : (
-        <SinglesCard key={m.id} m={m} />
+        <SinglesCard key={m.id} m={m} playersById={playersById} />
       );
     },
-    [filteredSortedMatches, membersByTeam]
+    [filteredSortedMatches, membersByTeam, playersById]
   );
 
   return (
@@ -785,7 +921,6 @@ export default function MatchesPage() {
                 </p>
               </div>
             ) : !useVirtual ? (
-              // モバイル or 件数少：通常描画（クリップ無し）
               <div className="space-y-3 sm:space-y-4">
                 {filteredSortedMatches.map((m) => {
                   const isTeams =
@@ -799,12 +934,11 @@ export default function MatchesPage() {
                       membersByTeam={membersByTeam}
                     />
                   ) : (
-                    <SinglesCard key={m.id} m={m} />
+                    <SinglesCard key={m.id} m={m} playersById={playersById} />
                   );
                 })}
               </div>
             ) : (
-              // PC & 件数多：仮想化（十分な高さを確保）
               <Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
                 <VirtualList
                   items={filteredSortedMatches}

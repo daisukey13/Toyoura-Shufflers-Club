@@ -35,35 +35,55 @@ export async function middleware(req: NextRequest) {
   );
 
   // 現在のユーザーを Cookie ベースで確認（DB は触らない）
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   // /admin → /admin/dashboard に正規化
   if (pathname === '/admin' || pathname === '/admin/') {
     return carryCookies(res, NextResponse.redirect(new URL('/admin/dashboard', req.url)));
   }
 
+  // ✅ /admin/league/* は一般公開 URL /league/* にリダイレクト（ログイン不要で閲覧させる）
+  if (pathname.startsWith('/admin/league')) {
+    // 先頭の /admin を取り除いて公開パスへ
+    const publicPath = pathname.replace(/^\/admin/, '');
+    const url = new URL(publicPath + req.nextUrl.search, req.url);
+    return carryCookies(res, NextResponse.redirect(url));
+  }
+
   // /admin/* はログイン必須（管理者判定はページ側で実施）
   if (pathname.startsWith('/admin')) {
     if (!user) {
-      const dest = '/login?redirect=' + encodeURIComponent(req.nextUrl.pathname + req.nextUrl.search);
+      const dest =
+        '/login?redirect=' +
+        encodeURIComponent(req.nextUrl.pathname + req.nextUrl.search);
       return carryCookies(res, NextResponse.redirect(new URL(dest, req.url)));
     }
   }
 
   // 旧：/matches/register は新：/matches/register/singles へ統一
   if (pathname === '/matches/register') {
-    return carryCookies(res, NextResponse.redirect(new URL('/matches/register/singles', req.url)));
+    return carryCookies(
+      res,
+      NextResponse.redirect(new URL('/matches/register/singles', req.url))
+    );
   }
 
   // ✅ 旧：/mypage?open=register は必ず新ページへリダイレクト
   if (pathname === '/mypage' && searchParams.get('open') === 'register') {
-    return carryCookies(res, NextResponse.redirect(new URL('/matches/register/singles', req.url)));
+    return carryCookies(
+      res,
+      NextResponse.redirect(new URL('/matches/register/singles', req.url))
+    );
   }
 
   // ✅ 試合登録ページはログイン必須（新URLも含めてチェック）
   if (pathname.startsWith('/matches/register')) {
     if (!user) {
-      const dest = '/login?redirect=' + encodeURIComponent('/matches/register/singles');
+      const dest =
+        '/login?redirect=' +
+        encodeURIComponent('/matches/register/singles');
       return carryCookies(res, NextResponse.redirect(new URL(dest, req.url)));
     }
   }
