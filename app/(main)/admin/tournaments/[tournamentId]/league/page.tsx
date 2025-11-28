@@ -32,13 +32,67 @@ type TournamentInfo = {
   name: string | null;
 };
 
+// ===== Helper: safe insert for matches (schema差分・制約差分に強くする) =====
+type AnyObj = Record<string, any>;
+
+const isMissingColumnError = (err: any) => {
+  const code = err?.code;
+  const msg = String(err?.message ?? '');
+  return code === '42703' || msg.includes('does not exist') || msg.includes('column');
+};
+
+const isModeCheckError = (err: any) => {
+  const msg = String(err?.message ?? '');
+  return msg.includes('matches_mode_check');
+};
+
+async function insertMatchesWithFallback(rows: AnyObj[]) {
+  // まずは「よくある列」を全部入れて試す → ダメなら不要列を削って再試行
+  const withExtras = rows.map((r) => ({
+    ...r,
+    is_tournament: true, // 無ければ落ちるので後でfallback
+    result_type: 'normal', // 型/制約違いがあり得るので後でfallback
+  }));
+
+  // 1) extras付きトライ
+  let { error } = await supabase.from('matches').insert(withExtras);
+  if (!error) return { ok: true };
+
+  // 2) mode CHECK に当たるなら mode 候補を変えて再試行
+  if (isModeCheckError(error)) {
+    const modeCandidates = ['singles', 'single', 'player'];
+    for (const m of modeCandidates) {
+      const retryRows = withExtras.map((r) => ({ ...r, mode: m }));
+      const r2 = await supabase.from('matches').insert(retryRows);
+      if (!r2.error) return { ok: true };
+      error = r2.error;
+      if (!isModeCheckError(error)) break;
+    }
+  }
+
+  // 3) 列が存在しない/型が違うっぽい場合は extras を落として再試行
+  if (isMissingColumnError(error)) {
+    const stripped = rows.map((r) => ({ ...r }));
+    const r3 = await supabase.from('matches').insert(stripped);
+    if (!r3.error) return { ok: true };
+    return { ok: false, error: r3.error };
+  }
+
+  // 4) result_type / is_tournament が原因の可能性があるので、それだけ落として再試行
+  //    （列はあるが型/制約が違うケース）
+  {
+    const dropSome = rows.map((r) => ({ ...r })); // extras無し
+    const r4 = await supabase.from('matches').insert(dropSome);
+    if (!r4.error) return { ok: true };
+    return { ok: false, error: error ?? r4.error };
+  }
+}
+
 // ===== Page Component =====
 export default function AdminTournamentLeaguePage() {
   const params = useParams();
   const tournamentId =
-    typeof params?.tournamentId === 'string'
-      ? (params.tournamentId as string)
-      : '';
+    typeof params?.tournamentId === 'string' ? (params.tournamentId as string) : '';
 
   const [tournament, setTournament] = useState<TournamentInfo | null>(null);
   const [blocks, setBlocks] = useState<LeagueBlockRow[]>([]);
@@ -73,9 +127,9 @@ export default function AdminTournamentLeaguePage() {
       .from('tournaments')
       .select('id, name')
       .eq('id', tournamentId)
-      .single();
+      .maybeSingle();
 
-    if (tErr) {
+    if (tErr || !t) {
       console.error(tErr);
       setError('大会情報の取得に失敗しました');
       setLoading(false);
@@ -97,11 +151,11 @@ export default function AdminTournamentLeaguePage() {
       return;
     }
 
-    const blocks: LeagueBlockRow[] = (blocksData ?? []) as LeagueBlockRow[];
-    setBlocks(blocks);
+    const list: LeagueBlockRow[] = (blocksData ?? []) as LeagueBlockRow[];
+    setBlocks(list);
 
     // 優勝者プレーヤー情報
-    const winnerIds = blocks
+    const winnerIds = list
       .map((b) => b.winner_player_id)
       .filter((id): id is string => !!id);
 
@@ -113,10 +167,11 @@ export default function AdminTournamentLeaguePage() {
 
       if (playersErr) {
         console.error(playersErr);
+        setWinners(new Map());
       } else {
         const map = new Map<string, WinnerInfo>();
-        (playersData ?? []).forEach((p) => {
-          map.set(p.id, { id: p.id, handle_name: p.handle_name });
+        (playersData ?? []).forEach((p: any) => {
+          map.set(String(p.id), { id: String(p.id), handle_name: p.handle_name ?? null });
         });
         setWinners(map);
       }
@@ -141,12 +196,9 @@ export default function AdminTournamentLeaguePage() {
     // 50音順ソート
     const sorted = ((active ?? []) as PlayerOption[])
       .slice()
-      .sort((a, b) =>
-        (a.handle_name ?? '').localeCompare(b.handle_name ?? '', 'ja'),
-      );
+      .sort((a, b) => (a.handle_name ?? '').localeCompare(b.handle_name ?? '', 'ja'));
 
     setPlayers(sorted);
-
     setLoading(false);
   };
 
@@ -213,7 +265,7 @@ export default function AdminTournamentLeaguePage() {
       return;
     }
 
-    const blockId = block.id as string;
+    const blockId = String(block.id);
 
     // 2) league_block_members
     const membersPayload = [
@@ -222,9 +274,7 @@ export default function AdminTournamentLeaguePage() {
       { league_block_id: blockId, player_id: p3 },
     ];
 
-    const { error: membersErr } = await supabase
-      .from('league_block_members')
-      .insert(membersPayload);
+    const { error: membersErr } = await supabase.from('league_block_members').insert(membersPayload);
 
     if (membersErr) {
       console.error(membersErr);
@@ -233,7 +283,7 @@ export default function AdminTournamentLeaguePage() {
       return;
     }
 
-    // 3) matches に総当たり3試合
+    // 3) matches に総当たり3試合（必要最小限の列だけ）
     const pairs: [string, string][] = [
       [p1, p2],
       [p1, p3],
@@ -242,31 +292,25 @@ export default function AdminTournamentLeaguePage() {
 
     const matchesPayload = pairs.map(([a, b]) => ({
       tournament_id: tournamentId,
-      is_tournament: true,
-      // ★ DBのチェック制約に合わせて mode を 'singles' に修正
-      mode: 'singles',
+      league_block_id: blockId,
+      mode: 'singles', // CHECK 制約対策（必要なら helper 内で候補をリトライ）
       status: 'pending',
       player_a_id: a,
       player_b_id: b,
-      league_block_id: blockId,
-      result_type: 'normal',
+      // match_date を NOT NULL にしているDBがあり得るので、入れておく（同時刻でOK）
+      match_date: new Date().toISOString(),
     }));
 
-    const { error: matchesErr } = await supabase
-      .from('matches')
-      .insert(matchesPayload);
-
-    if (matchesErr) {
-      console.error(matchesErr);
-      setError(
-        'リーグ戦の試合作成に失敗しました（ブロックとメンバーは作成済み）',
-      );
+    const ins = await insertMatchesWithFallback(matchesPayload);
+    if (!ins.ok) {
+      console.error(ins.error);
+      setError('リーグ戦の試合作成に失敗しました（ブロックとメンバーは作成済み）');
       setCreating(false);
       return;
     }
 
     // フォームリセット & 再読込
-    setBlockLabel('');
+    setBlockLabel('A');
     setP1('');
     setP2('');
     setP3('');
@@ -296,9 +340,7 @@ export default function AdminTournamentLeaguePage() {
               </span>
             )}
           </h1>
-          <div className="text-xs text-gray-400">
-            tournament_id: {tournamentId}
-          </div>
+          <div className="text-xs text-gray-400">tournament_id: {tournamentId}</div>
         </div>
         <Link
           href={`/tournaments/${tournamentId}/league`}
@@ -334,11 +376,9 @@ export default function AdminTournamentLeaguePage() {
             </div>
 
             <div className="flex flex-wrap gap-3">
-              {[p1, p2, p3].map((val, idx) => (
+              {[p1, p2, p3].map((_, idx) => (
                 <div key={idx} className="space-y-1">
-                  <label className="text-xs font-semibold">
-                    プレーヤー {idx + 1}
-                  </label>
+                  <label className="text-xs font-semibold">プレーヤー {idx + 1}</label>
                   <select
                     className="min-w-[200px] rounded border border-gray-600 bg-black/60 px-3 py-2 text-base"
                     style={{ fontSize: 18, lineHeight: 1.4 }}
@@ -376,9 +416,7 @@ export default function AdminTournamentLeaguePage() {
       <div className="space-y-2">
         <h2 className="text-sm font-semibold">既存リーグブロック</h2>
         {blocks.length === 0 ? (
-          <div className="text-sm text-gray-400">
-            まだリーグブロックはありません。
-          </div>
+          <div className="text-sm text-gray-400">まだリーグブロックはありません。</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm border-collapse">
@@ -389,30 +427,25 @@ export default function AdminTournamentLeaguePage() {
                   <th className="border px-2 py-1 text-left">優勝者</th>
                   <th className="border px-2 py-1 text-left">公開ページ</th>
                   <th className="border px-2 py-1 text-center">集計</th>
+                  <th className="border px-2 py-1 text-left">管理</th>
                 </tr>
               </thead>
               <tbody>
                 {blocks.map((b) => {
-                  const winner = b.winner_player_id
-                    ? winners.get(b.winner_player_id)
-                    : undefined;
+                  const winner = b.winner_player_id ? winners.get(b.winner_player_id) : undefined;
 
                   const statusLabel =
                     b.status === 'finished'
                       ? '確定'
                       : b.status === 'pending'
-                      ? '未確定'
-                      : b.status || '未設定';
+                        ? '未確定'
+                        : b.status || '未設定';
 
                   return (
                     <tr key={b.id}>
-                      <td className="border px-2 py-1">
-                        ブロック {b.label ?? '-'}
-                      </td>
+                      <td className="border px-2 py-1">ブロック {b.label ?? '-'}</td>
                       <td className="border px-2 py-1">{statusLabel}</td>
-                      <td className="border px-2 py-1">
-                        {winner?.handle_name ?? '---'}
-                      </td>
+                      <td className="border px-2 py-1">{winner?.handle_name ?? '---'}</td>
                       <td className="border px-2 py-1">
                         <Link
                           href={`/league/${b.id}`}
@@ -432,6 +465,14 @@ export default function AdminTournamentLeaguePage() {
                         >
                           {busyBlock === b.id ? '集計中…' : '順位を集計する'}
                         </button>
+                      </td>
+                      <td className="border px-2 py-1">
+                        <Link
+  href={`/admin/league-blocks/${b.id}/matches`}
+  className="text-xs text-blue-400 underline"
+>
+                          試合結果入力
+                        </Link>
                       </td>
                     </tr>
                   );

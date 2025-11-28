@@ -282,11 +282,23 @@ export default function LeagueBlockPublicPage() {
     return <div className="p-4">データが見つかりませんでした。</div>;
   }
 
+  // ★ 1試合でもスコアが入っているかどうか
+  const hasAnyResult = matchCards.some(
+    (m) =>
+      m.winner_id &&
+      m.loser_id &&
+      m.winner_score != null &&
+      m.loser_score != null
+  );
+
   const winnerPlayer =
     block.winner_player_id && players[block.winner_player_id]
       ? players[block.winner_player_id]
       : null;
-  const showWinnerCard = block.status === 'finished' && !!winnerPlayer;
+
+  // ★ 結果が1つも無い場合は、finished でも優勝カードを出さない
+  const showWinnerCard =
+    block.status === 'finished' && !!winnerPlayer && hasAnyResult;
 
   const calcPointDiff = (row: RankingRow) =>
     typeof row.point_diff === 'number'
@@ -343,7 +355,7 @@ export default function LeagueBlockPublicPage() {
           ブロック {block.label ?? '?'} リーグ結果
         </h2>
 
-        {/* 優勝者カード（finished のときだけ） */}
+        {/* 優勝者カード（finished かつ結果ありのときだけ） */}
         {showWinnerCard && winnerPlayer && (
           <div className="rounded-2xl border border-blue-500/40 bg-blue-900/40 p-4 flex items-center gap-4">
             <div className="text-3xl text-yellow-300">
@@ -410,7 +422,7 @@ export default function LeagueBlockPublicPage() {
                       <td className="border border-white/10 px-2 py-1">
                         {p?.handle_name ?? '不明なプレーヤー'}
                       </td>
-                      <td className="border border-white/10 px-2 py-1 text-right">
+                      <td className="border border白/10 px-2 py-1 text-right">
                         {p?.ranking_points ?? 0}
                       </td>
                       <td className="border border-white/10 px-2 py-1 text-right">

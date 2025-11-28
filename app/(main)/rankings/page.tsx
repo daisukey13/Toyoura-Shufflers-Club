@@ -40,7 +40,15 @@ function Fallback() {
 const VirtualList = lazy(() => import('@/components/VirtualList'));
 
 /* ─────────────────────────── Lazy image ─────────────────────────── */
-const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => (
+const LazyImage = ({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className: string;
+}) => (
   // eslint-disable-next-line @next/next/no-img-element
   <img
     src={src}
@@ -105,9 +113,48 @@ type Player = {
   losses?: number | null;
 };
 
+type RankedPlayer = { player: Player; rank: number };
+
 /* ─────────────────────────── utils ─────────────────────────── */
 function eq(a: any, b: any) {
   return a === b || (Number.isNaN(a) && Number.isNaN(b));
+}
+
+/** points同点は同順位（競技順位: 1,2,2,4...）。同点内はHC昇順。 */
+function sortPlayersByPointsThenHc(a: Player, b: Player) {
+  const ap = a.ranking_points ?? 0;
+  const bp = b.ranking_points ?? 0;
+  if (bp !== ap) return bp - ap; // points desc
+
+  const ah = a.handicap ?? 9999;
+  const bh = b.handicap ?? 9999;
+  if (ah !== bh) return ah - bh; // handicap asc
+
+  // 安定化（任意）
+  const an = (a.handle_name ?? '').toLowerCase();
+  const bn = (b.handle_name ?? '').toLowerCase();
+  if (an !== bn) return an.localeCompare(bn, 'ja');
+  return String(a.id).localeCompare(String(b.id));
+}
+
+function withCompetitionRank(sorted: Player[]): RankedPlayer[] {
+  let prevPoints: number | null = null;
+  let currentRank = 0;
+
+  return sorted.map((p, idx) => {
+    const pts = p.ranking_points ?? 0;
+
+    if (idx === 0) {
+      currentRank = 1;
+      prevPoints = pts;
+    } else if (pts !== prevPoints) {
+      // ★ここが「次の人が4位になる」ロジック
+      currentRank = idx + 1;
+      prevPoints = pts;
+    }
+
+    return { player: p, rank: currentRank };
+  });
 }
 
 /* ─────────────────────────── Player Card ─────────────────────────── */
@@ -129,7 +176,11 @@ const PlayerCard = memo(
     }, [rank]);
 
     return (
-      <Link href={`/players/${player.id}`} prefetch={false} aria-label={`${player.handle_name} のプロフィール`}>
+      <Link
+        href={`/players/${player.id}`}
+        prefetch={false}
+        aria-label={`${player.handle_name} のプロフィール`}
+      >
         <div
           className={`glass-card rounded-xl p-4 sm:p-6 hover:scale-[1.02] transition-all cursor-pointer ${
             isTop3 ? 'border-2' : 'border'
@@ -142,7 +193,11 @@ const PlayerCard = memo(
               {isTop3 && (
                 <div
                   className={`absolute -inset-1 rounded-full blur-sm ${
-                    rank === 1 ? 'bg-yellow-400' : rank === 2 ? 'bg-gray-300' : 'bg-orange-500'
+                    rank === 1
+                      ? 'bg-yellow-400'
+                      : rank === 2
+                      ? 'bg-gray-300'
+                      : 'bg-orange-500'
                   }`}
                 />
               )}
@@ -165,7 +220,11 @@ const PlayerCard = memo(
             </div>
 
             <div className="text-right flex-shrink-0">
-              <div className={`text-2xl sm:text-3xl font-bold ${isTop3 ? 'text-yellow-100' : 'text-purple-300'}`}>
+              <div
+                className={`text-2xl sm:text-3xl font-bold ${
+                  isTop3 ? 'text-yellow-100' : 'text-purple-300'
+                }`}
+              >
                 {player.ranking_points ?? 0}
               </div>
               <div className="text-xs sm:text-sm text-gray-400">ポイント</div>
@@ -174,11 +233,15 @@ const PlayerCard = memo(
 
           <div className="mt-3 sm:mt-4 grid grid-cols-3 gap-2 sm:gap-4 text-center">
             <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-              <div className="text-green-400 font-bold text-sm sm:text-base">{player.wins ?? 0}</div>
+              <div className="text-green-400 font-bold text-sm sm:text-base">
+                {player.wins ?? 0}
+              </div>
               <div className="text-xs text-gray-500">勝利</div>
             </div>
             <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-              <div className="text-red-400 font-bold text-sm sm:text-base">{player.losses ?? 0}</div>
+              <div className="text-red-400 font-bold text-sm sm:text-base">
+                {player.losses ?? 0}
+              </div>
               <div className="text-xs text-gray-500">敗北</div>
             </div>
             <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
@@ -245,7 +308,7 @@ const TeamCard = memo(function TeamCard({
               {team.name}
             </h3>
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-gray-400">
-              <span className="px-2 py-1 rounded-full bg紫色-900/30 text-purple-300">
+              <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">
                 メンバー: {team.team_size ?? 0}
               </span>
               <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">
@@ -267,7 +330,7 @@ const TeamCard = memo(function TeamCard({
             <div className="text-yellow-300 font-bold text-sm sm:text-base">{team.played ?? 0}</div>
             <div className="text-xs text-gray-500">試合</div>
           </div>
-          <div className="bg紫色-900/30 rounded-lg py-1.5 sm:py-2">
+          <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
             <div className="text-green-400 font-bold text-sm sm:text-base">{team.wins ?? 0}</div>
             <div className="text-xs text-gray-500">勝</div>
           </div>
@@ -334,7 +397,7 @@ const StatsCardsTeams = memo(function StatsCardsTeams({
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20 min-w-[140px]">
           <FaTrophy className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text黄色-100 mb-1">{stats.topAvgRp}</div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.topAvgRp}</div>
           <div className="text-gray-400 text-xs sm:text-base">最高平均RP</div>
         </div>
 
@@ -372,32 +435,52 @@ function RankingsInner() {
   }, [tab]);
 
   /* ── Players ── */
-  const { players, loading: pLoading, error: pError, retrying: pRetrying, refetch: pRefetch } =
-    usePlayersData();
+  const {
+    players,
+    loading: pLoading,
+    error: pError,
+    retrying: pRetrying,
+    refetch: pRefetch,
+  } = usePlayersData();
 
   const [sortByPlayers, setSortByPlayers] = useState<'points' | 'handicap'>('points');
   const [isPendingPlayers, startTransitionPlayers] = useTransition();
   const deferredPlayers = useDeferredValue(players);
 
-  const sortedPlayers = useMemo(() => {
-    const arr = [...deferredPlayers];
+  // ★ここが本丸：表示順＋同点同順位を作る（pointsのときだけ）
+  const rankedPlayers: RankedPlayer[] = useMemo(() => {
+    const arr = [...(deferredPlayers as Player[])];
+
     if (sortByPlayers === 'points') {
-      arr.sort((a, b) => (b.ranking_points ?? 0) - (a.ranking_points ?? 0));
-    } else {
-      arr.sort((a, b) => (a.handicap ?? 0) - (b.handicap ?? 0));
+      arr.sort(sortPlayersByPointsThenHc);
+      return withCompetitionRank(arr);
     }
-    return arr as Player[];
+
+    // handicapソートは従来通り（順位は表示順の連番）
+    arr.sort((a, b) => {
+      const ah = a.handicap ?? 0;
+      const bh = b.handicap ?? 0;
+      if (ah !== bh) return ah - bh;
+      // 同HCならポイント降順（見た目安定）
+      const ap = a.ranking_points ?? 0;
+      const bp = b.ranking_points ?? 0;
+      if (bp !== ap) return bp - ap;
+      return (a.handle_name ?? '').localeCompare(b.handle_name ?? '', 'ja');
+    });
+    return arr.map((p, i) => ({ player: p, rank: i + 1 }));
   }, [deferredPlayers, sortByPlayers]);
 
   const playerStats = useMemo(() => {
-    const totalPoints = deferredPlayers.reduce((sum, p) => sum + (p.ranking_points ?? 0), 0);
+    const arr = deferredPlayers as Player[];
+    const n = arr.length || 0;
+    const total = arr.reduce((sum, p) => sum + (p.ranking_points ?? 0), 0);
+    const highest = arr.reduce((m, p) => Math.max(m, p.ranking_points ?? 0), 0);
     return {
-      activeCount: deferredPlayers.length,
-      highestPoints: (sortedPlayers[0]?.ranking_points ?? 0) as number,
-      averagePoints:
-        deferredPlayers.length > 0 ? Math.round(totalPoints / deferredPlayers.length) : 0,
+      activeCount: n,
+      highestPoints: highest,
+      averagePoints: n > 0 ? Math.round(total / n) : 0,
     };
-  }, [deferredPlayers, sortedPlayers]);
+  }, [deferredPlayers]);
 
   const handleSortPlayers = useCallback((k: 'points' | 'handicap') => {
     startTransitionPlayers(() => setSortByPlayers(k));
@@ -405,16 +488,21 @@ function RankingsInner() {
 
   const renderPlayerItem = useCallback(
     (index: number) => {
-      const p = sortedPlayers[index];
-      if (!p) return null;
-      return <PlayerCard key={p.id} player={p} rank={index + 1} />;
+      const r = rankedPlayers[index];
+      if (!r) return null;
+      return <PlayerCard key={r.player.id} player={r.player} rank={r.rank} />;
     },
-    [sortedPlayers]
+    [rankedPlayers]
   );
 
   /* ── Teams ── */
-  const { teams, loading: tLoading, error: tError, retrying: tRetrying, refetch: tRefetch } =
-    useTeamRankings({ enabled: tab === 'teams', orderBy: 'avg_rp', ascending: false });
+  const {
+    teams,
+    loading: tLoading,
+    error: tError,
+    retrying: tRetrying,
+    refetch: tRefetch,
+  } = useTeamRankings({ enabled: tab === 'teams', orderBy: 'avg_rp', ascending: false });
 
   const [sortByTeams, setSortByTeams] = useState<'avg_rp' | 'win_pct'>('avg_rp');
   const [isPendingTeams, startTransitionTeams] = useTransition();
@@ -479,7 +567,7 @@ function RankingsInner() {
             onClick={() => setTab('teams')}
             className={`px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-all text-sm sm:text-base ${
               tab === 'teams'
-                ? 'bg-gradient-to-r from紫色-600 to-pink-600 text-white'
+                ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
                 : 'bg-purple-900/30 text-gray-300 hover:text-white'
             }`}
             aria-pressed={tab === 'teams'}
@@ -534,16 +622,16 @@ function RankingsInner() {
               </div>
 
               {/* リスト */}
-              {sortedPlayers.length <= 20 ? (
+              {rankedPlayers.length <= 20 ? (
                 <div className="space-y-3 sm:space-y-4">
-                  {sortedPlayers.map((p, i) => (
-                    <PlayerCard key={p.id} player={p} rank={i + 1} />
+                  {rankedPlayers.map((r) => (
+                    <PlayerCard key={r.player.id} player={r.player} rank={r.rank} />
                   ))}
                 </div>
               ) : (
                 <Suspense fallback={<div className="text-center py-6">リストを読み込み中…</div>}>
                   <VirtualList
-                    items={sortedPlayers}
+                    items={rankedPlayers}
                     height={600}
                     itemHeight={180}
                     renderItem={renderPlayerItem}
@@ -636,4 +724,3 @@ export default function RankingsPage() {
     </Suspense>
   );
 }
-

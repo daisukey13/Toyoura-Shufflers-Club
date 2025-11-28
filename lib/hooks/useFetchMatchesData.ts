@@ -1,3 +1,4 @@
+// lib/hooks/useFetchMatchesData.ts
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -26,6 +27,10 @@ type MatchRow = {
   is_tournament: boolean | null;
   venue: string | null;
   notes: string | null;
+
+  // optional (ある環境だけ)
+  end_reason?: string | null;
+  time_limit_seconds?: number | null;
 };
 
 type PlayerRow = {
@@ -52,36 +57,73 @@ type TeamRow = {
   name: string | null;
 };
 
+type UnifiedRow = {
+  id: string;
+  mode: string | null;
+  status: string | null;
+  match_date: string | null;
+
+  winner_id: string | null;
+  loser_id: string | null;
+  winner_score: number | null;
+  loser_score: number | null;
+
+  winner_points_delta: number | null;
+  loser_points_delta: number | null;
+  winner_handicap_delta: number | null;
+  loser_handicap_delta: number | null;
+
+  winner_name: string | null;
+  loser_name: string | null;
+  winner_avatar_url: string | null;
+  loser_avatar_url: string | null;
+
+  finish_reason: string | null;
+  affects_rating: boolean | null;
+};
+
 export interface MatchDetails {
   id: string;
   match_date: string;
-
   mode?: 'singles' | 'teams' | string | null;
 
+  // singles
   winner_id?: string | null;
-  winner_name?: string | null;
-  winner_avatar_url?: string | null;
-  winner_current_points?: number | null;
-  winner_current_handicap?: number | null;
-  winner_points_change?: number | null;
-
   loser_id?: string | null;
+  winner_name?: string | null;
   loser_name?: string | null;
+  winner_avatar_url?: string | null;
   loser_avatar_url?: string | null;
-  loser_score: number | null;
-  loser_current_points?: number | null;
-  loser_current_handicap?: number | null;
-  loser_points_change?: number | null;
+  winner_score?: number | null;
+  loser_score?: number | null;
 
+  // delta（統一）
+  winner_points_delta?: number | nulll;
+  loser_points_delta?: number | null;
+  winner_handicap_delta?: number | null;
+  loser_handicap_delta?: number | null;
+
+  // finish meta（unified view）
+  finish_reason?: string | null;
+  affects_rating?: boolean | null;
+
+  // teams
   winner_team_id?: string | null;
   winner_team_name?: string | null;
   loser_team_id?: string | null;
   loser_team_name?: string | null;
 
+  // optional meta
   is_tournament?: boolean | null;
   tournament_name?: string | null;
   venue?: string | null;
   notes?: string | null;
+
+  // 互換用（必要なら使える）
+  winner_current_points?: number | null;
+  loser_current_points?: number | null;
+  winner_current_handicap?: number | null;
+  loser_current_handicap?: number | null;
 }
 
 function normalizeMode(raw: string | null): 'singles' | 'teams' | string | null {
@@ -91,18 +133,10 @@ function normalizeMode(raw: string | null): 'singles' | 'teams' | string | null 
 }
 
 function isFinalized(row: MatchRow): boolean {
-  // status が無い/曖昧な過去データもあるかもなので、最低限のガードを入れる
   if (row.status !== 'finalized') return false;
-
   const mode = normalizeMode(row.mode);
-
-  if (mode === 'singles') {
-    return !!row.winner_id && !!row.loser_id;
-  }
-  if (mode === 'teams') {
-    return true;
-  }
-  // 未知の mode は安全側で落とす
+  if (mode === 'singles') return !!row.winner_id && !!row.loser_id;
+  if (mode === 'teams') return true;
   return false;
 }
 
@@ -136,6 +170,7 @@ export function useFetchMatchesData() {
           'is_tournament',
           'venue',
           'notes',
+          // あれば拾う（無ければ無視される環境もあるが、Supabaseは未知列でエラーになる場合がある）
         ].join(','),
       )
       .order('match_date', { ascending: false })
@@ -150,30 +185,50 @@ export function useFetchMatchesData() {
     }
 
     const allRows = (mRows ?? []) as MatchRow[];
-
-    // ✅ 最小修正ポイント：結果が確定していないカードは「試合結果ページ」から除外
     const rows = allRows.filter(isFinalized);
 
-    // （デバッグしたい場合だけ）
-    // const dropped = allRows.length - rows.length;
-    // if (dropped > 0) console.warn(`[useFetchMatchesData] dropped non-finalized rows: ${dropped}`);
-
-    // tournament map
-    const tournamentIds = Array.from(
-      new Set(rows.map((r) => r.tournament_id).filter((v): v is string => !!v)),
-    );
-
+    // tournaments
+    const tournamentIds = Array.from(new Set(rows.map((r) => r.tournament_id).filter((v): v is string => !!v)));
     const tournamentMap = new Map<string, TournamentRow>();
     if (tournamentIds.length > 0) {
-      const { data: tRows } = await supabase
-        .from('tournaments')
-        .select('id,name')
-        .in('id', tournamentIds);
-
+      const { data: tRows } = await supabase.from('tournaments').select('id,name').in('id', tournamentIds);
       (tRows ?? []).forEach((t: any) => tournamentMap.set(String(t.id), t));
     }
 
-    // players map (for singles)
+    // unified feed (names/avatars/deltas/finish meta)
+    const matchIds = rows.map((r) => r.id);
+    const unifiedMap = new Map<string, UnifiedRow>();
+    if (matchIds.length > 0) {
+      const { data: uRows } = await supabase
+        .from('unified_match_feed')
+        .select(
+          [
+            'id',
+            'mode',
+            'status',
+            'match_date',
+            'winner_id',
+            'loser_id',
+            'winner_score',
+            'loser_score',
+            'winner_points_delta',
+            'loser_points_delta',
+            'winner_handicap_delta',
+            'loser_handicap_delta',
+            'winner_name',
+            'loser_name',
+            'winner_avatar_url',
+            'loser_avatar_url',
+            'finish_reason',
+            'affects_rating',
+          ].join(','),
+        )
+        .in('id', matchIds);
+
+      (uRows ?? []).forEach((u: any) => unifiedMap.set(String(u.id), u as UnifiedRow));
+    }
+
+    // players （fallback補完）
     const playerIds = Array.from(
       new Set(
         rows
@@ -181,7 +236,6 @@ export function useFetchMatchesData() {
           .filter((v): v is string => !!v),
       ),
     );
-
     const playerMap = new Map<string, PlayerRow>();
     if (playerIds.length > 0) {
       const { data: pRows } = await supabase
@@ -192,15 +246,10 @@ export function useFetchMatchesData() {
       (pRows ?? []).forEach((p: any) => playerMap.set(String(p.id), p));
     }
 
-    // teams map (for teams)
-    const matchIds = rows.map((r) => r.id);
+    // teams
     const matchTeams: MatchTeamRow[] = [];
     if (matchIds.length > 0) {
-      const { data: mtRows } = await supabase
-        .from('match_teams')
-        .select('match_id,team_id,team_no')
-        .in('match_id', matchIds);
-
+      const { data: mtRows } = await supabase.from('match_teams').select('match_id,team_id,team_no').in('match_id', matchIds);
       (mtRows ?? []).forEach((x: any) =>
         matchTeams.push({
           match_id: String(x.match_id),
@@ -213,15 +262,10 @@ export function useFetchMatchesData() {
     const teamIds = Array.from(new Set(matchTeams.map((x) => x.team_id)));
     const teamMap = new Map<string, TeamRow>();
     if (teamIds.length > 0) {
-      const { data: teamRows } = await supabase
-        .from('teams')
-        .select('id,name')
-        .in('id', teamIds);
-
+      const { data: teamRows } = await supabase.from('teams').select('id,name').in('id', teamIds);
       (teamRows ?? []).forEach((t: any) => teamMap.set(String(t.id), t));
     }
 
-    // match_id -> {team_no -> team_id}
     const mtMap = new Map<string, Map<number, string>>();
     for (const mt of matchTeams) {
       if (!mtMap.has(mt.match_id)) mtMap.set(mt.match_id, new Map());
@@ -230,47 +274,51 @@ export function useFetchMatchesData() {
 
     const out: MatchDetails[] = rows.map((r) => {
       const mode = normalizeMode(r.mode);
-
       const t = r.tournament_id ? tournamentMap.get(r.tournament_id) : undefined;
 
-      const isTournament =
-        typeof r.is_tournament === 'boolean'
-          ? r.is_tournament
-          : !!r.tournament_id;
+      const isTournament = typeof r.is_tournament === 'boolean' ? r.is_tournament : !!r.tournament_id;
 
-      // singles fields
-      const wp = r.winner_id ? playerMap.get(r.winner_id) : undefined;
-      const lp = r.loser_id ? playerMap.get(r.loser_id) : undefined;
+      const u = unifiedMap.get(r.id);
 
-      // teams fields
+      // singles
+      const wid = r.winner_id ?? u?.winner_id ?? null;
+      const lid = r.loser_id ?? u?.loser_id ?? null;
+
+      const wp = wid ? playerMap.get(wid) : undefined;
+      const lp = lid ? playerMap.get(lid) : undefined;
+
+      // teams
       const map = mtMap.get(r.id);
-      const wTeamId =
-        map && r.winner_team_no != null ? map.get(r.winner_team_no) ?? null : null;
-      const lTeamId =
-        map && r.loser_team_no != null ? map.get(r.loser_team_no) ?? null : null;
-
+      const wTeamId = map && r.winner_team_no != null ? map.get(r.winner_team_no) ?? null : null;
+      const lTeamId = map && r.loser_team_no != null ? map.get(r.loser_team_no) ?? null : null;
       const wTeam = wTeamId ? teamMap.get(wTeamId) : undefined;
       const lTeam = lTeamId ? teamMap.get(lTeamId) : undefined;
 
       return {
         id: r.id,
-        match_date: r.match_date ?? new Date().toISOString(),
-        mode,
+        match_date: (r.match_date ?? u?.match_date ?? new Date().toISOString()) as string,
+        mode: mode ?? u?.mode ?? null,
 
-        winner_id: r.winner_id,
-        winner_name: wp?.handle_name ?? null,
-        winner_avatar_url: wp?.avatar_url ?? null,
-        winner_current_points: wp?.ranking_points ?? null,
-        winner_current_handicap: wp?.handicap ?? null,
-        winner_points_change: 0,
+        winner_id: wid,
+        loser_id: lid,
 
-        loser_id: r.loser_id,
-        loser_name: lp?.handle_name ?? null,
-        loser_avatar_url: lp?.avatar_url ?? null,
-        loser_score: r.loser_score ?? 0,
-        loser_current_points: lp?.ranking_points ?? null,
-        loser_current_handicap: lp?.handicap ?? null,
-        loser_points_change: 0,
+        winner_name: u?.winner_name ?? wp?.handle_name ?? null,
+        loser_name: u?.loser_name ?? lp?.handle_name ?? null,
+
+        winner_avatar_url: u?.winner_avatar_url ?? wp?.avatar_url ?? null,
+        loser_avatar_url: u?.loser_avatar_url ?? lp?.avatar_url ?? null,
+
+        winner_score: (u?.winner_score ?? r.winner_score ?? 15) as number,
+        loser_score: (u?.loser_score ?? r.loser_score ?? 0) as number,
+
+        // delta統一（view優先）
+        winner_points_delta: u?.winner_points_delta ?? null,
+        loser_points_delta: u?.loser_points_delta ?? null,
+        winner_handicap_delta: u?.winner_handicap_delta ?? null,
+        loser_handicap_delta: u?.loser_handicap_delta ?? null,
+
+        finish_reason: u?.finish_reason ?? null,
+        affects_rating: typeof u?.affects_rating === 'boolean' ? u.affects_rating : null,
 
         winner_team_id: wTeamId,
         winner_team_name: wTeam?.name ?? null,
@@ -281,6 +329,12 @@ export function useFetchMatchesData() {
         tournament_name: t?.name ?? null,
         venue: r.venue ?? null,
         notes: r.notes ?? null,
+
+        // 互換（表示で使うなら）
+        winner_current_points: wp?.ranking_points ?? null,
+        loser_current_points: lp?.ranking_points ?? null,
+        winner_current_handicap: wp?.handicap ?? null,
+        loser_current_handicap: lp?.handicap ?? null,
       };
     });
 

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FaArrowLeft, FaEdit, FaSave, FaTimes, FaTrophy } from 'react-icons/fa';
+import { FaArrowLeft, FaEdit, FaSave, FaTimes, FaTrophy, FaPlus } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
 type TournamentRow = {
@@ -179,13 +179,26 @@ export default function AdminTournamentsPage() {
             </h1>
           </div>
 
-          <Link
-            href="/admin/dashboard"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-purple-500/40 hover:bg-purple-900/20 transition-colors"
-          >
-            <FaArrowLeft />
-            ダッシュボードへ戻る
-          </Link>
+          {/* ✅ 追加：新規大会作成への導線（UI崩さず最小） */}
+          <div className="flex items-center gap-2">
+            <Link
+              href="/admin/tournaments/new"
+              prefetch={false}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 transition-colors"
+              title="新規大会を作成"
+            >
+              <FaPlus />
+              新規大会
+            </Link>
+
+            <Link
+              href="/admin/dashboard"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-purple-500/40 hover:bg-purple-900/20 transition-colors"
+            >
+              <FaArrowLeft />
+              ダッシュボードへ戻る
+            </Link>
+          </div>
         </div>
 
         {/* body */}
@@ -194,12 +207,26 @@ export default function AdminTournamentsPage() {
             <div className="text-sm text-gray-300">
               一覧から「編集」で大会名・説明を更新できます。
             </div>
-            <button
-              onClick={fetchTournaments}
-              className="px-3 py-1 text-xs rounded-full border border-purple-500/40 hover:bg-purple-900/20 transition-colors"
-            >
-              再読み込み
-            </button>
+
+            {/* ✅ 右側：既存の再読み込み + 追加の新規大会リンク（控えめ） */}
+            <div className="flex items-center gap-2">
+              <Link
+                href="/admin/tournaments/new"
+                prefetch={false}
+                className="px-3 py-1 text-xs rounded-full border border-pink-500/40 hover:bg-pink-900/10 transition-colors inline-flex items-center gap-1.5"
+                title="新規大会を作成"
+              >
+                <FaPlus />
+                新規作成
+              </Link>
+
+              <button
+                onClick={fetchTournaments}
+                className="px-3 py-1 text-xs rounded-full border border-purple-500/40 hover:bg-purple-900/20 transition-colors"
+              >
+                再読み込み
+              </button>
+            </div>
           </div>
 
           {loading ? (

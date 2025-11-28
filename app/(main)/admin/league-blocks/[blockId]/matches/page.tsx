@@ -1,13 +1,15 @@
 // app/(main)/admin/league-blocks/[blockId]/matches/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { FaShieldAlt, FaTrophy } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
+
+type MatchEndReason = 'normal' | 'time_limit' | 'walkover' | 'forfeit';
 
 type MatchRow = {
   id: string;
@@ -19,6 +21,10 @@ type MatchRow = {
   winner_score: number | null;
   loser_score: number | null;
   status: string | null;
+  mode?: string | null;
+
+  // ★追加：結果の理由（通常/時間制限/不戦勝/途中棄権）を残す
+  end_reason?: MatchEndReason | string | null;
 };
 
 type PlayerRow = {
@@ -40,11 +46,22 @@ type TournamentRow = {
 type AdminRow = { user_id: string };
 type PlayerFlagRow = { is_admin: boolean | null };
 
+const clampInt = (v: unknown, min: number, max: number, fallback: number) => {
+  const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+};
+
+function normalizeEndReason(v: unknown): MatchEndReason {
+  const s = String(v ?? '').trim();
+  if (s === 'time_limit' || s === 'walkover' || s === 'forfeit') return s;
+  return 'normal';
+}
+
 export default function AdminLeagueBlockMatchesPage() {
   const router = useRouter();
   const params = useParams();
-  const blockId =
-    typeof params?.blockId === 'string' ? (params.blockId as string) : '';
+  const blockId = typeof params?.blockId === 'string' ? (params.blockId as string) : '';
 
   const [authz, setAuthz] = useState<'checking' | 'ok' | 'no'>('checking');
 
@@ -80,14 +97,8 @@ export default function AdminLeagueBlockMatchesPage() {
         }
 
         const [adminResp, playerResp] = await Promise.all([
-          (supabase.from('app_admins') as any)
-            .select('user_id')
-            .eq('user_id', user.id)
-            .maybeSingle(),
-          (supabase.from('players') as any)
-            .select('is_admin')
-            .eq('id', user.id)
-            .maybeSingle(),
+          (supabase.from('app_admins') as any).select('user_id').eq('user_id', user.id).maybeSingle(),
+          (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
         ]);
 
         const adminRow = (adminResp?.data ?? null) as AdminRow | null;
@@ -149,23 +160,20 @@ export default function AdminLeagueBlockMatchesPage() {
           .eq('id', blockData.tournament_id)
           .maybeSingle();
 
-        if (!tErr && tData) {
-          setTournament(tData as TournamentRow);
-        }
+        if (!tErr && tData) setTournament(tData as TournamentRow);
       }
 
       // 3) このブロックの試合一覧
       const { data: matchesData, error: mErr } = await supabase
         .from('matches')
         .select(
-          'id, match_date, player_a_id, player_b_id, winner_id, loser_id, winner_score, loser_score, status'
+          // ★ end_reason を追加（一覧で「どの試合が時間制限/不戦勝/棄権か」後で分かる）
+          'id, match_date, player_a_id, player_b_id, winner_id, loser_id, winner_score, loser_score, status, mode, end_reason'
         )
         .eq('league_block_id', bId)
         .order('match_date', { ascending: true });
 
-      if (mErr) {
-        throw new Error('試合一覧の取得に失敗しました');
-      }
+      if (mErr) throw new Error('試合一覧の取得に失敗しました');
 
       const ms = (matchesData ?? []) as MatchRow[];
       setMatches(ms);
@@ -174,12 +182,7 @@ export default function AdminLeagueBlockMatchesPage() {
       const ids = Array.from(
         new Set(
           ms
-            .flatMap((m) => [
-              m.player_a_id,
-              m.player_b_id,
-              m.winner_id,
-              m.loser_id,
-            ])
+            .flatMap((m) => [m.player_a_id, m.player_b_id, m.winner_id, m.loser_id])
             .filter((x): x is string => !!x)
         )
       );
@@ -217,40 +220,70 @@ export default function AdminLeagueBlockMatchesPage() {
     return p?.handle_name || '(名前未設定)';
   };
 
-  // 試合1件の結果登録
-  const handleReport = async (
-    e: React.FormEvent<HTMLFormElement>,
-    match: MatchRow
-  ) => {
+  const ReasonBadge = ({ value }: { value: MatchEndReason }) => {
+    if (!value || value === 'normal') return null;
+
+    if (value === 'time_limit') {
+      return (
+        <span className="ml-2 inline-flex items-center rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200">
+          時間制限
+        </span>
+      );
+    }
+    if (value === 'walkover') {
+      return (
+        <span className="ml-2 inline-flex items-center rounded-full border border-sky-400/40 bg-sky-500/15 px-2 py-0.5 text-[11px] text-sky-200">
+          不戦勝
+        </span>
+      );
+    }
+    if (value === 'forfeit') {
+      return (
+        <span className="ml-2 inline-flex items-center rounded-full border border-rose-400/40 bg-rose-500/15 px-2 py-0.5 text-[11px] text-rose-200">
+          途中棄権
+        </span>
+      );
+    }
+    return null;
+  };
+
+  // 試合1件の結果登録（winner_score も入力）
+  const handleReport = async (e: React.FormEvent<HTMLFormElement>, match: MatchRow) => {
     e.preventDefault();
     setError(null);
     setMessage(null);
 
-    const form = e.currentTarget;
-    const winnerId = (form.elements.namedItem(
-      'winner_id'
-    ) as HTMLSelectElement)?.value;
-    const loserScoreRaw = (form.elements.namedItem(
-      'loser_score'
-    ) as HTMLInputElement)?.value;
-
-    if (!winnerId) {
-      setError('勝者を選択してください');
-      return;
-    }
     if (!match.player_a_id || !match.player_b_id) {
       setError('プレーヤー情報が不足しています');
       return;
     }
 
-    const loserScore = (() => {
-      const n = parseInt(loserScoreRaw ?? '0', 10);
-      if (!Number.isFinite(n)) return 0;
-      return Math.min(14, Math.max(0, n));
-    })();
+    const form = e.currentTarget;
 
-    const loserId =
-      winnerId === match.player_a_id ? match.player_b_id : match.player_a_id;
+    const winnerId = (form.elements.namedItem('winner_id') as HTMLSelectElement)?.value;
+
+    const winnerScoreRaw = (form.elements.namedItem('winner_score') as HTMLInputElement)?.value;
+
+    const loserScoreRaw = (form.elements.namedItem('loser_score') as HTMLInputElement)?.value;
+
+    // ★追加：試合種別（通常/時間制限/不戦勝/途中棄権）
+    const endReasonRaw = (form.elements.namedItem('end_reason') as HTMLSelectElement)?.value;
+    const endReason = normalizeEndReason(endReasonRaw);
+
+    if (!winnerId) {
+      setError('勝者を選択してください');
+      return;
+    }
+
+    const winnerScore = clampInt(winnerScoreRaw, 0, 99, 15);
+    const loserScore = clampInt(loserScoreRaw, 0, 99, 0);
+
+    if (winnerScore <= loserScore) {
+      setError('スコアが不正です（勝者スコア > 敗者スコアにしてください）');
+      return;
+    }
+
+    const loserId = winnerId === match.player_a_id ? match.player_b_id : match.player_a_id;
 
     try {
       setSavingMatchId(match.id);
@@ -261,7 +294,10 @@ export default function AdminLeagueBlockMatchesPage() {
         body: JSON.stringify({
           winner_id: winnerId,
           loser_id: loserId,
+          winner_score: winnerScore,
           loser_score: loserScore,
+          // ★追加：後から判別できるように残す
+          end_reason: endReason,
         }),
       });
 
@@ -274,16 +310,11 @@ export default function AdminLeagueBlockMatchesPage() {
       }
 
       if (!res.ok || (j && j.ok === false)) {
-        const msg =
-          j?.message ||
-          j?.hint ||
-          j?.details ||
-          text ||
-          `HTTP ${res.status}`;
+        const msg = j?.message || j?.hint || j?.details || text || `HTTP ${res.status}`;
         throw new Error(msg);
       }
 
-      setMessage('試合結果を登録しました');
+      setMessage('試合結果を登録しました（RP/HCも反映されます）');
       await loadAll(blockId);
     } catch (e: any) {
       console.error(e);
@@ -293,28 +324,19 @@ export default function AdminLeagueBlockMatchesPage() {
     }
   };
 
-  // 認証中 / 権限なし表示
   if (authz === 'checking') {
     return (
-      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
-        認証を確認しています...
-      </div>
+      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">認証を確認しています...</div>
     );
   }
-
   if (authz === 'no') {
     return (
-      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
-        アクセス権限がありません
-      </div>
+      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">アクセス権限がありません</div>
     );
   }
-
   if (!blockId) {
     return (
-      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
-        ブロックIDが指定されていません
-      </div>
+      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">ブロックIDが指定されていません</div>
     );
   }
 
@@ -328,16 +350,10 @@ export default function AdminLeagueBlockMatchesPage() {
               <FaShieldAlt className="text-2xl" />
             </div>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold">
-                リーグ試合結果入力
-              </h1>
+              <h1 className="text-2xl md:text-3xl font-bold">リーグ試合結果入力</h1>
               <div className="text-sm text-gray-300 mt-1">
                 ブロック: ブロック {block?.label ?? '-'}{' '}
-                {tournament && (
-                  <span className="ml-2 text-xs text-gray-400">
-                    （{tournament.name ?? '大会名未設定'}）
-                  </span>
-                )}
+                {tournament && <span className="ml-2 text-xs text-gray-400">（{tournament.name ?? '大会名未設定'}）</span>}
               </div>
             </div>
           </div>
@@ -349,7 +365,6 @@ export default function AdminLeagueBlockMatchesPage() {
           </Link>
         </div>
 
-        {/* メッセージ */}
         {error && (
           <div className="mb-4 rounded-md border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">
             {error}
@@ -364,9 +379,7 @@ export default function AdminLeagueBlockMatchesPage() {
         {loading ? (
           <div className="text-gray-300">読み込み中...</div>
         ) : matches.length === 0 ? (
-          <div className="text-gray-300">
-            このブロックにはまだ試合が登録されていません。
-          </div>
+          <div className="text-gray-300">このブロックにはまだ試合が登録されていません。</div>
         ) : (
           <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-4 md:p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -388,14 +401,14 @@ export default function AdminLeagueBlockMatchesPage() {
                     const aName = getName(m.player_a_id);
                     const bName = getName(m.player_b_id);
 
+                    const endReason = normalizeEndReason(m.end_reason);
+
                     const hasResult = !!m.winner_id && !!m.loser_id;
                     let currentResult = '未入力';
                     if (hasResult) {
                       const wName = getName(m.winner_id);
                       const lName = getName(m.loser_id);
-                      currentResult = `${wName} ${m.winner_score ?? 15} - ${
-                        m.loser_score ?? 0
-                      } ${lName}`;
+                      currentResult = `${wName} ${m.winner_score ?? '-'} - ${m.loser_score ?? '-'} ${lName}`;
                     }
 
                     return (
@@ -407,59 +420,68 @@ export default function AdminLeagueBlockMatchesPage() {
                             <span>{bName}</span>
                           </div>
                         </td>
+
                         <td className="border px-2 py-1 align-top">
-                          <span
-                            className={
-                              hasResult
-                                ? 'text-green-300'
-                                : 'text-gray-300'
-                            }
-                          >
+                          <span className={hasResult ? 'text-green-300' : 'text-gray-300'}>
                             {currentResult}
+                            <ReasonBadge value={endReason} />
                           </span>
                         </td>
+
                         <td className="border px-2 py-1 align-top">
-                          <form
-                            onSubmit={(e) => handleReport(e, m)}
-                            className="flex flex-col md:flex-row md:items-center gap-2"
-                          >
+                          <form onSubmit={(e) => handleReport(e, m)} className="flex flex-col md:flex-row md:items-center gap-2">
                             <select
                               name="winner_id"
                               defaultValue={m.winner_id ?? ''}
                               className="min-w-[140px] px-2 py-1 rounded border border-purple-500/40 bg-gray-900/80 text-xs md:text-sm"
                             >
                               <option value="">勝者を選択</option>
-                              {m.player_a_id && (
-                                <option value={m.player_a_id}>{aName}</option>
-                              )}
-                              {m.player_b_id && (
-                                <option value={m.player_b_id}>{bName}</option>
-                              )}
+                              {m.player_a_id && <option value={m.player_a_id}>{aName}</option>}
+                              {m.player_b_id && <option value={m.player_b_id}>{bName}</option>}
                             </select>
+
+                            {/* ★追加：試合の終了理由を残す（UIは既存フォーム行のまま、要素だけ追加） */}
+                            <select
+                              name="end_reason"
+                              defaultValue={endReason}
+                              className="min-w-[120px] px-2 py-1 rounded border border-purple-500/40 bg-gray-900/80 text-xs md:text-sm"
+                            >
+                              <option value="normal">通常</option>
+                              <option value="time_limit">時間制限</option>
+                              <option value="walkover">不戦勝</option>
+                              <option value="forfeit">途中棄権</option>
+                            </select>
+
+                            <div className="flex items-center gap-1 text-xs md:text-sm">
+                              <span className="text-gray-300">勝者スコア</span>
+                              <input
+                                name="winner_score"
+                                type="number"
+                                min={0}
+                                max={99}
+                                defaultValue={m.winner_score ?? 15}
+                                className="w-16 px-2 py-1 rounded border border-purple-500/40 bg-gray-900/80 text-center"
+                              />
+                            </div>
+
                             <div className="flex items-center gap-1 text-xs md:text-sm">
                               <span className="text-gray-300">敗者スコア</span>
                               <input
                                 name="loser_score"
                                 type="number"
                                 min={0}
-                                max={14}
+                                max={99}
                                 defaultValue={m.loser_score ?? 0}
                                 className="w-16 px-2 py-1 rounded border border-purple-500/40 bg-gray-900/80 text-center"
                               />
-                              <span className="text-gray-500 text-[11px]">
-                                (0〜14)
-                              </span>
                             </div>
+
                             <button
                               type="submit"
                               disabled={savingMatchId === m.id}
                               className="mt-1 md:mt-0 px-3 py-1 rounded bg-purple-600 text-white text-xs md:text-sm disabled:opacity-50"
                             >
-                              {savingMatchId === m.id
-                                ? '保存中...'
-                                : hasResult
-                                ? '更新'
-                                : '登録'}
+                              {savingMatchId === m.id ? '保存中...' : hasResult ? '更新' : '登録'}
                             </button>
                           </form>
                         </td>
@@ -471,7 +493,9 @@ export default function AdminLeagueBlockMatchesPage() {
             </div>
 
             <p className="mt-4 text-xs text-gray-400">
-              ※ スコアは「勝者 15点固定、敗者 0〜14点」で登録されます。
+              ※ タイムアップ等で勝者が15点未満でも登録できます（勝者スコアも入力してください）。
+              <br />
+              ※ 「不戦勝」「途中棄権」「時間制限」は記録として残り、結果一覧にもラベル表示されます。
             </p>
           </div>
         )}

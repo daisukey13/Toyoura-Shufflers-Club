@@ -1,15 +1,7 @@
 // app/(main)/matches/page.tsx
 'use client';
 
-import {
-  useState,
-  useMemo,
-  memo,
-  useCallback,
-  lazy,
-  Suspense,
-  useEffect,
-} from 'react';
+import { useState, useMemo, memo, useCallback, lazy, Suspense, useEffect } from 'react';
 import {
   FaTrophy,
   FaCalendar,
@@ -26,11 +18,8 @@ import { useFetchMatchesData as useMatchesData } from '@/lib/hooks/useFetchMatch
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 import { useRouter } from 'next/navigation';
 
-
-// 仮想スクロール（大画面＆件数多い時のみ使用）
 const VirtualList = lazy(() => import('@/components/VirtualList'));
 
-/* ─────────────── REST (チームメンバー取得/プレイヤー補完に使用) ─────────────── */
 const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 async function restGet<T = any>(path: string) {
@@ -46,7 +35,6 @@ async function restGet<T = any>(path: string) {
   return (await res.json()) as T;
 }
 
-/* ─────────────── 画面幅フラグ（sm < 640px） ─────────────── */
 function useIsSmallScreen() {
   const [small, setSmall] = useState(false);
   useEffect(() => {
@@ -54,7 +42,7 @@ function useIsSmallScreen() {
     const onChange = (e: MediaQueryListEvent | MediaQueryList) =>
       setSmall('matches' in e ? e.matches : (e as MediaQueryList).matches);
     setSmall(mq.matches);
-    // @ts-ignore (Safari古い版対策)
+    // @ts-ignore
     mq.addEventListener ? mq.addEventListener('change', onChange) : mq.addListener(onChange);
     return () => {
       // @ts-ignore
@@ -64,47 +52,45 @@ function useIsSmallScreen() {
   return small;
 }
 
-/** match_details ビュー想定の型（個人戦/団体戦の両方を吸収） */
 interface MatchDetails {
   id: string;
-
-  // 時系列
   match_date: string;
-
-  // 区別
   mode?: 'singles' | 'teams' | string | null;
 
-  // 個人戦フィールド
   winner_id?: string | null;
-  winner_name?: string | null;
-  winner_avatar?: string | null; // 既存コード互換
-  winner_avatar_url?: string | null; // ビュー側実装によってはこちらになる場合
-  winner_current_points?: number | null;
-  winner_current_handicap?: number | null;
-  winner_points_change?: number | null;
-
   loser_id?: string | null;
-  loser_name?: string | null;
-  loser_avatar?: string | null;
-  loser_avatar_url?: string | null;
-  loser_score: number | null;
-  loser_current_points?: number | null;
-  loser_current_handicap?: number | null;
-  loser_points_change?: number | null;
 
-  // 団体戦フィールド
+  // teams
   winner_team_id?: string | null;
-  winner_team_name?: string | null;
   loser_team_id?: string | null;
+  winner_team_name?: string | null;
   loser_team_name?: string | null;
 
-  // 任意メタ
+  winner_name?: string | null;
+  loser_name?: string | null;
+
+  winner_avatar?: string | null;
+  loser_avatar?: string | null;
+  winner_avatar_url?: string | null;
+  loser_avatar_url?: string | null;
+
+  winner_score?: number | null;
+  loser_score?: number | null;
+
+  winner_points_delta?: number | null;
+  loser_points_delta?: number | null;
+
+  winner_handicap_delta?: number | null;
+  loser_handicap_delta?: number | null;
+
+  finish_reason?: string | null;
+  affects_rating?: boolean | null;
+
   is_tournament?: boolean | null;
   tournament_name?: string | null;
   venue?: string | null;
   notes?: string | null;
 
-  // （ビュー側が別名で返す可能性に備えて any で拾えるようにする）
   [key: string]: any;
 }
 
@@ -122,16 +108,7 @@ type PlayerLite = {
   handicap?: number | null;
 };
 
-/* 画像の遅延読み込み（next/image を使わず最軽量） */
-const LazyImage = ({
-  src,
-  alt,
-  className,
-}: {
-  src?: string | null;
-  alt: string;
-  className: string;
-}) => (
+const LazyImage = ({ src, alt, className }: { src?: string | null; alt: string; className: string }) => (
   // eslint-disable-next-line @next/next/no-img-element
   <img
     src={src || '/default-avatar.png'}
@@ -145,7 +122,6 @@ const LazyImage = ({
   />
 );
 
-/* ─────────────── 値のフォールバック（ビューの列名揺れ対策） ─────────────── */
 function pickNumber(m: any, keys: string[]): number | null {
   for (const k of keys) {
     const v = m?.[k];
@@ -160,8 +136,6 @@ function pickString(m: any, keys: string[]): string | null {
   }
   return null;
 }
-
-/* ─────────────── 共通UI ─────────────── */
 
 const ModeChip = ({ mode }: { mode?: MatchDetails['mode'] }) => {
   const isTeams = mode === 'teams';
@@ -180,19 +154,22 @@ const ModeChip = ({ mode }: { mode?: MatchDetails['mode'] }) => {
   );
 };
 
-const ScoreDiffPill = ({
-  diff,
-  highlight,
-}: {
-  diff: number;
-  highlight?: 'upset';
-}) => {
+const FinishReasonChip = ({ reason }: { reason?: string | null }) => {
+  const r = (reason || 'normal').toLowerCase();
+  if (r === 'normal') return null;
+
+  const label = r === 'time_limit' ? '時間切れ' : r === 'forfeit' ? '棄権' : r;
+
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-blue-500/15 text-blue-200 border border-blue-400/30">
+      {label}
+    </span>
+  );
+};
+
+const ScoreDiffPill = ({ diff, highlight }: { diff: number; highlight?: 'upset' }) => {
   const color =
-    diff >= 10
-      ? 'from-red-500 to-red-600'
-      : diff >= 5
-      ? 'from-orange-500 to-orange-600'
-      : 'from-blue-500 to-blue-600';
+    diff >= 10 ? 'from-red-500 to-red-600' : diff >= 5 ? 'from-orange-500 to-orange-600' : 'from-blue-500 to-blue-600';
   return (
     <div
       className={`inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 rounded-full shadow-lg ${
@@ -212,11 +189,7 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
     const date = new Date(m.match_date);
     const today = new Date();
     const sameDay = date.toDateString() === today.toDateString();
-    if (sameDay)
-      return `今日 ${date.toLocaleTimeString('ja-JP', {
-        hour: '2-digit',
-        minute: '2-digit',
-      })}`;
+    if (sameDay) return `今日 ${date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
     return date.toLocaleString();
   }, [m.match_date]);
 
@@ -225,12 +198,11 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
       {m.is_tournament && m.tournament_name && (
         <span className="px-2 sm:px-3 py-1 rounded-full bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 text-yellow-400 flex items-center gap-1">
           <FaMedal className="text-xs" />
-          <span className="truncate max-w-[150px] sm:max-w-none">
-            {m.tournament_name}
-          </span>
+          <span className="truncate max-w-[150px] sm:max-w-none">{m.tournament_name}</span>
         </span>
       )}
       <ModeChip mode={m.mode} />
+      <FinishReasonChip reason={m.finish_reason} />
       <span className="text-gray-400 flex items-center gap-1">
         <FaCalendar className="text-xs" />
         {d}
@@ -238,104 +210,55 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
       {m.venue && (
         <span className="text-gray-400 flex items-center gap-1">
           <FaMapMarkerAlt className="text-xs" />
-          <span className="truncate max-w-[100px] sm:max-w-none">
-            {m.venue}
-          </span>
+          <span className="truncate max-w-[100px] sm:max-w-none">{m.venue}</span>
         </span>
       )}
     </div>
   );
 };
 
-/* ─────────────── 個人戦カード ─────────────── */
-
-const SinglesCard = memo(function SinglesCard({
-  m,
-  playersById,
-}: {
-  m: MatchDetails;
-  playersById: Record<string, PlayerLite>;
-}) {
-  const loserScore = m.loser_score ?? 0;
-  const scoreDiff = 15 - loserScore;
-
+const SinglesCard = memo(function SinglesCard({ m, playersById }: { m: MatchDetails; playersById: Record<string, PlayerLite> }) {
   const wid = m.winner_id ?? '';
   const lid = m.loser_id ?? '';
 
-  // ✅ ビューが返さなくなっても players から補完
   const wProfile = wid ? playersById[wid] : undefined;
   const lProfile = lid ? playersById[lid] : undefined;
 
   const wName =
-    m.winner_name ??
-    pickString(m, ['winner_handle_name', 'winner_player_name']) ??
-    wProfile?.handle_name ??
-    '';
+    m.winner_name ?? pickString(m, ['winner_handle_name', 'winner_player_name']) ?? wProfile?.handle_name ?? '';
   const lName =
-    m.loser_name ??
-    pickString(m, ['loser_handle_name', 'loser_player_name']) ??
-    lProfile?.handle_name ??
-    '';
+    m.loser_name ?? pickString(m, ['loser_handle_name', 'loser_player_name']) ?? lProfile?.handle_name ?? '';
 
   const wAvatar =
-    m.winner_avatar ??
-    m.winner_avatar_url ??
-    pickString(m, ['winner_avatar_url', 'winner_avatar']) ??
-    wProfile?.avatar_url ??
-    null;
+    m.winner_avatar ?? m.winner_avatar_url ?? pickString(m, ['winner_avatar_url', 'winner_avatar']) ?? wProfile?.avatar_url ?? null;
 
   const lAvatar =
-    m.loser_avatar ??
-    m.loser_avatar_url ??
-    pickString(m, ['loser_avatar_url', 'loser_avatar']) ??
-    lProfile?.avatar_url ??
-    null;
+    m.loser_avatar ?? m.loser_avatar_url ?? pickString(m, ['loser_avatar_url', 'loser_avatar']) ?? lProfile?.avatar_url ?? null;
 
-  const wRP =
-    m.winner_current_points ??
-    pickNumber(m, ['winner_ranking_points', 'winner_points', 'winner_rp']) ??
-    wProfile?.ranking_points ??
-    0;
+  const winnerScore = pickNumber(m, ['winner_score']) ?? 15;
+  const loserScore = pickNumber(m, ['loser_score']) ?? 0;
+  const scoreDiff = Math.max(0, winnerScore - loserScore);
 
-  const wHC =
-    m.winner_current_handicap ??
-    pickNumber(m, ['winner_handicap', 'winner_hc']) ??
-    wProfile?.handicap ??
-    0;
+const wDelta =
+  pickNumber(m, ['winner_points_delta', 'winner_points_change']) ?? 0;
 
-  const lRP =
-    m.loser_current_points ??
-    pickNumber(m, ['loser_ranking_points', 'loser_points', 'loser_rp']) ??
-    lProfile?.ranking_points ??
-    0;
+const lDelta =
+  pickNumber(m, ['loser_points_delta', 'loser_points_change']) ?? 0;
 
-  const lHC =
-    m.loser_current_handicap ??
-    pickNumber(m, ['loser_handicap', 'loser_hc']) ??
-    lProfile?.handicap ??
-    0;
 
-  const wDelta =
-    m.winner_points_change ??
-    pickNumber(m, ['winner_points_delta', 'winner_change']) ??
-    0;
+  const affects = typeof m.affects_rating === 'boolean' ? m.affects_rating : true;
 
-  const lDelta =
-    m.loser_points_change ??
-    pickNumber(m, ['loser_points_delta', 'loser_change']) ??
-    0;
+  const wRP = pickNumber(m, ['winner_current_points', 'winner_ranking_points', 'winner_points', 'winner_rp']) ?? wProfile?.ranking_points ?? 0;
+  const wHC = pickNumber(m, ['winner_current_handicap', 'winner_handicap', 'winner_hc']) ?? wProfile?.handicap ?? 0;
+  const lRP = pickNumber(m, ['loser_current_points', 'loser_ranking_points', 'loser_points', 'loser_rp']) ?? lProfile?.ranking_points ?? 0;
+  const lHC = pickNumber(m, ['loser_current_handicap', 'loser_handicap', 'loser_hc']) ?? lProfile?.handicap ?? 0;
 
-  const isUpset = useMemo(() => {
-    // 今は表示値（補完後）で判定
-    return wRP < lRP - 100 || wHC > lHC + 5;
-  }, [wRP, lRP, wHC, lHC]);
+  const isUpset = useMemo(() => wRP < lRP - 100 || wHC > lHC + 5, [wRP, lRP, wHC, lHC]);
 
   return (
     <div
       className={`bg-gray-900/60 backdrop-blur-md rounded-xl p-4 sm:p-6 border transition-all relative ${
-        isUpset
-          ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10'
-          : 'border-purple-500/30 hover:border-purple-400/50'
+        isUpset ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10' : 'border-purple-500/30 hover:border-purple-400/50'
       }`}
     >
       {isUpset && (
@@ -351,7 +274,6 @@ const SinglesCard = memo(function SinglesCard({
 
       <div className="grid grid-cols-1 gap-3 sm:gap-4">
         <div className="sm:grid sm:grid-cols-3 sm:items-center gap-3 sm:gap-4">
-          {/* 勝者 */}
           <Link href={`/players/${wid}`} prefetch={false} className="group">
             <div
               className={`flex items-center gap-3 p-3 sm:p-4 rounded-lg border transition-all ${
@@ -363,52 +285,37 @@ const SinglesCard = memo(function SinglesCard({
               <LazyImage
                 src={wAvatar}
                 alt={wName || ''}
-                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${
-                  isUpset ? 'border-yellow-500/50' : 'border-green-500/50'
-                }`}
+                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${isUpset ? 'border-yellow-500/50' : 'border-green-500/50'}`}
               />
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {wName}
-                </p>
-                <p
-                  className={`text-xs sm:text-sm ${
-                    isUpset ? 'text-yellow-400' : 'text-green-400'
-                  }`}
-                >
-                  勝利
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{wName}</p>
+                <p className={`text-xs sm:text-sm ${isUpset ? 'text-yellow-400' : 'text-green-400'}`}>勝利</p>
                 <div className="flex gap-3 text-xs text-gray-400">
                   <span>RP: {wRP}</span>
                   <span>HC: {wHC}</span>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-xl sm:text-2xl font-bold text-white">15</p>
-                <p
-                  className={`text-xs sm:text-sm font-medium ${
-                    wDelta > 0 ? 'text-green-400' : 'text-red-400'
-                  }`}
-                >
-                  {wDelta > 0 ? '+' : ''}
-                  {wDelta}pt
+                <p className="text-xl sm:text-2xl font-bold text-white">{winnerScore}</p>
+                <p className={`text-xs sm:text-sm font-medium ${wDelta > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {affects ? (
+                    <>
+                      {wDelta > 0 ? '+' : ''}
+                      {wDelta}pt
+                    </>
+                  ) : (
+                    <>—</>
+                  )}
                 </p>
               </div>
             </div>
           </Link>
 
-          {/* VS */}
           <div className="text-center my-2 sm:my-0">
-            <ScoreDiffPill
-              diff={scoreDiff}
-              highlight={isUpset ? 'upset' : undefined}
-            />
-            <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">
-              点差: {scoreDiff}
-            </p>
+            <ScoreDiffPill diff={scoreDiff} highlight={isUpset ? 'upset' : undefined} />
+            <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">点差: {scoreDiff}</p>
           </div>
 
-          {/* 敗者 */}
           <Link href={`/players/${lid}`} prefetch={false} className="group">
             <div className="flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 group-hover:border-red-400/50 transition-all">
               <LazyImage
@@ -417,9 +324,7 @@ const SinglesCard = memo(function SinglesCard({
                 className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-red-500/50"
               />
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {lName}
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{lName}</p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
                 <div className="flex gap-3 text-xs text-gray-400">
                   <span>RP: {lRP}</span>
@@ -427,12 +332,8 @@ const SinglesCard = memo(function SinglesCard({
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-xl sm:text-2xl font-bold text-white">
-                  {loserScore}
-                </p>
-                <p className="text-xs sm:text-sm text-red-400 font-medium">
-                  {lDelta}pt
-                </p>
+                <p className="text-xl sm:text-2xl font-bold text-white">{loserScore}</p>
+                <p className="text-xs sm:text-sm text-red-400 font-medium">{affects ? <>{lDelta}pt</> : <>—</>}</p>
               </div>
             </div>
           </Link>
@@ -448,18 +349,14 @@ const SinglesCard = memo(function SinglesCard({
   );
 });
 
-/* ─────────────── 団体戦カード（チームのメンバー表示付き） ─────────────── */
-
 function TeamMembersRow({ members }: { members: MemberProfile[] }) {
   const router = useRouter();
-
   if (!members?.length) return null;
   const shown = members.slice(0, 4);
   const rest = members.length - shown.length;
 
   return (
     <div className="mt-1">
-      {/* アバター重ね表示 */}
       <div className="flex -space-x-3">
         {shown.map((p) => (
           <button
@@ -467,7 +364,7 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
             type="button"
             title={p.handle_name}
             onClick={(e) => {
-              e.preventDefault(); // 親の Link クリックを止める
+              e.preventDefault();
               e.stopPropagation();
               router.push(`/players/${p.id}`);
             }}
@@ -492,32 +389,18 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
           </div>
         )}
       </div>
-
-      {/* 名前リスト（小さく・折り返し） */}
-      <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">
-        {members.map((m) => m.handle_name).join(' / ')}
-      </div>
+      <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">{members.map((m) => m.handle_name).join(' / ')}</div>
     </div>
   );
 }
 
+const TeamsCard = memo(function TeamsCard({ m, membersByTeam }: { m: MatchDetails; membersByTeam: Record<string, MemberProfile[]> }) {
+  const winnerScore = pickNumber(m, ['winner_score']) ?? 15;
+  const loserScore = pickNumber(m, ['loser_score']) ?? 0;
+  const scoreDiff = Math.max(0, winnerScore - loserScore);
 
-const TeamsCard = memo(function TeamsCard({
-  m,
-  membersByTeam,
-}: {
-  m: MatchDetails;
-  membersByTeam: Record<string, MemberProfile[]>;
-}) {
-  const loserScore = m.loser_score ?? 0;
-  const scoreDiff = 15 - loserScore;
-
-  const winnerMembers = m.winner_team_id
-    ? membersByTeam[m.winner_team_id] ?? []
-    : [];
-  const loserMembers = m.loser_team_id
-    ? membersByTeam[m.loser_team_id] ?? []
-    : [];
+  const winnerMembers = m.winner_team_id ? membersByTeam[m.winner_team_id] ?? [] : [];
+  const loserMembers = m.loser_team_id ? membersByTeam[m.loser_team_id] ?? [] : [];
 
   return (
     <div className="bg-gray-900/60 backdrop-blur-md rounded-xl p-4 sm:p-6 border border-purple-500/30 hover:border-purple-400/50 transition-all">
@@ -525,58 +408,39 @@ const TeamsCard = memo(function TeamsCard({
 
       <div className="grid grid-cols-1 gap-3 sm:gap-4">
         <div className="sm:grid sm:grid-cols-3 sm:items-center gap-3 sm:gap-4">
-          {/* 勝利チーム */}
-          <Link
-            href={`/teams/${m.winner_team_id ?? ''}`}
-            prefetch={false}
-            className="group"
-          >
+          <Link href={`/teams/${m.winner_team_id ?? ''}`} prefetch={false} className="group">
             <div className="flex-1 flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/30 group-hover:border-green-400/50 transition-all">
               <span className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-yellow-500/20 border-2 border-yellow-400/40 flex items-center justify-center">
                 <FaUsers className="text-yellow-300" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.winner_team_name ?? '—'}
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.winner_team_name ?? '—'}</p>
                 <p className="text-xs sm:text-sm text-green-400">勝利</p>
                 <TeamMembersRow members={winnerMembers} />
               </div>
               <div className="ml-auto text-right">
-                <p className="text-xl sm:text-2xl font-bold text-white">15</p>
+                <p className="text-xl sm:text-2xl font-bold text-white">{winnerScore}</p>
               </div>
             </div>
           </Link>
 
-          {/* VS */}
           <div className="text-center my-2 sm:my-0">
             <ScoreDiffPill diff={scoreDiff} />
-            <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">
-              点差: {scoreDiff}
-            </p>
+            <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">点差: {scoreDiff}</p>
           </div>
 
-          {/* 敗北チーム */}
-          <Link
-            href={`/teams/${m.loser_team_id ?? ''}`}
-            prefetch={false}
-            className="group"
-          >
+          <Link href={`/teams/${m.loser_team_id ?? ''}`} prefetch={false} className="group">
             <div className="flex-1 flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 group-hover:border-red-400/50 transition-all">
               <span className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gray-600/30 border-2 border-purple-400/30 flex items-center justify-center">
                 <FaUsers className="text-purple-200" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.loser_team_name ?? '—'}
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.loser_team_name ?? '—'}</p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
                 <TeamMembersRow members={loserMembers} />
               </div>
               <div className="ml-auto text-right">
-                <p className="text-xl sm:text-2xl font-bold text-white">
-                  {loserScore}
-                </p>
+                <p className="text-xl sm:text-2xl font-bold text-white">{loserScore}</p>
               </div>
             </div>
           </Link>
@@ -592,21 +456,14 @@ const TeamsCard = memo(function TeamsCard({
   );
 });
 
-/* ─────────────── ページ本体 ─────────────── */
-
 export default function MatchesPage() {
   const { matches, loading, error, retrying, refetch } = useMatchesData();
-
   const isSmall = useIsSmallScreen();
 
-  // フィルタ
   const [filter, setFilter] = useState<'all' | 'normal' | 'tournament'>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>(
-    'all'
-  );
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
 
-  // 検索・絞り込み（個人戦/団体戦どちらでも成立するよう拡張）
   const filteredSortedMatches = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const now = new Date();
@@ -621,22 +478,13 @@ export default function MatchesPage() {
         (m.venue ?? '').toLowerCase().includes(term) ||
         (m.tournament_name ?? '').toLowerCase().includes(term);
 
-      const typeHit =
-        filter === 'all'
-          ? true
-          : filter === 'tournament'
-            ? !!m.is_tournament
-            : !m.is_tournament;
+      const typeHit = filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
 
       const d = new Date(m.match_date);
       let dateHit = true;
-      if (dateFilter === 'today') {
-        dateHit = d.toDateString() === now.toDateString();
-      } else if (dateFilter === 'week') {
-        dateHit = d >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      } else if (dateFilter === 'month') {
-        dateHit = d >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      }
+      if (dateFilter === 'today') dateHit = d.toDateString() === now.toDateString();
+      else if (dateFilter === 'week') dateHit = d >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      else if (dateFilter === 'month') dateHit = d >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
       return searchHit && typeHit && dateHit;
     });
@@ -645,13 +493,11 @@ export default function MatchesPage() {
     return filtered;
   }, [matches, searchTerm, filter, dateFilter]);
 
-  /* ── 追加：表示対象のプレイヤー(RP/HC/Avatar/Name)を players から補完 ── */
   const [playersById, setPlayersById] = useState<Record<string, PlayerLite>>({});
 
   const visiblePlayerIds = useMemo(() => {
     const ids = new Set<string>();
     for (const m of filteredSortedMatches) {
-      // 個人戦だけ対象
       const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
       if (isTeams) continue;
       if (m.winner_id) ids.add(m.winner_id);
@@ -670,7 +516,7 @@ export default function MatchesPage() {
       try {
         const inPlayers = visiblePlayerIds.map((id) => `"${id}"`).join(',');
         const rows = await restGet<PlayerLite[]>(
-          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url,ranking_points,handicap`
+          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url,ranking_points,handicap`,
         );
         const dict: Record<string, PlayerLite> = {};
         for (const r of rows ?? []) {
@@ -685,7 +531,7 @@ export default function MatchesPage() {
         }
         if (!cancelled) setPlayersById(dict);
       } catch {
-        // 補完に失敗しても一覧自体は表示（0表示のままでも落とさない）
+        // ignore
       }
     })();
     return () => {
@@ -693,7 +539,6 @@ export default function MatchesPage() {
     };
   }, [visiblePlayerIds]);
 
-  /* ── チームメンバー取得（既存のまま） ── */
   const [membersByTeam, setMembersByTeam] = useState<Record<string, MemberProfile[]>>({});
 
   const visibleTeamIds = useMemo(() => {
@@ -715,7 +560,7 @@ export default function MatchesPage() {
       try {
         const inTeams = visibleTeamIds.map((id) => `"${id}"`).join(',');
         const tm = await restGet<{ team_id: string; player_id: string }[]>(
-          `/rest/v1/team_members?team_id=in.(${inTeams})&select=team_id,player_id`
+          `/rest/v1/team_members?team_id=in.(${inTeams})&select=team_id,player_id`,
         );
 
         const pids = Array.from(new Set(tm.map((r) => r.player_id)));
@@ -726,7 +571,7 @@ export default function MatchesPage() {
 
         const inPlayers = pids.map((id) => `"${id}"`).join(',');
         const players = await restGet<MemberProfile[]>(
-          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url`
+          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url`,
         );
         const pmap = new Map(players.map((p) => [p.id, p]));
 
@@ -738,14 +583,12 @@ export default function MatchesPage() {
         }
 
         for (const k of Object.keys(grouped)) {
-          grouped[k] = grouped[k].sort((a, b) =>
-            a.handle_name.localeCompare(b.handle_name, 'ja')
-          );
+          grouped[k] = grouped[k].sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'));
         }
 
         if (!cancelled) setMembersByTeam(grouped);
       } catch {
-        // 失敗時は黙って空のまま
+        // ignore
       }
     })();
     return () => {
@@ -753,45 +596,40 @@ export default function MatchesPage() {
     };
   }, [visibleTeamIds]);
 
-  // 統計
   const stats = useMemo(() => {
     const arr = matches as MatchDetails[];
     const totalMatches = arr.length;
-    const todayMatches =
-      arr.filter(
-        (m) => new Date(m.match_date).toDateString() === new Date().toDateString()
-      ).length;
+    const todayMatches = arr.filter((m) => new Date(m.match_date).toDateString() === new Date().toDateString()).length;
     const tournamentMatches = arr.filter((m) => !!m.is_tournament).length;
+
     const avgScoreDiff =
       arr.length > 0
-        ? arr.reduce((s, m) => s + (15 - (m.loser_score ?? 0)), 0) / arr.length
+        ? arr.reduce((s, m) => {
+            const ws = pickNumber(m, ['winner_score']) ?? 15;
+            const ls = pickNumber(m, ['loser_score']) ?? 0;
+            return s + Math.max(0, ws - ls);
+          }, 0) / arr.length
         : 0;
+
     return { totalMatches, todayMatches, tournamentMatches, avgScoreDiff };
   }, [matches]);
 
-  // 仮想化は PC 以上のみ。モバイルでは通常レンダリング（クリップ防止）
   const useVirtual = !isSmall && filteredSortedMatches.length > 20;
   const virtualItemHeight = useMemo(() => 240, []);
 
-  // 仮想スクロール描画
   const renderItem = useCallback(
     (index: number) => {
       const m = filteredSortedMatches[index];
       if (!m) return null;
       const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
-      return isTeams ? (
-        <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
-      ) : (
-        <SinglesCard key={m.id} m={m} playersById={playersById} />
-      );
+      return isTeams ? <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} /> : <SinglesCard key={m.id} m={m} playersById={playersById} />;
     },
-    [filteredSortedMatches, membersByTeam, playersById]
+    [filteredSortedMatches, membersByTeam, playersById],
   );
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
       <div className="container mx-auto px-4 py-6 sm:py-8">
-        {/* ヘッダー */}
         <div className="text-center mb-8 sm:mb-12">
           <div className="flex items-center justify-center gap-3 mb-3 sm:mb-4">
             <div className="p-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full">
@@ -801,12 +639,9 @@ export default function MatchesPage() {
           <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">
             試合結果
           </h1>
-          <p className="text-gray-400 text-sm sm:text-base">
-            個人戦・団体戦を時系列で一覧
-          </p>
+          <p className="text-gray-400 text-sm sm:text-base">個人戦・団体戦を時系列で一覧</p>
         </div>
 
-        {/* ローディング/エラー */}
         <MobileLoadingState
           loading={loading}
           error={error}
@@ -816,42 +651,31 @@ export default function MatchesPage() {
           dataLength={(matches as MatchDetails[]).length}
         />
 
-        {/* コンテンツ */}
         {!loading && !error && (matches as MatchDetails[]).length > 0 && (
           <>
-            {/* 統計カード */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-4 sm:p-6 text-center transform hover:scale-105 transition-all">
                 <FaGamepad className="text-2xl sm:text-3xl text-purple-400 mx-auto mb-2 sm:mb-3" />
-                <div className="text-2xl sm:text-3xl font-bold text-white">
-                  {stats.totalMatches}
-                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stats.totalMatches}</div>
                 <div className="text-xs sm:text-sm text-gray-400">総試合数</div>
               </div>
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-4 sm:p-6 text-center transform hover:scale-105 transition-all">
                 <FaCalendar className="text-2xl sm:text-3xl text-blue-400 mx-auto mb-2 sm:mb-3" />
-                <div className="text-2xl sm:text-3xl font-bold text-white">
-                  {stats.todayMatches}
-                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stats.todayMatches}</div>
                 <div className="text-xs sm:text-sm text-gray-400">本日の試合</div>
               </div>
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-4 sm:p-6 text-center transform hover:scale-105 transition-all">
                 <FaMedal className="text-2xl sm:text-3xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
-                <div className="text-2xl sm:text-3xl font-bold text-white">
-                  {stats.tournamentMatches}
-                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stats.tournamentMatches}</div>
                 <div className="text-xs sm:text-sm text-gray-400">大会試合</div>
               </div>
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-4 sm:p-6 text-center transform hover:scale-105 transition-all">
                 <FaTrophy className="text-2xl sm:text-3xl text-green-400 mx-auto mb-2 sm:mb-3" />
-                <div className="text-2xl sm:text-3xl font-bold text-white">
-                  {stats.avgScoreDiff.toFixed(1)}
-                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stats.avgScoreDiff.toFixed(1)}</div>
                 <div className="text-xs sm:text-sm text-gray-400">平均点差</div>
               </div>
             </div>
 
-            {/* 新規登録ボタン */}
             <div className="flex justify-center mb-6 sm:mb-8">
               <Link
                 href="/matches/register"
@@ -862,7 +686,6 @@ export default function MatchesPage() {
               </Link>
             </div>
 
-            {/* 検索・フィルター */}
             <div className="mb-6 sm:mb-8 space-y-3 sm:space-y-4">
               <input
                 type="text"
@@ -873,7 +696,6 @@ export default function MatchesPage() {
               />
 
               <div className="flex flex-wrap gap-2 sm:gap-3">
-                {/* 試合タイプフィルター */}
                 <div className="flex gap-2">
                   {(['all', 'normal', 'tournament'] as const).map((k) => (
                     <button
@@ -890,49 +712,30 @@ export default function MatchesPage() {
                   ))}
                 </div>
 
-                {/* 期間フィルター */}
                 <select
                   value={dateFilter}
                   onChange={(e) => setDateFilter(e.target.value as any)}
                   className="px-3 sm:px-4 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 text-sm sm:text-base"
                 >
-                  <option value="all" className="bg-gray-800">
-                    全期間
-                  </option>
-                  <option value="today" className="bg-gray-800">
-                    今日
-                  </option>
-                  <option value="week" className="bg-gray-800">
-                    過去7日間
-                  </option>
-                  <option value="month" className="bg-gray-800">
-                    過去30日間
-                  </option>
+                  <option value="all" className="bg-gray-800">全期間</option>
+                  <option value="today" className="bg-gray-800">今日</option>
+                  <option value="week" className="bg-gray-800">過去7日間</option>
+                  <option value="month" className="bg-gray-800">過去30日間</option>
                 </select>
               </div>
             </div>
 
-            {/* 試合一覧（個人戦/団体戦混在） */}
             {filteredSortedMatches.length === 0 ? (
               <div className="text-center py-12 sm:py-16">
                 <FaGamepad className="text-5xl sm:text-6xl text-gray-600 mx-auto mb-4" />
-                <p className="text-gray-400 text-sm sm:text-base">
-                  条件に合う試合が見つかりません
-                </p>
+                <p className="text-gray-400 text-sm sm:text-base">条件に合う試合が見つかりません</p>
               </div>
             ) : !useVirtual ? (
               <div className="space-y-3 sm:space-y-4">
                 {filteredSortedMatches.map((m) => {
-                  const isTeams =
-                    m.mode === 'teams' ||
-                    !!m.winner_team_name ||
-                    !!m.loser_team_name;
+                  const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
                   return isTeams ? (
-                    <TeamsCard
-                      key={m.id}
-                      m={m}
-                      membersByTeam={membersByTeam}
-                    />
+                    <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
                   ) : (
                     <SinglesCard key={m.id} m={m} playersById={playersById} />
                   );
