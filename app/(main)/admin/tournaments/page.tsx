@@ -1,4 +1,3 @@
-// app/(main)/admin/tournaments/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -53,18 +52,11 @@ export default function AdminTournamentsPage() {
         }
 
         const [adminResp, playerResp] = await Promise.all([
-          (supabase.from('app_admins') as any)
-            .select('user_id')
-            .eq('user_id', user.id)
-            .maybeSingle(),
-          (supabase.from('players') as any)
-            .select('is_admin')
-            .eq('id', user.id)
-            .maybeSingle(),
+          (supabase.from('app_admins') as any).select('user_id').eq('user_id', user.id).maybeSingle(),
+          (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
         ]);
 
-        const isAdmin =
-          Boolean(adminResp?.data?.user_id) || playerResp?.data?.is_admin === true;
+        const isAdmin = Boolean(adminResp?.data?.user_id) || playerResp?.data?.is_admin === true;
 
         if (cancelled) return;
         setAuthz(isAdmin ? 'ok' : 'no');
@@ -136,9 +128,7 @@ export default function AdminTournamentsPage() {
 
       // 画面反映
       setTournaments((prev) =>
-        prev.map((t) =>
-          t.id === editing.id ? { ...t, name, description: description || null } : t,
-        ),
+        prev.map((t) => (t.id === editing.id ? { ...t, name, description: description || null } : t)),
       );
 
       closeEdit();
@@ -179,7 +169,6 @@ export default function AdminTournamentsPage() {
             </h1>
           </div>
 
-          {/* ✅ 追加：新規大会作成への導線（UI崩さず最小） */}
           <div className="flex items-center gap-2">
             <Link
               href="/admin/tournaments/new"
@@ -204,11 +193,8 @@ export default function AdminTournamentsPage() {
         {/* body */}
         <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6">
           <div className="flex items-center justify-between mb-3">
-            <div className="text-sm text-gray-300">
-              一覧から「編集」で大会名・説明を更新できます。
-            </div>
+            <div className="text-sm text-gray-300">一覧から「編集」で大会名・説明を更新できます。</div>
 
-            {/* ✅ 右側：既存の再読み込み + 追加の新規大会リンク（控えめ） */}
             <div className="flex items-center gap-2">
               <Link
                 href="/admin/tournaments/new"
@@ -247,6 +233,7 @@ export default function AdminTournamentsPage() {
                     <th className="border border-gray-700 px-2 py-2 text-left">管理</th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {tournaments.map((t) => {
                     const dateLabel = t.tournament_date
@@ -269,30 +256,53 @@ export default function AdminTournamentsPage() {
                         <td className="border border-gray-700 px-2 py-2">
                           <div className="font-medium">{t.name || '(名称未設定)'}</div>
                           {t.description && (
-                            <div className="text-xs text-gray-400 line-clamp-2">
-                              {t.description}
-                            </div>
+                            <div className="text-xs text-gray-400 line-clamp-2">{t.description}</div>
                           )}
                         </td>
+
                         <td className="border border-gray-700 px-2 py-2">{dateLabel}</td>
                         <td className="border border-gray-700 px-2 py-2">{modeLabel}</td>
+
+                        {/* 公開リンク群 */}
                         <td className="border border-gray-700 px-2 py-2">
-                          <Link
-                            href={`/tournaments/${t.id}/league/results`}
-                            className="text-xs text-green-300 underline hover:text-green-200"
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            リーグ結果
-                          </Link>
+                          <div className="flex flex-col gap-1">
+                            <Link
+                              href={`/tournaments/${t.id}/league/results`}
+                              className="text-xs text-green-300 underline hover:text-green-200"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              リーグ結果
+                            </Link>
+
+                            {/* ✅ 追加：トーナメント結果（公開） */}
+                            <Link
+                              href={`/tournaments/${t.id}/finals`}
+                              className="text-xs text-emerald-300 underline hover:text-emerald-200"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              トーナメント結果
+                            </Link>
+                          </div>
                         </td>
+
+                        {/* 管理リンク群 */}
                         <td className="border border-gray-700 px-2 py-2">
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-3">
                             <Link
                               href={`/admin/tournaments/${t.id}/league`}
                               className="text-xs text-blue-300 underline hover:text-blue-200"
                             >
                               ブロック管理
+                            </Link>
+
+                            {/* ✅ 追加：トーナメント管理（管理） */}
+                            <Link
+                              href={`/admin/tournaments/${t.id}/finals`}
+                              className="text-xs text-purple-200 underline hover:text-purple-100"
+                            >
+                              トーナメント管理
                             </Link>
 
                             <button
@@ -310,6 +320,10 @@ export default function AdminTournamentsPage() {
                   })}
                 </tbody>
               </table>
+
+              <div className="mt-3 text-[11px] text-gray-400">
+                ※「トーナメント結果」は公開画面（別タブ）、「トーナメント管理」は管理画面です。
+              </div>
             </div>
           )}
         </div>

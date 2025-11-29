@@ -14,7 +14,6 @@ type Tournament = {
   name: string | null;
   start_date: string | null;
   notes: string | null;
-  // ★追加：説明文も出したい場合に備えて（存在しないなら null になるだけ）
   description?: string | null;
 };
 
@@ -47,25 +46,25 @@ type Player = {
 type MatchCard = {
   id: string;
   league_block_id: string;
+
+  // ★重要：対戦相手は player_a_id / player_b_id を基準にする
   player_a_id: string;
   player_b_id: string;
+
   winner_id: string | null;
   loser_id: string | null;
   winner_score: number | null;
   loser_score: number | null;
 
-  // ★追加
   end_reason: string | null;
   time_limit_seconds: number | null;
 };
 
 /* ========= Helpers ========= */
 function getPointDiffSafe(r: any): number {
-  // point_diff があればそれを優先（ただし NaN/undefined は却下）
   const direct = Number(r.point_diff ?? r.pointDiff);
   if (Number.isFinite(direct)) return direct;
 
-  // 無ければ points_for - points_against を計算
   const pf = Number(r.points_for ?? r.pointsFor ?? r.gf ?? r.goals_for ?? 0);
   const pa = Number(r.points_against ?? r.pointsAgainst ?? r.ga ?? r.goals_against ?? 0);
   const calc = pf - pa;
@@ -73,12 +72,8 @@ function getPointDiffSafe(r: any): number {
 }
 
 function resolveBlockWinner(block: LeagueBlock, ranking: RankingRow[], isComplete: boolean): string | null {
-  // 管理者が手動指定しているなら、それを最優先
   if (block.winner_player_id) return block.winner_player_id;
-
-  // 3試合（必要数）が揃っていないなら、自動決定しない
   if (!isComplete) return null;
-
   if (!ranking.length) return null;
 
   const sorted = [...ranking].sort((a, b) => {
@@ -99,7 +94,6 @@ function resolveBlockWinner(block: LeagueBlock, ranking: RankingRow[], isComplet
   const topWins = Number(top.wins ?? 0);
   const topPd = getPointDiffSafe(top);
 
-  // 勝数・得失点差が並ぶなら「三すくみ/同率」→ 手動決定待ち
   const hasTie = sorted.some(
     (row, idx) => idx > 0 && Number(row.wins ?? 0) === topWins && getPointDiffSafe(row) === topPd
   );
@@ -116,7 +110,13 @@ function computeDisplayRank(ranking: RankingRow[], idx: number): number {
 
   const isAllSame =
     ranking.length > 1 &&
-    ranking.every((r) => r.wins === base.wins && r.losses === base.losses && getPointDiffSafe(r) === baseDiff && baseDiff === 0);
+    ranking.every(
+      (r) =>
+        r.wins === base.wins &&
+        r.losses === base.losses &&
+        getPointDiffSafe(r) === baseDiff &&
+        baseDiff === 0
+    );
 
   if (isAllSame) return 1;
   return idx + 1;
@@ -172,7 +172,6 @@ function EndReasonBadge({
   );
 }
 
-
 /* ========= Page ========= */
 export default function TournamentLeagueResultsPage() {
   const params = useParams();
@@ -185,11 +184,9 @@ export default function TournamentLeagueResultsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ===== 得失点差 表示用 =====
   const calcPointDiff = (r: any) => getPointDiffSafe(r);
   const formatSigned = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
-  // ===== 重さ対策：ブロックごとに試合をまとめる =====
   const matchCardsByBlock = useMemo(() => {
     const m = new Map<string, MatchCard[]>();
     for (const c of matchCards) {
@@ -226,7 +223,7 @@ export default function TournamentLeagueResultsPage() {
       }
       setTournament(tRow as Tournament);
 
-      /* ---- 2) この大会のリーグブロック一覧 ---- */
+      /* ---- 2) ブロック一覧 ---- */
       const { data: blockRows, error: bErr } = await supabase
         .from('league_blocks')
         .select('id,label,status,tournament_id,winner_player_id,ranking_json')
@@ -250,40 +247,7 @@ export default function TournamentLeagueResultsPage() {
       }));
       setBlocks(lbList);
 
-      /* ---- 3) 全ブロックで使われているプレーヤーを一括取得 ---- */
-      const allPlayerIds = Array.from(
-        new Set(
-          lbList.flatMap((lb) => [
-            ...(lb.ranking_json ?? []).map((r) => r.player_id),
-            lb.winner_player_id ?? undefined,
-          ])
-        )
-      ).filter(Boolean) as string[];
-
-      if (allPlayerIds.length > 0) {
-        const { data: pRows, error: pErr } = await supabase
-          .from('players')
-          .select('id,handle_name,avatar_url,ranking_points,handicap')
-          .in('id', allPlayerIds);
-
-        if (pErr) {
-          console.error('[league/results] players fetch error:', pErr);
-        } else if (pRows) {
-          const dict: Record<string, Player> = {};
-          pRows.forEach((p: any) => {
-            dict[p.id] = {
-              id: p.id,
-              handle_name: p.handle_name,
-              avatar_url: p.avatar_url,
-              ranking_points: p.ranking_points,
-              handicap: p.handicap,
-            };
-          });
-          setPlayers(dict);
-        }
-      }
-
-      /* ---- 4) 全ブロックの試合を取得 ---- */
+      /* ---- 3) 試合（カード）を取得：未入力も含めて pair ごとに最新を採用 ---- */
       const blockIds = lbList.map((lb) => lb.id);
       let cards: MatchCard[] = [];
 
@@ -291,7 +255,7 @@ export default function TournamentLeagueResultsPage() {
         const { data: matchesData, error: mErr } = await supabase
           .from('matches')
           .select(
-            'id,league_block_id,winner_id,loser_id,winner_score,loser_score,match_date,end_reason,time_limit_seconds'
+            'id,league_block_id,player_a_id,player_b_id,winner_id,loser_id,winner_score,loser_score,match_date,end_reason,time_limit_seconds'
           )
           .eq('tournament_id', tournamentId)
           .in('league_block_id', blockIds)
@@ -306,15 +270,15 @@ export default function TournamentLeagueResultsPage() {
           const latestByBlockPair = new Map<string, any>();
 
           for (const m of raw) {
-            // ★未完了試合はここで除外される（= 自動優勝判定の「未完了」判定に効く）
-            if (!m.winner_id || !m.loser_id || !m.league_block_id) continue;
-            const key = m.league_block_id + '::' + pairKey(m.winner_id, m.loser_id);
+            if (!m.league_block_id || !m.player_a_id || !m.player_b_id) continue;
+
+            const key = m.league_block_id + '::' + pairKey(String(m.player_a_id), String(m.player_b_id));
             const prev = latestByBlockPair.get(key);
             if (!prev) {
               latestByBlockPair.set(key, m);
             } else {
-              const prevDate = prev.match_date ?? '';
-              const currDate = m.match_date ?? '';
+              const prevDate = String(prev.match_date ?? '');
+              const currDate = String(m.match_date ?? '');
               if (currDate > prevDate) latestByBlockPair.set(key, m);
             }
           }
@@ -325,8 +289,8 @@ export default function TournamentLeagueResultsPage() {
             cards.push({
               id: m.id ?? `card-${idx}`,
               league_block_id: blockIdForCard,
-              player_a_id: m.winner_id as string,
-              player_b_id: m.loser_id as string,
+              player_a_id: String(m.player_a_id),
+              player_b_id: String(m.player_b_id),
               winner_id: m.winner_id ?? null,
               loser_id: m.loser_id ?? null,
               winner_score: typeof m.winner_score === 'number' ? m.winner_score : m.winner_score ?? null,
@@ -341,6 +305,45 @@ export default function TournamentLeagueResultsPage() {
       }
 
       setMatchCards(cards);
+
+      /* ---- 4) プレーヤー一括取得（ranking_json + winner + 対戦カードのA/Bも含める = defを確実に取る） ---- */
+      const idsFromRanking = lbList.flatMap((lb) => [
+        ...(lb.ranking_json ?? []).map((r) => r.player_id),
+        lb.winner_player_id ?? undefined,
+      ]);
+
+      const idsFromCards = cards.flatMap((c) => [
+        c.player_a_id,
+        c.player_b_id,
+        c.winner_id ?? undefined,
+        c.loser_id ?? undefined,
+      ]);
+
+      const allPlayerIds = Array.from(new Set([...idsFromRanking, ...idsFromCards].filter(Boolean))) as string[];
+
+      if (allPlayerIds.length > 0) {
+        const { data: pRows, error: pErr } = await supabase
+          .from('players')
+          .select('id,handle_name,avatar_url,ranking_points,handicap')
+          .in('id', allPlayerIds);
+
+        if (pErr) {
+          console.error('[league/results] players fetch error:', pErr);
+        } else if (pRows) {
+          const dict: Record<string, Player> = {};
+          pRows.forEach((p: any) => {
+            dict[String(p.id)] = {
+              id: String(p.id),
+              handle_name: p.handle_name ?? null,
+              avatar_url: p.avatar_url ?? null,
+              ranking_points: p.ranking_points ?? null,
+              handicap: p.handicap ?? null,
+            };
+          });
+          setPlayers(dict);
+        }
+      }
+
       setLoading(false);
     } catch (e) {
       console.error('[league/results] fatal error:', e);
@@ -375,25 +378,21 @@ export default function TournamentLeagueResultsPage() {
         {/* 各ブロックの結果 */}
         {blocks.map((block) => {
           const ranking = (block.ranking_json ?? []) as RankingRow[];
-
           const blockMatches = matchCardsByBlock.get(block.id) ?? [];
 
-          // 期待試合数 = nC2（3人なら3試合）
+          // ※ ranking_json は dummy を除外している前提（あなたの finalize_league_block がそうなっている）
           const n = ranking.length;
           const expectedMatches = n >= 2 ? (n * (n - 1)) / 2 : 0;
 
-          // 完了試合数（このページでは「勝者/敗者/両スコアあり」を完了とみなす）
           const completedMatches = blockMatches.filter(
             (m) => m.winner_id && m.loser_id && m.winner_score != null && m.loser_score != null
           ).length;
 
-          // 全試合が揃っていない時は自動優勝を出さない
           const isComplete = expectedMatches > 0 && completedMatches >= expectedMatches;
 
           const winnerId = resolveBlockWinner(block, ranking, isComplete);
           const winnerPlayer = winnerId ? players[winnerId] : undefined;
 
-          // block.status が finished でも、winnerId が null なら出さない（=未完了/三すくみは手動待ち）
           const showWinnerCard = !!winnerPlayer && block.status === 'finished';
 
           let winnerBlockRank: number | null = null;
@@ -533,7 +532,6 @@ export default function TournamentLeagueResultsPage() {
           );
         })}
 
-        {/* 戻るリンク */}
         <div className="mt-6 text-right text-xs">
           <Link href={`/tournaments/${tournament.id}/league`} className="text-blue-300 underline">
             大会のリーグ一覧に戻る

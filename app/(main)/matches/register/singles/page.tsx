@@ -7,12 +7,12 @@ import { useRouter } from 'next/navigation';
 import {
   FaGamepad,
   FaLock,
-  FaTrophy,
   FaCalendar,
   FaUserFriends,
   FaMinus,
   FaPlus,
   FaShieldAlt,
+  FaTrophy,
 } from 'react-icons/fa';
 
 import { createClient } from '@/lib/supabase/client';
@@ -32,11 +32,6 @@ type PlayerAdminRow = {
 };
 
 type AdminRow = { user_id: string };
-
-type Tournament = {
-  id: string;
-  name: string | null;
-};
 
 type EndReason = 'normal' | 'time_limit';
 
@@ -61,8 +56,7 @@ const toInt = (v: string | number, fb = 0) => {
   return Number.isFinite(n) ? n : fb;
 };
 
-const clamp = (n: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, n));
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 function toIsoFromDatetimeLocal(v: string) {
   // datetime-local は "YYYY-MM-DDTHH:mm"
@@ -111,16 +105,8 @@ export default function SinglesRegisterPage() {
       }
 
       const [playerResp, adminResp] = await Promise.all([
-        supabase
-          .from('players')
-          .select('id,is_admin')
-          .eq('id', user.id)
-          .maybeSingle<PlayerAdminRow>(),
-        supabase
-          .from('app_admins')
-          .select('user_id')
-          .eq('user_id', user.id)
-          .maybeSingle<AdminRow>(),
+        supabase.from('players').select('id,is_admin').eq('id', user.id).maybeSingle<PlayerAdminRow>(),
+        supabase.from('app_admins').select('user_id').eq('user_id', user.id).maybeSingle<AdminRow>(),
       ]);
 
       const playerRow = (playerResp?.data ?? null) as PlayerAdminRow | null;
@@ -141,38 +127,6 @@ export default function SinglesRegisterPage() {
     loading: playersLoading,
     error: playersError,
   } = useFetchPlayersData({ enabled: authed === true, requireAuth: true });
-
-  // ==== 大会一覧（任意指定用：UI維持のため残すが、現APIは tournament_id を使っていない） ====
-  const [tournaments, setTournaments] = useState<Tournament[]>([]);
-  const [tournamentsLoading, setTournamentsLoading] = useState(false);
-  const [selectedTournamentId, setSelectedTournamentId] = useState('');
-
-  useEffect(() => {
-    if (authed !== true) return;
-    let cancelled = false;
-
-    (async () => {
-      setTournamentsLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from('tournaments')
-          .select('id, name, created_at')
-          .order('created_at', { ascending: false });
-
-        if (!error && !cancelled) {
-          setTournaments((data ?? []) as Tournament[]);
-        }
-      } catch (e) {
-        console.warn('[singles/register] tournaments fetch error:', e);
-      } finally {
-        if (!cancelled) setTournamentsLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authed, supabase]);
 
   // ==== フォーム状態 ====
   const [matchDate, setMatchDate] = useState(new Date().toISOString().slice(0, 16));
@@ -241,8 +195,7 @@ export default function SinglesRegisterPage() {
 
       const match_date = toIsoFromDatetimeLocal(matchDate);
 
-      // ★API(route.ts)は mode + winner_id/loser_id を必須としている
-      // ★time_limit は「apply_rating=false」でレート変動しない運用に合わせる
+      // ★time_limit は「apply_rating=false」でレート変動しない運用
       const apply_rating = endReason !== 'time_limit';
 
       let winner_id = '';
@@ -260,9 +213,9 @@ export default function SinglesRegisterPage() {
         loser_id = iWon ? opponentId : me.id;
       }
 
-      // ✅ これが /api/matches が期待する形（余計なキーを送らない）
+      // ✅ /api/matches が期待する形（大会指定は撤廃）
       const payload: any = {
-        mode: 'singles', // or 'player' でもOK（route.tsの判定に通る）
+        mode: 'singles',
         match_date,
         winner_id,
         loser_id,
@@ -270,10 +223,6 @@ export default function SinglesRegisterPage() {
         loser_score: lScore,
         apply_rating,
       };
-
-      // UI維持のため残しているが、現 route.ts は tournament_id を使っていない
-      // 将来API対応するならここを活かせます
-      if (selectedTournamentId) payload.tournament_id = selectedTournamentId;
 
       const res = await fetch('/api/matches', {
         method: 'POST',
@@ -400,25 +349,6 @@ export default function SinglesRegisterPage() {
             </div>
           )}
         </div>
-
-        {/* 大会（任意） */}
-        {tournaments.length > 0 && (
-          <div className="glass-card rounded-xl p-5 border border-purple-500/30">
-            <label className="block text-sm font-medium mb-2 text-gray-300">大会（任意）</label>
-            <select
-              value={selectedTournamentId}
-              onChange={(e) => setSelectedTournamentId(e.target.value)}
-              className="w-full px-4 py-3 bg-purple-900/30 border border-purple-500/30 rounded-lg text-yellow-100"
-            >
-              <option value="">指定しない（通常の個人戦として登録）</option>
-              {tournaments.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name ?? '(大会名未設定)'}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
 
         {/* 管理者モード */}
         {me?.is_admin && (
@@ -601,7 +531,6 @@ export default function SinglesRegisterPage() {
             disabled={
               loading ||
               playersLoading ||
-              tournamentsLoading ||
               (adminMode && me?.is_admin
                 ? !winnerIdAdmin || !loserIdAdmin || winnerIdAdmin === loserIdAdmin
                 : !opponentId)
