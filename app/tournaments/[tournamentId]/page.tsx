@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { FaCalendarAlt, FaUsers, FaTrophy } from 'react-icons/fa';
@@ -199,6 +200,8 @@ export default function TournamentTopPage() {
   const date = safeDay(tournament?.tournament_date ?? tournament?.start_date ?? null);
   const mode = tournament?.mode ?? '—';
 
+  void mode;
+
   const championName = champion?.handle_name ?? null;
   const championAvatar = champion?.avatar_url ?? null;
 
@@ -240,7 +243,7 @@ export default function TournamentTopPage() {
                 </Link>
               </div>
 
-              {/* ✅ ここだけ最小修正：優勝者の名前 + アバターを「約2倍」に拡大 */}
+              {/* ✅ 最小修正：優勝者アバターを next/image に置換 */}
               <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 min-w-[260px]">
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
@@ -251,11 +254,15 @@ export default function TournamentTopPage() {
                   </div>
 
                   {championAvatar ? (
-                    <img
-                      src={championAvatar}
-                      alt={championName ?? ''}
-                      className="w-20 h-20 md:w-24 md:h-24 rounded-full object-cover border border-white/20" // ← 2倍強
-                    />
+                    <div className="relative w-20 h-20 md:w-24 md:h-24 rounded-full overflow-hidden border border-white/20">
+                      <Image
+                        src={championAvatar}
+                        alt={championName ?? ''}
+                        fill
+                        sizes="(min-width: 768px) 96px, 80px"
+                        className="object-cover"
+                      />
+                    </div>
                   ) : (
                     <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-white/10 border border-white/20" />
                   )}
@@ -299,10 +306,15 @@ export default function TournamentTopPage() {
                 <div className="mt-2 text-xl font-bold">{bracket?.title ?? '決勝トーナメント'}</div>
                 <div className="mt-2 text-sm text-gray-300">
                   結果：
-                  <span className="ml-2 font-semibold">{finalsStatus === 'done' ? '確定' : finalsStatus === 'in_progress' ? '進行中' : '未開始'}</span>
+                  <span className="ml-2 font-semibold">
+                    {finalsStatus === 'done' ? '確定' : finalsStatus === 'in_progress' ? '進行中' : '未開始'}
+                  </span>
                 </div>
                 <div className="mt-2">
-                  <Link href={`/tournaments/${tournamentId}/finals`} className="text-blue-300 hover:text-blue-200 underline text-sm">
+                  <Link
+                    href={`/tournaments/${tournamentId}/finals`}
+                    className="text-blue-300 hover:text-blue-200 underline text-sm"
+                  >
                     決勝トーナメント結果を見る →
                   </Link>
                 </div>

@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { FaUsers, FaCalendarAlt, FaFlagCheckered, FaTrophy } from 'react-icons/fa';
 
@@ -323,11 +324,15 @@ export default function TournamentsIndexPage() {
 
                       <div className="mt-3 flex items-center justify-end gap-2">
                         {champAvatar ? (
-                          <img
-                            src={champAvatar}
-                            alt={champName ?? ''}
-                            className="w-10 h-10 rounded-full object-cover border border-white/20"
-                          />
+                          <div className="relative w-10 h-10 rounded-full overflow-hidden border border-white/20">
+                            <Image
+                              src={champAvatar}
+                              alt={champName ?? ''}
+                              fill
+                              sizes="40px"
+                              className="object-cover"
+                            />
+                          </div>
                         ) : (
                           <div className="w-10 h-10 rounded-full bg-white/10 border border-white/20" />
                         )}
