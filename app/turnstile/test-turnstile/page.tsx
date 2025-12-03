@@ -3,24 +3,12 @@
 import Script from 'next/script';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (
-        el: HTMLElement,
-        options: {
-          sitekey: string;
-          callback?: (token: string) => void;
-          'error-callback'?: () => void;
-          'expired-callback'?: () => void;
-          theme?: 'light' | 'dark' | 'auto';
-          size?: 'normal' | 'compact';
-        }
-      ) => string;
-      reset?: (widgetId?: string) => void;
-    };
-  }
-}
+type TurnstileApi = {
+  render: (el: HTMLElement, opts: any) => string;
+  reset: (id?: string) => void;
+  remove?: (id?: string) => void;
+  getResponse?: (id?: string) => string;
+};
 
 export default function TestTurnstilePage() {
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
@@ -36,13 +24,18 @@ export default function TestTurnstilePage() {
     const mount = document.getElementById('turnstile-mount');
     if (!mount) return;
 
-    // 二重レンダー防止
     mount.innerHTML = '';
 
-    const id = window.turnstile?.render(mount, {
+    const api = (window as any).turnstile as TurnstileApi | undefined;
+    if (!api?.render) {
+      setStatus('turnstile api not ready');
+      return;
+    }
+
+    const id = api.render(mount, {
       sitekey: siteKey,
       theme: 'auto',
-      callback: (t) => {
+      callback: (t: string) => {
         setToken(t);
         setStatus('token取得OK');
       },
@@ -53,7 +46,7 @@ export default function TestTurnstilePage() {
       },
     });
 
-    if (id) setWidgetId(id);
+    setWidgetId(id);
   }, [canRender, siteKey]);
 
   useEffect(() => {
@@ -78,8 +71,9 @@ export default function TestTurnstilePage() {
   const reset = () => {
     setToken('');
     setStatus('reset');
+    const api = (window as any).turnstile as TurnstileApi | undefined;
     try {
-      window.turnstile?.reset?.(widgetId || undefined);
+      api?.reset?.(widgetId || undefined);
     } catch {}
     renderWidget();
   };
