@@ -52,8 +52,9 @@ function normalizeApplyRating(body: AnyBody, finishReason: FinishReason): boolea
   const affects = toBool(body?.affects_rating);
   if (affects != null) return affects;
 
-  // 既存仕様：time_limit はレート反映しない
- if (['walkover', 'forfeit'].includes(String(finishReason).toLowerCase())) return false;
+  // 既存仕様：time_limit / walkover / forfeit はレート反映しない
+  if (['time_limit', 'walkover', 'forfeit'].includes(String(finishReason).toLowerCase())) return false;
+
   return true;
 }
 
@@ -146,11 +147,18 @@ function isMissingColumnErrorMessage(msg: string, col: string) {
   );
 }
 
+function omitField(row: AnyBody, key: string): AnyBody {
+  // eslint-disable-next-line no-unused-vars
+  const next = { ...row };
+  delete next[key];
+  return next;
+}
+
 async function insertMatchWithOptionalFields(row: AnyBody) {
   const tryInsert = async (r: AnyBody) => await supabaseAdmin.from('matches').insert(r).select('id').single();
 
   // まずフルで試す
-  let current = { ...row };
+  let current: AnyBody = { ...row };
   let first = await tryInsert(current);
   if (!first.error) return first;
 
@@ -158,9 +166,7 @@ async function insertMatchWithOptionalFields(row: AnyBody) {
 
   // tournament_id 無しでやり直し
   if (isMissingColumnErrorMessage(msg1, 'tournament_id')) {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { tournament_id, ...rest } = current;
-    current = rest;
+    current = omitField(current, 'tournament_id');
     first = await tryInsert(current);
     if (!first.error) return first;
   }
@@ -169,9 +175,7 @@ async function insertMatchWithOptionalFields(row: AnyBody) {
 
   // end_reason 無しでやり直し
   if (isMissingColumnErrorMessage(msg2, 'end_reason')) {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { end_reason, ...rest } = current;
-    current = rest;
+    current = omitField(current, 'end_reason');
     first = await tryInsert(current);
     if (!first.error) return first;
   }
@@ -180,9 +184,7 @@ async function insertMatchWithOptionalFields(row: AnyBody) {
 
   // time_limit_seconds 無しでやり直し
   if (isMissingColumnErrorMessage(msg3, 'time_limit_seconds')) {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { time_limit_seconds, ...rest } = current;
-    current = rest;
+    current = omitField(current, 'time_limit_seconds');
     first = await tryInsert(current);
     if (!first.error) return first;
   }
@@ -332,7 +334,6 @@ export async function POST(req: NextRequest) {
         : { winnerPointsChange: 0, loserPointsChange: 0, winnerHandicapChange: 0, loserHandicapChange: 0 };
 
       const baseRow: AnyBody = {
-        // mode は insertMatchWithModeFallback 側で付与
         status: 'finalized',
         match_date,
         reporter_id,
@@ -341,7 +342,6 @@ export async function POST(req: NextRequest) {
         winner_score,
         loser_score,
 
-        // 既存スキーマ対応（NOT NULL の場合がある）
         winner_team_no: 0,
         loser_team_no: 0,
 
@@ -350,20 +350,14 @@ export async function POST(req: NextRequest) {
         winner_handicap_delta: delta.winnerHandicapChange,
         loser_handicap_delta: delta.loserHandicapChange,
 
-        // ★既存：finish_reason（過去互換）
         finish_reason,
-
-        // ★追加：end_reason（league/results が読む想定）
         end_reason: finish_reason,
-
-        // ★追加（列が無い場合は自動で落として insert 続行）
         time_limit_seconds,
 
         affects_rating: apply_rating,
       };
       if (tournament_id) baseRow.tournament_id = tournament_id;
 
-      // DBの CHECK に合わせてまず singles を試す
       const modeCandidates = ['singles', 'single', 'player'];
       const { data: ins, error: mErr, used_mode } = await insertMatchWithModeFallback(baseRow, modeCandidates);
 
@@ -374,7 +368,6 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // players update（apply_rating=false でも勝敗/試合数だけは更新）
       const wRP0 = toInt(w.ranking_points, 0);
       const lRP0 = toInt(l.ranking_points, 0);
       const wHC0 = toInt(w.handicap, 0);
@@ -458,13 +451,8 @@ export async function POST(req: NextRequest) {
         winner_team_no: 1,
         loser_team_no: 2,
 
-        // ★既存：finish_reason（過去互換）
         finish_reason,
-
-        // ★追加：end_reason（league/results が読む想定）
         end_reason: finish_reason,
-
-        // ★追加
         time_limit_seconds,
 
         affects_rating: apply_rating,

@@ -98,7 +98,7 @@ export interface MatchDetails {
   loser_score?: number | null;
 
   // delta（統一）
-  winner_points_delta?: number | nulll;
+  winner_points_delta?: number | null; // ✅ 修正: nulll -> null
   loser_points_delta?: number | null;
   winner_handicap_delta?: number | null;
   loser_handicap_delta?: number | null;
@@ -170,7 +170,6 @@ export function useFetchMatchesData() {
           'is_tournament',
           'venue',
           'notes',
-          // あれば拾う（無ければ無視される環境もあるが、Supabaseは未知列でエラーになる場合がある）
         ].join(','),
       )
       .order('match_date', { ascending: false })

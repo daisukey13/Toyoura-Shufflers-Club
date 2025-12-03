@@ -3,12 +3,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
+import Image, { type ImageLoaderProps } from 'next/image';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { FaCalendarAlt, FaUsers, FaTrophy } from 'react-icons/fa';
 
 const supabase = createClient();
+
+// ✅ remotePatterns 不要にする（Supabase Storage 等でも落ちない）
+const passthroughLoader = ({ src }: ImageLoaderProps) => src;
 
 type TournamentRow = {
   id: string;
@@ -18,7 +21,7 @@ type TournamentRow = {
   start_date: string | null;
   end_date: string | null;
   mode: string | null;
-  size: number | string | null; // 予定参加人数（これを優先表示）
+  size: number | string | null;
   bracket_size: number | string | null;
   best_of: number | string | null;
   point_cap: number | string | null;
@@ -62,7 +65,6 @@ function toInt(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** winner_id が入っている “最大 round” の勝者を優勝者として推定（空ラウンドが混ざっても壊れない） */
 function inferChampionFromMatches(ms: FinalMatchMini[]): string | null {
   const winners = ms.filter((m) => !!m.winner_id && Number(m.round_no ?? 0) > 0);
   if (!winners.length) return null;
@@ -70,7 +72,6 @@ function inferChampionFromMatches(ms: FinalMatchMini[]): string | null {
   const maxRound = winners.reduce((mx, m) => Math.max(mx, Number(m.round_no ?? 0)), 0);
   const lastRound = winners.filter((m) => Number(m.round_no ?? 0) === maxRound);
 
-  // 通常は match_no=1 が決勝。なければ created_at / id で安定ソート
   lastRound.sort((a, b) => {
     const an = Number(a.match_no ?? 9999);
     const bn = Number(b.match_no ?? 9999);
@@ -97,9 +98,10 @@ export default function TournamentTopPage() {
   const [champion, setChampion] = useState<PlayerMini | null>(null);
   const [finalsStatus, setFinalsStatus] = useState<'none' | 'in_progress' | 'done'>('none');
 
+  const [championImgError, setChampionImgError] = useState(false);
+
   const participantPlanned = useMemo(() => {
     if (!tournament) return 0;
-    // ✅ ユーザー方針：大会作成時の「予定人数(size)」をそのまま採用
     return toInt(tournament.size) ?? toInt(tournament.bracket_size) ?? 0;
   }, [tournament]);
 
@@ -114,9 +116,9 @@ export default function TournamentTopPage() {
       setBracket(null);
       setChampion(null);
       setFinalsStatus('none');
+      setChampionImgError(false);
 
       try {
-        // 1) tournament
         const { data: tRow, error: tErr } = await supabase
           .from('tournaments')
           .select('id,name,description,tournament_date,start_date,end_date,mode,size,bracket_size,best_of,point_cap')
@@ -129,7 +131,6 @@ export default function TournamentTopPage() {
         if (cancelled) return;
         setTournament(tRow as TournamentRow);
 
-        // 2) latest final_bracket (optional)
         const { data: bRows, error: bErr } = await supabase
           .from('final_brackets')
           .select('id,tournament_id,title,max_round,champion_player_id,created_at')
@@ -142,10 +143,8 @@ export default function TournamentTopPage() {
           if (cancelled) return;
           setBracket(b);
 
-          // 3) champion from bracket first
           let championId: string | null = b.champion_player_id ?? null;
 
-          // 4) fallback: infer from final_matches (winner_id が入っている最大round)
           if (!championId) {
             setFinalsStatus('in_progress');
             const { data: mRows, error: mErr } = await supabase
@@ -167,15 +166,11 @@ export default function TournamentTopPage() {
               .eq('id', championId)
               .maybeSingle();
 
-            if (!cancelled && !pErr && pRow) {
-              setChampion(pRow as PlayerMini);
-            }
+            if (!cancelled && !pErr && pRow) setChampion(pRow as PlayerMini);
           } else {
-            // bracket はあるが champion なし
             setFinalsStatus((prev) => (prev === 'none' ? 'in_progress' : prev));
           }
         } else {
-          // bracket がない
           setFinalsStatus('none');
         }
       } catch (e: any) {
@@ -192,15 +187,14 @@ export default function TournamentTopPage() {
 
   if (!tournamentId) {
     return (
-      <div className="min-h-screen bg-[#2a2a3e] text-white flex items-center justify-center">大会IDが指定されていません</div>
+      <div className="min-h-screen bg-[#2a2a3e] text-white flex items-center justify-center">
+        大会IDが指定されていません
+      </div>
     );
   }
 
   const title = tournament?.name ?? '（大会名未設定）';
   const date = safeDay(tournament?.tournament_date ?? tournament?.start_date ?? null);
-  const mode = tournament?.mode ?? '—';
-
-  void mode;
 
   const championName = champion?.handle_name ?? null;
   const championAvatar = champion?.avatar_url ?? null;
@@ -210,7 +204,6 @@ export default function TournamentTopPage() {
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
       <div className="container mx-auto px-4 py-8">
-        {/* HERO */}
         <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 md:p-8 relative overflow-hidden">
           <div className="absolute inset-0 opacity-20 pointer-events-none">
             <div className="absolute -right-24 -top-24 w-72 h-72 rounded-full bg-purple-600 blur-3xl" />
@@ -243,7 +236,6 @@ export default function TournamentTopPage() {
                 </Link>
               </div>
 
-              {/* ✅ 最小修正：優勝者アバターを next/image に置換 */}
               <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 min-w-[260px]">
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
@@ -253,14 +245,17 @@ export default function TournamentTopPage() {
                     </div>
                   </div>
 
-                  {championAvatar ? (
+                  {championAvatar && !championImgError ? (
                     <div className="relative w-20 h-20 md:w-24 md:h-24 rounded-full overflow-hidden border border-white/20">
                       <Image
+                        loader={passthroughLoader}
+                        unoptimized
                         src={championAvatar}
-                        alt={championName ?? ''}
+                        alt={championName ?? 'champion'}
                         fill
                         sizes="(min-width: 768px) 96px, 80px"
                         className="object-cover"
+                        onError={() => setChampionImgError(true)}
                       />
                     </div>
                   ) : (
@@ -268,14 +263,14 @@ export default function TournamentTopPage() {
                   )}
                 </div>
               </div>
-              {/* ✅ ここまで */}
             </div>
           </div>
         </div>
 
-        {/* BODY */}
         {error && (
-          <div className="mt-4 rounded-md border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">{error}</div>
+          <div className="mt-4 rounded-md border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+            {error}
+          </div>
         )}
 
         {loading ? (
@@ -284,7 +279,6 @@ export default function TournamentTopPage() {
           <div className="mt-6 text-gray-300">大会が見つかりません。</div>
         ) : (
           <>
-            {/* Stats cards */}
             <div className="mt-6 grid gap-4 md:grid-cols-3">
               <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-5">
                 <div className="text-xs text-gray-300 flex items-center gap-2">
@@ -321,7 +315,6 @@ export default function TournamentTopPage() {
               </div>
             </div>
 
-            {/* Index */}
             <div className="mt-6 bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-5">
               <div className="text-xs text-gray-300">INDEX</div>
 

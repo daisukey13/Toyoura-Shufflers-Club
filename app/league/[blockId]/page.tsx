@@ -7,6 +7,8 @@ import { FaTrophy } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
+// ✅ Supabaseの型推論が never に崩れる環境向けの最小対策（このファイル内だけ）
+const db: any = supabase;
 
 /* ========= Types ========= */
 
@@ -60,8 +62,7 @@ type MatchCard = {
 
 export default function LeagueBlockPublicPage() {
   const params = useParams();
-  const blockId =
-    typeof params?.blockId === 'string' ? (params.blockId as string) : '';
+  const blockId = typeof params?.blockId === 'string' ? String(params.blockId) : '';
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [block, setBlock] = useState<LeagueBlock | null>(null);
@@ -83,7 +84,7 @@ export default function LeagueBlockPublicPage() {
 
     try {
       /* ---- 1) league_blocks ---- */
-      const { data: blockRow, error: blockErr } = await supabase
+      const { data: blockRow, error: blockErr } = await db
         .from('league_blocks')
         .select('id,label,status,tournament_id,winner_player_id,ranking_json')
         .eq('id', blockId)
@@ -97,21 +98,19 @@ export default function LeagueBlockPublicPage() {
       }
 
       const lb: LeagueBlock = {
-        id: blockRow.id,
-        label: blockRow.label,
-        status: blockRow.status,
-        tournament_id: blockRow.tournament_id,
-        winner_player_id: blockRow.winner_player_id,
+        id: String(blockRow.id),
+        label: blockRow.label ?? null,
+        status: blockRow.status ?? null,
+        tournament_id: blockRow.tournament_id ?? null,
+        winner_player_id: blockRow.winner_player_id ?? null,
         ranking_json: (blockRow.ranking_json ?? null) as RankingRow[] | null,
       };
       setBlock(lb);
 
       /* ---- 2) matches: league_block_id で“試合カード”を取得（未入力でも出す）---- */
-      const { data: matchesData, error: matchesErr } = await supabase
+      const { data: matchesData, error: matchesErr } = await db
         .from('matches')
-        .select(
-          'id,player_a_id,player_b_id,winner_id,loser_id,winner_score,loser_score,match_date'
-        )
+        .select('id,player_a_id,player_b_id,winner_id,loser_id,winner_score,loser_score,match_date')
         .eq('league_block_id', blockId)
         .order('match_date', { ascending: true });
 
@@ -123,15 +122,14 @@ export default function LeagueBlockPublicPage() {
 
       // 対戦カード（DBの試合をそのまま表示）
       const cards: MatchCard[] = rawMatches
-        .filter((m) => m.player_a_id && m.player_b_id)
+        .filter((m) => m?.player_a_id && m?.player_b_id)
         .map((m) => ({
           id: String(m.id),
           player_a_id: String(m.player_a_id),
           player_b_id: String(m.player_b_id),
           winner_id: m.winner_id ? String(m.winner_id) : null,
           loser_id: m.loser_id ? String(m.loser_id) : null,
-          winner_score:
-            typeof m.winner_score === 'number' ? m.winner_score : null,
+          winner_score: typeof m.winner_score === 'number' ? m.winner_score : null,
           loser_score: typeof m.loser_score === 'number' ? m.loser_score : null,
           match_date: m.match_date ?? null,
         }));
@@ -142,7 +140,8 @@ export default function LeagueBlockPublicPage() {
       const playerIds = Array.from(
         new Set(
           cards
-            .flatMap((c) => [c.player_a_id, c.player_b_id])
+            .map((c) => [c.player_a_id, c.player_b_id])
+            .reduce<string[]>((acc, cur) => acc.concat(cur), [])
             .filter(Boolean)
         )
       );
@@ -150,34 +149,29 @@ export default function LeagueBlockPublicPage() {
       /* ---- 3) tournaments ---- */
       let tour: Tournament | null = null;
       if (lb.tournament_id) {
-        const { data: tRow, error: tErr } = await supabase
+        const { data: tRow, error: tErr } = await db
           .from('tournaments')
           .select('id,name,start_date,notes,ranking_multiplier')
           .eq('id', lb.tournament_id)
           .maybeSingle();
 
         if (tErr) {
-          if ((tErr as any).code === '42703') {
-            console.warn(
-              '[league/block] tournaments.ranking_multiplier missing. Fallback select without it.'
-            );
-            const { data: tRow2, error: tErr2 } = await supabase
+          if ((tErr as any)?.code === '42703') {
+            console.warn('[league/block] tournaments.ranking_multiplier missing. Fallback select without it.');
+            const { data: tRow2, error: tErr2 } = await db
               .from('tournaments')
               .select('id,name,start_date,notes')
               .eq('id', lb.tournament_id)
               .maybeSingle();
 
             if (tErr2) {
-              console.error(
-                '[league/block] tournament fetch error (fallback):',
-                tErr2
-              );
+              console.error('[league/block] tournament fetch error (fallback):', tErr2);
             } else if (tRow2) {
               tour = {
-                id: tRow2.id,
-                name: tRow2.name,
-                start_date: tRow2.start_date,
-                notes: tRow2.notes,
+                id: String(tRow2.id),
+                name: tRow2.name ?? null,
+                start_date: tRow2.start_date ?? null,
+                notes: tRow2.notes ?? null,
                 ranking_multiplier: null,
               };
             }
@@ -185,7 +179,13 @@ export default function LeagueBlockPublicPage() {
             console.error('[league/block] tournament fetch error:', tErr);
           }
         } else if (tRow) {
-          tour = tRow as Tournament;
+          tour = {
+            id: String(tRow.id),
+            name: tRow.name ?? null,
+            start_date: tRow.start_date ?? null,
+            notes: tRow.notes ?? null,
+            ranking_multiplier: typeof tRow.ranking_multiplier === 'number' ? tRow.ranking_multiplier : null,
+          };
         }
       }
 
@@ -203,14 +203,14 @@ export default function LeagueBlockPublicPage() {
       const playersDict: Record<string, Player> = {};
 
       if (playerIds.length > 0) {
-        const { data: pRows, error: pErr } = await supabase
+        const { data: pRows, error: pErr } = await db
           .from('players')
           .select('id,handle_name,avatar_url,ranking_points,handicap')
           .in('id', playerIds);
 
         if (pErr) console.error('[league/block] players fetch error:', pErr);
 
-        const { data: rankRows, error: rErr } = await supabase
+        const { data: rankRows, error: rErr } = await db
           .from('player_rankings')
           .select('player_id,global_rank')
           .in('player_id', playerIds);
@@ -222,18 +222,17 @@ export default function LeagueBlockPublicPage() {
         const rankMap: Record<string, number | null> = {};
         (rankRows ?? []).forEach((r: any) => {
           const pid = String(r.player_id);
-          rankMap[pid] =
-            typeof r.global_rank === 'number' ? r.global_rank : null;
+          rankMap[pid] = typeof r.global_rank === 'number' ? r.global_rank : null;
         });
 
         (pRows ?? []).forEach((p: any) => {
           const id = String(p.id);
           playersDict[id] = {
             id,
-            handle_name: p.handle_name,
-            avatar_url: p.avatar_url,
-            ranking_points: p.ranking_points,
-            handicap: p.handicap,
+            handle_name: p.handle_name ?? null,
+            avatar_url: p.avatar_url ?? null,
+            ranking_points: typeof p.ranking_points === 'number' ? p.ranking_points : p.ranking_points ?? null,
+            handicap: typeof p.handicap === 'number' ? p.handicap : p.handicap ?? null,
             global_rank: typeof rankMap[id] === 'number' ? rankMap[id] : null,
           };
         });
@@ -283,27 +282,16 @@ export default function LeagueBlockPublicPage() {
   }
 
   // ★ 1試合でもスコアが入っているかどうか
-  const hasAnyResult = matchCards.some(
-    (m) =>
-      m.winner_id &&
-      m.loser_id &&
-      m.winner_score != null &&
-      m.loser_score != null
-  );
+  const hasAnyResult = matchCards.some((m) => m.winner_id && m.loser_id && m.winner_score != null && m.loser_score != null);
 
   const winnerPlayer =
-    block.winner_player_id && players[block.winner_player_id]
-      ? players[block.winner_player_id]
-      : null;
+    block.winner_player_id && players[block.winner_player_id] ? players[block.winner_player_id] : null;
 
   // ★ 結果が1つも無い場合は、finished でも優勝カードを出さない
-  const showWinnerCard =
-    block.status === 'finished' && !!winnerPlayer && hasAnyResult;
+  const showWinnerCard = block.status === 'finished' && !!winnerPlayer && hasAnyResult;
 
   const calcPointDiff = (row: RankingRow) =>
-    typeof row.point_diff === 'number'
-      ? row.point_diff
-      : (row.points_for ?? 0) - (row.points_against ?? 0);
+    typeof row.point_diff === 'number' ? row.point_diff : (row.points_for ?? 0) - (row.points_against ?? 0);
 
   const isFullTieWithZeroDiff =
     ranking.length >= 2 &&
@@ -315,15 +303,9 @@ export default function LeagueBlockPublicPage() {
         calcPointDiff(r) === 0
     );
 
-  const winnerIndex = winnerPlayer
-    ? ranking.findIndex((r) => r.player_id === winnerPlayer.id)
-    : -1;
+  const winnerIndex = winnerPlayer ? ranking.findIndex((r) => r.player_id === winnerPlayer.id) : -1;
   const winnerLocalRank =
-    winnerIndex >= 0
-      ? isFullTieWithZeroDiff
-        ? 1
-        : winnerIndex + 1
-      : null;
+    winnerIndex >= 0 ? (isFullTieWithZeroDiff ? 1 : winnerIndex + 1) : null;
 
   return (
     <div className="min-h-screen px-4 py-6 text-white">
@@ -331,29 +313,20 @@ export default function LeagueBlockPublicPage() {
         {/* Tournament header */}
         <div className="rounded-2xl border border-purple-500/40 bg-purple-900/30 p-5">
           <div className="text-xs text-purple-200 mb-1">TOURNAMENT</div>
-          <h1 className="text-2xl font-bold">
-            {tournament.name ?? '大会名未設定'}
-          </h1>
+          <h1 className="text-2xl font-bold">{tournament.name ?? '大会名未設定'}</h1>
           <div className="mt-1 text-sm text-purple-100 space-y-1">
             {tournament.start_date && (
-              <div>
-                開催日:{' '}
-                {new Date(tournament.start_date).toLocaleDateString('ja-JP')}
-              </div>
+              <div>開催日: {new Date(tournament.start_date).toLocaleDateString('ja-JP')}</div>
             )}
             {tournament.notes && <div>{tournament.notes}</div>}
             {tournament.ranking_multiplier && (
-              <div className="text-xs text-amber-300">
-                ランキング係数: ×{tournament.ranking_multiplier}
-              </div>
+              <div className="text-xs text-amber-300">ランキング係数: ×{tournament.ranking_multiplier}</div>
             )}
           </div>
         </div>
 
         {/* Block title */}
-        <h2 className="text-xl font-bold">
-          ブロック {block.label ?? '?'} リーグ結果
-        </h2>
+        <h2 className="text-xl font-bold">ブロック {block.label ?? '?'} リーグ結果</h2>
 
         {/* 優勝者カード（finished かつ結果ありのときだけ） */}
         {showWinnerCard && winnerPlayer && (
@@ -370,15 +343,10 @@ export default function LeagueBlockPublicPage() {
                 />
               )}
               <div>
-                <div className="text-sm text-blue-100">
-                  ブロック {block.label ?? ''} 優勝
-                </div>
-                <div className="text-2xl font-bold">
-                  {winnerPlayer.handle_name ?? '優勝者'}
-                </div>
+                <div className="text-sm text-blue-100">ブロック {block.label ?? ''} 優勝</div>
+                <div className="text-2xl font-bold">{winnerPlayer.handle_name ?? '優勝者'}</div>
                 <div className="text-xs text-blue-100 mt-1">
-                  RP: {winnerPlayer.ranking_points ?? 0} / HC:{' '}
-                  {winnerPlayer.handicap ?? 0}（
+                  RP: {winnerPlayer.ranking_points ?? 0} / HC: {winnerPlayer.handicap ?? 0}（
                   {winnerPlayer.global_rank
                     ? `全体 ${winnerPlayer.global_rank}位`
                     : winnerLocalRank
@@ -416,33 +384,16 @@ export default function LeagueBlockPublicPage() {
 
                   return (
                     <tr key={row.player_id} className="bg-black/40">
-                      <td className="border border-white/10 px-2 py-1 text-center">
-                        {displayRank}
-                      </td>
-                      <td className="border border-white/10 px-2 py-1">
-                        {p?.handle_name ?? '不明なプレーヤー'}
-                      </td>
-                      <td className="border border白/10 px-2 py-1 text-right">
-                        {p?.ranking_points ?? 0}
-                      </td>
-                      <td className="border border-white/10 px-2 py-1 text-right">
-                        {p?.handicap ?? 0}
-                      </td>
-                      <td className="border border-white/10 px-2 py-1 text-right">
-                        {row.wins}
-                      </td>
-                      <td className="border border-white/10 px-2 py-1 text-right">
-                        {row.losses}
-                      </td>
-                      <td className="border border-white/10 px-2 py-1 text-right">
-                        {row.points_for}
-                      </td>
-                      <td className="border border-white/10 px-2 py-1 text-right">
-                        {row.points_against}
-                      </td>
-                      <td className="border border-white/10 px-2 py-1 text-right">
-                        {pointDiff}
-                      </td>
+                      <td className="border border-white/10 px-2 py-1 text-center">{displayRank}</td>
+                      <td className="border border-white/10 px-2 py-1">{p?.handle_name ?? '不明なプレーヤー'}</td>
+                      {/* ✅ タイポ修正：border border白/10 → border-white/10（見た目は同じ） */}
+                      <td className="border border-white/10 px-2 py-1 text-right">{p?.ranking_points ?? 0}</td>
+                      <td className="border border-white/10 px-2 py-1 text-right">{p?.handicap ?? 0}</td>
+                      <td className="border border-white/10 px-2 py-1 text-right">{row.wins}</td>
+                      <td className="border border-white/10 px-2 py-1 text-right">{row.losses}</td>
+                      <td className="border border-white/10 px-2 py-1 text-right">{row.points_for}</td>
+                      <td className="border border-white/10 px-2 py-1 text-right">{row.points_against}</td>
+                      <td className="border border-white/10 px-2 py-1 text-right">{pointDiff}</td>
                     </tr>
                   );
                 })}
@@ -467,47 +418,30 @@ export default function LeagueBlockPublicPage() {
                 {matchCards.map((m, idx) => {
                   const a = players[m.player_a_id];
                   const b = players[m.player_b_id];
-                  const hasScore =
-                    m.winner_score != null && m.loser_score != null;
+                  const hasScore = m.winner_score != null && m.loser_score != null;
 
                   let scoreText = '-';
                   if (hasScore && m.winner_id && m.loser_id) {
                     const winnerName =
-                      m.winner_id === a?.id
-                        ? a?.handle_name
-                        : m.winner_id === b?.id
-                          ? b?.handle_name
-                          : '不明';
+                      m.winner_id === a?.id ? a?.handle_name : m.winner_id === b?.id ? b?.handle_name : '不明';
                     const loserName =
-                      m.loser_id === a?.id
-                        ? a?.handle_name
-                        : m.loser_id === b?.id
-                          ? b?.handle_name
-                          : '不明';
+                      m.loser_id === a?.id ? a?.handle_name : m.loser_id === b?.id ? b?.handle_name : '不明';
                     scoreText = `${winnerName ?? '不明'} ${m.winner_score} - ${m.loser_score} ${loserName ?? '不明'}`;
                   }
 
                   return (
                     <tr key={m.id} className="bg-black/40">
-                      <td className="border border-white/10 px-2 py-1 text-center">
-                        {idx + 1}
-                      </td>
+                      <td className="border border-white/10 px-2 py-1 text-center">{idx + 1}</td>
                       <td className="border border-white/10 px-2 py-1">
-                        {a?.handle_name ?? 'プレーヤーA'} vs{' '}
-                        {b?.handle_name ?? 'プレーヤーB'}
+                        {a?.handle_name ?? 'プレーヤーA'} vs {b?.handle_name ?? 'プレーヤーB'}
                       </td>
-                      <td className="border border-white/10 px-2 py-1">
-                        {scoreText}
-                      </td>
+                      <td className="border border-white/10 px-2 py-1">{scoreText}</td>
                     </tr>
                   );
                 })}
                 {matchCards.length === 0 && (
                   <tr>
-                    <td
-                      colSpan={3}
-                      className="border border-white/10 px-2 py-3 text-center text-gray-300"
-                    >
+                    <td colSpan={3} className="border border-white/10 px-2 py-3 text-center text-gray-300">
                       試合カードがまだ登録されていません。
                     </td>
                   </tr>
@@ -515,18 +449,13 @@ export default function LeagueBlockPublicPage() {
               </tbody>
             </table>
           </div>
-          <div className="mt-3 text-xs text-gray-300">
-            ※ スコア未入力の試合は「-」と表示されます。
-          </div>
+          <div className="mt-3 text-xs text-gray-300">※ スコア未入力の試合は「-」と表示されます。</div>
         </div>
 
         {/* 戻るリンク */}
         <div className="mt-6 text-right text-xs">
           {tournament.id && (
-            <Link
-              href={`/tournaments/${tournament.id}/league`}
-              className="text-blue-300 underline"
-            >
+            <Link href={`/tournaments/${tournament.id}/league`} className="text-blue-300 underline">
               大会のリーグ一覧に戻る
             </Link>
           )}

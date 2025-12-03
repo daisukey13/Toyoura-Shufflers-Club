@@ -8,6 +8,8 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
+// ✅ Supabase 型推論が "never" に崩れる環境があるので、このページ内は any 経由で安全に扱う
+const db: any = supabase;
 
 // ===== Types =====
 type LeagueBlockRow = {
@@ -39,36 +41,40 @@ type AnyObj = Record<string, any>;
 const isMissingColumnError = (err: any) => {
   const code = err?.code;
   const msg = String(err?.message ?? '');
-  return code === '42703' || msg.includes('does not exist') || msg.includes('column');
+  return code === '42703' || msg.includes('does not exist') || msg.includes('column') || msg.includes('schema cache');
 };
 
 const isModeCheckError = (err: any) => {
   const msg = String(err?.message ?? '');
-  return msg.includes('matches_mode_check');
+  // CHECK制約名が違う場合もあるので、"mode" と "check" をゆるく拾う
+  return msg.includes('matches_mode_check') || (msg.toLowerCase().includes('mode') && msg.toLowerCase().includes('check'));
 };
 
-// ===== def(dummy) =====
-let _defCache: { id: string; handle_name: string } | null = null;
+// ===== Helper: def ダミーを 1 回だけ取得してキャッシュ =====
+type DefDummy = { id: string; handle_name: string };
+let _defCache: DefDummy | null = null;
 
-async function getDefDummy(): Promise<{ id: string; handle_name: string }> {
+async function getDefDummy(): Promise<DefDummy> {
   if (_defCache) return _defCache;
 
-  // players に def(is_dummy=true) がいる前提
-  const { data, error } = await supabase
+  // players に def(is_dummy=true) がいる前提（ここは “関数内” にする：トップレベル await 禁止）
+  const { data, error } = await db
     .from('players')
-    .select('id,handle_name,is_dummy')
-    .eq('is_dummy', true)
+    .select('id, handle_name')
     .eq('handle_name', 'def')
-    .limit(1)
+    .eq('is_dummy', true)
     .maybeSingle();
 
-  if (error || !data?.id) {
+  // Supabase の型推論崩れ対策（never/null回避）
+  const row = (data ?? null) as { id?: string | null; handle_name?: string | null } | null;
+
+  if (error || !row?.id) {
     throw new Error(
       "ダミープレイヤー(def)が見つかりません。players に handle_name='def', is_dummy=true を用意してください。"
     );
   }
 
-  _defCache = { id: String(data.id), handle_name: String(data.handle_name ?? 'def') };
+  _defCache = { id: String(row.id), handle_name: String(row.handle_name ?? 'def') };
   return _defCache;
 }
 
@@ -81,9 +87,11 @@ async function insertMatchesWithFallback(rows: AnyObj[]) {
     result_type: 'normal', // 型/制約違いがあり得るので後でfallback
   }));
 
+  const selectCols = 'id,player_a_id,player_b_id';
+
   // 1) extras付きトライ
-  let r1 = await supabase.from('matches').insert(withExtras).select('id,player_a_id,player_b_id');
-  if (!r1.error) return { ok: true, data: r1.data ?? [] };
+  let r1 = await db.from('matches').insert(withExtras).select(selectCols);
+  if (!r1.error) return { ok: true as const, data: (r1.data ?? []) as any[] };
 
   let error = r1.error;
 
@@ -92,8 +100,8 @@ async function insertMatchesWithFallback(rows: AnyObj[]) {
     const modeCandidates = ['singles', 'single', 'player'];
     for (const m of modeCandidates) {
       const retryRows = withExtras.map((r) => ({ ...r, mode: m }));
-      const r2 = await supabase.from('matches').insert(retryRows).select('id,player_a_id,player_b_id');
-      if (!r2.error) return { ok: true, data: r2.data ?? [] };
+      const r2 = await db.from('matches').insert(retryRows).select(selectCols);
+      if (!r2.error) return { ok: true as const, data: (r2.data ?? []) as any[] };
       error = r2.error;
       if (!isModeCheckError(error)) break;
     }
@@ -102,33 +110,51 @@ async function insertMatchesWithFallback(rows: AnyObj[]) {
   // 3) 列が存在しない/型が違うっぽい場合は extras を落として再試行
   if (isMissingColumnError(error)) {
     const stripped = rows.map((r) => ({ ...r }));
-    const r3 = await supabase.from('matches').insert(stripped).select('id,player_a_id,player_b_id');
-    if (!r3.error) return { ok: true, data: r3.data ?? [] };
-    return { ok: false, error: r3.error };
+    const r3 = await db.from('matches').insert(stripped).select(selectCols);
+    if (!r3.error) return { ok: true as const, data: (r3.data ?? []) as any[] };
+
+    // tournament_id が無い環境も考慮してさらに削ってみる
+    const msg = String(r3.error?.message ?? '');
+    if (msg.toLowerCase().includes('tournament_id')) {
+      const dropTournament = rows.map(({ tournament_id, ...rest }) => ({ ...rest }));
+      const r4 = await db.from('matches').insert(dropTournament).select(selectCols);
+      if (!r4.error) return { ok: true as const, data: (r4.data ?? []) as any[] };
+      return { ok: false as const, error: r4.error };
+    }
+
+    return { ok: false as const, error: r3.error };
   }
 
-  // 4) result_type / is_tournament が原因の可能性があるので、それだけ落として再試行
+  // 4) result_type / is_tournament が原因の可能性があるので、それだけ落として再試行（最後の保険）
   {
     const dropSome = rows.map((r) => ({ ...r })); // extras無し
-    const r4 = await supabase.from('matches').insert(dropSome).select('id,player_a_id,player_b_id');
-    if (!r4.error) return { ok: true, data: r4.data ?? [] };
-    return { ok: false, error: error ?? r4.error };
+    const r4 = await db.from('matches').insert(dropSome).select(selectCols);
+    if (!r4.error) return { ok: true as const, data: (r4.data ?? []) as any[] };
+    return { ok: false as const, error: error ?? r4.error };
   }
 }
 
 // ===== def絡み試合を「不戦勝で確定」する（schema差分に強い update）=====
 async function finalizeDefMatches(blockId: string, tournamentId: string, defId: string) {
-  // 試合の特定：league_block_id で拾って def が絡むものだけ
-  const { data: ms, error: mErr } = await supabase
+  // まずは tournament_id + league_block_id で拾う。tournament_id 列が無いなら league_block_id のみに退避。
+  let msResp = await db
     .from('matches')
     .select('id,player_a_id,player_b_id')
     .eq('tournament_id', tournamentId)
     .eq('league_block_id', blockId)
     .or(`player_a_id.eq.${defId},player_b_id.eq.${defId}`);
 
-  if (mErr) throw mErr;
+  if (msResp.error && isMissingColumnError(msResp.error)) {
+    msResp = await db
+      .from('matches')
+      .select('id,player_a_id,player_b_id')
+      .eq('league_block_id', blockId)
+      .or(`player_a_id.eq.${defId},player_b_id.eq.${defId}`);
+  }
 
-  const list = (ms ?? []) as any[];
+  if (msResp.error) throw msResp.error;
+
+  const list = (msResp.data ?? []) as any[];
 
   // def vs def を許容（安全側）
   const compute = (a: string, b: string) => {
@@ -136,23 +162,13 @@ async function finalizeDefMatches(blockId: string, tournamentId: string, defId: 
     const bIsDef = b === defId;
 
     if (aIsDef && bIsDef) {
-      return {
-        winner_id: defId,
-        loser_id: defId,
-        winner_score: 0,
-        loser_score: 0,
-      };
+      return { winner_id: defId, loser_id: defId, winner_score: 0, loser_score: 0 };
     }
 
     const winner_id = aIsDef ? b : a;
     const loser_id = aIsDef ? a : b;
 
-    return {
-      winner_id,
-      loser_id,
-      winner_score: 15,
-      loser_score: 0,
-    };
+    return { winner_id, loser_id, winner_score: 15, loser_score: 0 };
   };
 
   // update fallback（列が無い可能性に備えて段階的に落とす）
@@ -162,14 +178,21 @@ async function finalizeDefMatches(blockId: string, tournamentId: string, defId: 
         ...payload,
         status: 'finalized',
         end_reason: 'forfeit',
+        finish_reason: 'forfeit',
         affects_rating: false,
-        // ✅ あなたのDBの列名に合わせる（*_change）
+
+        // ✅ 環境差分（delta / change）両方を一旦入れる → 無い列は fallback で落ちる
+        winner_points_delta: 0,
+        loser_points_delta: 0,
+        winner_handicap_delta: 0,
+        loser_handicap_delta: 0,
         winner_points_change: 0,
         loser_points_change: 0,
         winner_handicap_change: 0,
         loser_handicap_change: 0,
       },
-      { ...payload, status: 'finalized', end_reason: 'forfeit', affects_rating: false },
+      { ...payload, status: 'finalized', end_reason: 'forfeit', finish_reason: 'forfeit', affects_rating: false },
+      { ...payload, status: 'finalized', end_reason: 'forfeit', finish_reason: 'forfeit' },
       { ...payload, status: 'finalized', end_reason: 'forfeit' },
       { ...payload, status: 'finalized' },
       { ...payload },
@@ -178,7 +201,7 @@ async function finalizeDefMatches(blockId: string, tournamentId: string, defId: 
     let lastErr: any = null;
 
     for (const c of candidates) {
-      const { error } = await supabase.from('matches').update(c).eq('id', matchId);
+      const { error } = await db.from('matches').update(c).eq('id', matchId);
       if (!error) return;
       lastErr = error;
       if (isMissingColumnError(error)) continue;
@@ -231,7 +254,7 @@ export default function AdminTournamentLeaguePage() {
     setMessage(null);
 
     // 1) 大会情報
-    const { data: t, error: tErr } = await supabase.from('tournaments').select('id, name').eq('id', tournamentId).maybeSingle();
+    const { data: t, error: tErr } = await db.from('tournaments').select('id, name').eq('id', tournamentId).maybeSingle();
 
     if (tErr || !t) {
       console.error(tErr);
@@ -242,7 +265,7 @@ export default function AdminTournamentLeaguePage() {
     setTournament(t as TournamentInfo);
 
     // 2) ブロック一覧
-    const { data: blocksData, error: blocksErr } = await supabase
+    const { data: blocksData, error: blocksErr } = await db
       .from('league_blocks')
       .select('id, label, status, winner_player_id, ranking_json')
       .eq('tournament_id', tournamentId)
@@ -262,7 +285,7 @@ export default function AdminTournamentLeaguePage() {
     const winnerIds = list.map((b) => b.winner_player_id).filter((id): id is string => !!id);
 
     if (winnerIds.length > 0) {
-      const { data: playersData, error: playersErr } = await supabase.from('players').select('id, handle_name').in('id', winnerIds);
+      const { data: playersData, error: playersErr } = await db.from('players').select('id, handle_name').in('id', winnerIds);
 
       if (playersErr) {
         console.error(playersErr);
@@ -279,7 +302,7 @@ export default function AdminTournamentLeaguePage() {
     }
 
     // 3) リーグに使えるプレーヤー一覧（active_players）
-    const { data: active, error: activeErr } = await supabase
+    const { data: active, error: activeErr } = await db
       .from('active_players')
       .select('id, handle_name')
       .eq('is_active', true)
@@ -302,7 +325,8 @@ export default function AdminTournamentLeaguePage() {
     }
 
     const base = (active ?? []) as PlayerOption[];
-    const appendDef: PlayerOption[] = def && !base.some((p) => String(p.id) === def!.id) ? [{ id: def.id, handle_name: def.handle_name }] : [];
+    const appendDef: PlayerOption[] =
+      def && !base.some((p) => String(p.id) === def!.id) ? [{ id: def.id, handle_name: def.handle_name }] : [];
 
     // 50音順ソート
     const sorted = [...base, ...appendDef].slice().sort((a, b) => (a.handle_name ?? '').localeCompare(b.handle_name ?? '', 'ja'));
@@ -317,7 +341,7 @@ export default function AdminTournamentLeaguePage() {
     setError(null);
     setMessage(null);
 
-    const { error: rpcErr } = await supabase.rpc('finalize_league_block', { p_block_id: blockId });
+    const { error: rpcErr } = await db.rpc('finalize_league_block', { p_block_id: blockId });
 
     if (rpcErr) {
       console.error(rpcErr);
@@ -389,87 +413,94 @@ export default function AdminTournamentLeaguePage() {
 
     setCreating(true);
 
-    // 1) league_blocks
-    const { data: block, error: blockErr } = await supabase
-      .from('league_blocks')
-      .insert({
-        tournament_id: tournamentId,
-        label: blockLabel.trim(),
-        status: 'pending',
-      })
-      .select('id')
-      .single();
+    try {
+      // 1) league_blocks
+      const { data: block, error: blockErr } = await db
+        .from('league_blocks')
+        .insert({
+          tournament_id: tournamentId,
+          label: blockLabel.trim(),
+          status: 'pending',
+        })
+        .select('id')
+        .single();
 
-    if (blockErr || !block) {
-      console.error(blockErr);
-      setError('リーグブロックの作成に失敗しました');
-      setCreating(false);
-      return;
-    }
-
-    const blockId = String(block.id);
-
-    // 2) league_block_members
-    const membersPayload = [
-      { league_block_id: blockId, player_id: rp1 },
-      { league_block_id: blockId, player_id: rp2 },
-      { league_block_id: blockId, player_id: rp3 },
-    ];
-
-    const { error: membersErr } = await supabase.from('league_block_members').insert(membersPayload);
-
-    if (membersErr) {
-      console.error(membersErr);
-      setError('ブロックメンバーの登録に失敗しました');
-      setCreating(false);
-      return;
-    }
-
-    // 3) matches に総当たり3試合（必要最小限の列だけ）
-    const pairs: [string, string][] = [
-      [rp1, rp2],
-      [rp1, rp3],
-      [rp2, rp3],
-    ];
-
-    const nowIso = new Date().toISOString();
-
-    const matchesPayload = pairs.map(([a, b]) => ({
-      tournament_id: tournamentId,
-      league_block_id: blockId,
-      mode: 'singles',
-      status: 'pending',
-      player_a_id: a,
-      player_b_id: b,
-      match_date: nowIso,
-    }));
-
-    const ins = await insertMatchesWithFallback(matchesPayload);
-    if (!ins.ok) {
-      console.error(ins.error);
-      setError('リーグ戦の試合作成に失敗しました（ブロックとメンバーは作成済み）');
-      setCreating(false);
-      return;
-    }
-
-    // ✅ def が絡む試合は「不戦勝で自動確定」にする
-    if (finalIds.includes(def.id)) {
-      try {
-        await finalizeDefMatches(blockId, tournamentId, def.id);
-      } catch (e) {
-        console.warn('[admin/league] finalize def matches failed:', e);
-        // ここは致命ではないので継続
+      if (blockErr || !block) {
+        console.error(blockErr);
+        setError('リーグブロックの作成に失敗しました');
+        setCreating(false);
+        return;
       }
-    }
 
-    // フォームリセット & 再読込
-    setBlockLabel('A');
-    setP1('');
-    setP2('');
-    setP3('');
-    await loadAll();
-    setCreating(false);
-    setMessage(finalIds.includes(def.id) ? '新しいリーグブロック（def補充）と3試合を作成しました' : '新しいリーグブロックと3試合を作成しました');
+      const blockId = String(block.id);
+
+      // 2) league_block_members
+      const membersPayload = [
+        { league_block_id: blockId, player_id: rp1 },
+        { league_block_id: blockId, player_id: rp2 },
+        { league_block_id: blockId, player_id: rp3 },
+      ];
+
+      const { error: membersErr } = await db.from('league_block_members').insert(membersPayload);
+
+      if (membersErr) {
+        console.error(membersErr);
+        setError('ブロックメンバーの登録に失敗しました');
+        setCreating(false);
+        return;
+      }
+
+      // 3) matches に総当たり3試合（必要最小限の列だけ）
+      const pairs: [string, string][] = [
+        [rp1, rp2],
+        [rp1, rp3],
+        [rp2, rp3],
+      ];
+
+      const nowIso = new Date().toISOString();
+
+      const matchesPayload = pairs.map(([a, b]) => ({
+        tournament_id: tournamentId,
+        league_block_id: blockId,
+        mode: 'singles',
+        status: 'pending',
+        player_a_id: a,
+        player_b_id: b,
+        match_date: nowIso,
+      }));
+
+      const ins = await insertMatchesWithFallback(matchesPayload);
+      if (!ins.ok) {
+        console.error(ins.error);
+        setError('リーグ戦の試合作成に失敗しました（ブロックとメンバーは作成済み）');
+        setCreating(false);
+        return;
+      }
+
+      // ✅ def が絡む試合は「不戦勝で自動確定」にする
+      if (finalIds.includes(def.id)) {
+        try {
+          await finalizeDefMatches(blockId, tournamentId, def.id);
+        } catch (e) {
+          console.warn('[admin/league] finalize def matches failed:', e);
+          // ここは致命ではないので継続
+        }
+      }
+
+      // フォームリセット & 再読込
+      setBlockLabel('A');
+      setP1('');
+      setP2('');
+      setP3('');
+      await loadAll();
+      setMessage(
+        finalIds.includes(def.id)
+          ? '新しいリーグブロック（def補充）と3試合を作成しました'
+          : '新しいリーグブロックと3試合を作成しました'
+      );
+    } finally {
+      setCreating(false);
+    }
   };
 
   if (!tournamentId) {
@@ -493,7 +524,12 @@ export default function AdminTournamentLeaguePage() {
           </h1>
           <div className="text-xs text-gray-400">tournament_id: {tournamentId}</div>
         </div>
-        <Link href={`/tournaments/${tournamentId}/league`} className="text-xs text-blue-400 underline" target="_blank" rel="noreferrer">
+        <Link
+          href={`/tournaments/${tournamentId}/league`}
+          className="text-xs text-blue-400 underline"
+          target="_blank"
+          rel="noreferrer"
+        >
           一般公開のリーグ一覧ページを開く
         </Link>
       </div>

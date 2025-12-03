@@ -9,6 +9,9 @@ import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
 
+// ✅ Supabase の Database 型に final_* が無い環境だと .from('final_matches') が never になるため、ここだけ any を噛ませる
+const fromAny = (table: string) => (supabase.from(table as any) as any);
+
 type FinalBracket = {
   id: string;
   tournament_id: string;
@@ -91,15 +94,15 @@ const isMissingColumnError = (err: any) => {
 };
 
 async function fetchFinalMatchesOnce(bracketId: string): Promise<FinalMatchRow[]> {
-  const { data, error } = await supabase
-    .from('final_matches')
+  // ✅ final_matches が Database 型に無い環境があるので fromAny
+  const { data, error } = await fromAny('final_matches')
     .select('*')
     .eq('bracket_id', bracketId)
     .order('round_no', { ascending: true });
 
   if (!error) return (data ?? []) as FinalMatchRow[];
 
-  const { data: data2, error: error2 } = await supabase.from('final_matches').select('*').eq('bracket_id', bracketId);
+  const { data: data2, error: error2 } = await fromAny('final_matches').select('*').eq('bracket_id', bracketId);
   if (error2) throw new Error(String(error2.message || 'final_matches fetch failed'));
   return (data2 ?? []) as FinalMatchRow[];
 }
@@ -168,9 +171,9 @@ async function clearFinalMatchesFromRound(bracketId: string, fromRoundNo: number
   let lastErr: any = null;
 
   for (const payload of candidates) {
-    const { error } = await supabase
-      .from('final_matches')
-      .update(payload)
+    // ✅ ここが「Record<string,any> を never に渡してる」エラーの発生源。fromAny で回避。
+    const { error } = await fromAny('final_matches')
+      .update(payload as any)
       .eq('bracket_id', bracketId)
       .gte('round_no', fromRoundNo);
 
@@ -201,7 +204,6 @@ export default function AdminTournamentFinalsPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  /** ✅ “余計なラウンド非表示”のための表示上限（localStorageで維持） */
   const storageKey = useMemo(
     () => (tournamentId ? `admin_finals_visible_round_max:${tournamentId}` : 'admin_finals_visible_round_max'),
     [tournamentId]
@@ -226,7 +228,6 @@ export default function AdminTournamentFinalsPage() {
     } catch {}
   };
 
-  // authz
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -254,7 +255,6 @@ export default function AdminTournamentFinalsPage() {
 
         const adminRow = (adminResp?.data ?? null) as AdminRow | null;
         const playerRow = (playerResp?.data ?? null) as PlayerFlagRow | null;
-
         const isAdmin = Boolean(adminRow?.user_id) || playerRow?.is_admin === true;
 
         if (!isAdmin) {
@@ -286,8 +286,7 @@ export default function AdminTournamentFinalsPage() {
     setMessage(null);
 
     try {
-      const { data: bRows, error: bErr } = await supabase
-        .from('final_brackets')
+      const { data: bRows, error: bErr } = await fromAny('final_brackets')
         .select('id,tournament_id,title,created_at')
         .eq('tournament_id', tournamentId)
         .order('created_at', { ascending: false });
@@ -301,8 +300,7 @@ export default function AdminTournamentFinalsPage() {
       const b = bRows[0] as FinalBracket;
       setBracket(b);
 
-      const { data: eRows, error: eErr } = await supabase
-        .from('final_round_entries')
+      const { data: eRows, error: eErr } = await fromAny('final_round_entries')
         .select('id,bracket_id,round_no,slot_no,player_id')
         .eq('bracket_id', b.id)
         .order('round_no', { ascending: true })
@@ -371,7 +369,8 @@ export default function AdminTournamentFinalsPage() {
       groups.get(r)!.push(m);
     }
 
-    for (const [r, list] of groups.entries()) {
+    // ✅ target ES5 でも落ちないように Map iterator を for..of しない（groups.forEach）
+    groups.forEach((list, r) => {
       const sorted = [...list].sort((a, b) => {
         const aNo = Number(a.match_no ?? a.match_index ?? 0);
         const bNo = Number(b.match_no ?? b.match_index ?? 0);
@@ -388,12 +387,11 @@ export default function AdminTournamentFinalsPage() {
         const no = Number(m.match_no ?? m.match_index ?? 0) || i + 1;
         map.set(`${r}:${no}`, m);
       });
-    }
+    });
 
     return map;
   }, [matches]);
 
-  /** ✅ ラウンド表示：デフォルトは“必要な分だけ” */
   const baseMaxRound = useMemo(() => {
     let max = 1;
 
@@ -421,7 +419,6 @@ export default function AdminTournamentFinalsPage() {
 
   const visibleMaxRound = Math.max(baseMaxRound, manualMaxRound ?? 0, 1);
   const visibleRounds = useMemo(() => Array.from({ length: visibleMaxRound }, (_, i) => i + 1), [visibleMaxRound]);
-
   const lastRound = visibleRounds[visibleRounds.length - 1];
 
   const getMatchCountForRound = (roundNo: number) => {
@@ -444,7 +441,8 @@ export default function AdminTournamentFinalsPage() {
     try {
       const next = nextPlayerId ? nextPlayerId : null;
 
-      const { error } = await supabase.from('final_round_entries').update({ player_id: next }).eq('id', entry.id);
+      // ✅ final_round_entries が Database 型に無い環境があるので fromAny
+      const { error } = await fromAny('final_round_entries').update({ player_id: next } as any).eq('id', entry.id);
       if (error) throw new Error(error.message);
 
       if (bracket?.id) {
@@ -479,7 +477,6 @@ export default function AdminTournamentFinalsPage() {
     }
   };
 
-  /** ✅ ＋枠追加（2つずつ） */
   const handleAddSlots = async (roundNo: number, addCount = 2) => {
     if (!bracket?.id) return;
     setError(null);
@@ -496,10 +493,9 @@ export default function AdminTournamentFinalsPage() {
         player_id: null,
       }));
 
-      const { error: insErr } = await supabase.from('final_round_entries').insert(rows as any);
+      const { error: insErr } = await fromAny('final_round_entries').insert(rows as any);
       if (insErr) throw new Error(insErr.message);
 
-      // 構成が変わるので、取り残し防止でそのラウンド以降クリア
       await clearFinalMatchesFromRound(bracket.id, roundNo);
 
       setMessage(`R${roundNo}に枠を追加しました（以降の試合結果をクリア）`);
@@ -512,11 +508,9 @@ export default function AdminTournamentFinalsPage() {
     }
   };
 
-  /** ✅ ＋ラウンド追加（次ラウンドを表示 + 枠2つ作成） */
   const handleAddRound = async () => {
     const next = visibleMaxRound + 1;
     setManualMaxRoundAndPersist(next);
-    // round自体が空なら枠を作る（既にある場合でも slot_no が増えるので “round追加”は初回想定）
     await handleAddSlots(next, 2);
   };
 
@@ -754,11 +748,7 @@ export default function AdminTournamentFinalsPage() {
                     ＋ラウンド追加
                   </button>
 
-                  <button
-                    onClick={() => setManualMaxRoundAndPersist(0)}
-                    className="text-gray-300 underline"
-                    type="button"
-                  >
+                  <button onClick={() => setManualMaxRoundAndPersist(0)} className="text-gray-300 underline" type="button">
                     表示ラウンドをリセット
                   </button>
                 </div>
@@ -789,9 +779,7 @@ export default function AdminTournamentFinalsPage() {
                       </div>
 
                       {list.length === 0 ? (
-                        <div className="text-gray-400 text-sm">
-                          枠がありません（＋枠追加 で作成できます）
-                        </div>
+                        <div className="text-gray-400 text-sm">枠がありません（＋枠追加 で作成できます）</div>
                       ) : (
                         <div className="grid gap-3 md:grid-cols-2">
                           {list.map((e) => {

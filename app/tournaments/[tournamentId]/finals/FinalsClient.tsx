@@ -90,7 +90,10 @@ function PlayerCardMini({ p }: { p?: Player }) {
 
 export default function AdminTournamentFinalsClient({ tournamentId }: { tournamentId: string }) {
   const router = useRouter();
+
+  // ✅ Supabase（このファイル内だけ型推論崩れ対策）
   const supabase = useMemo(() => createClient(), []);
+  const db: any = supabase;
 
   const [authz, setAuthz] = useState<'checking' | 'ok' | 'no'>('checking');
 
@@ -146,8 +149,8 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
         }
 
         const [adminResp, playerResp] = await Promise.all([
-          (supabase.from('app_admins') as any).select('user_id').eq('user_id', user.id).maybeSingle(),
-          (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
+          db.from('app_admins').select('user_id').eq('user_id', user.id).maybeSingle(),
+          db.from('players').select('is_admin').eq('id', user.id).maybeSingle(),
         ]);
 
         const isAdmin = Boolean(adminResp?.data?.user_id) || playerResp?.data?.is_admin === true;
@@ -163,7 +166,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     return () => {
       cancelled = true;
     };
-  }, [router, supabase, tournamentId]);
+  }, [router, supabase, tournamentId, db]);
 
   // ✅ authz OK になった“後”に確実にロード（呼び損ね防止）
   useEffect(() => {
@@ -182,6 +185,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
   const matchMap = useMemo(() => {
     const map = new Map<string, FinalMatchRow>();
     const byRound = new Map<number, FinalMatchRow[]>();
+
     matches.forEach((m) => {
       const r = Number(m.round_no ?? 0);
       if (!r) return;
@@ -189,7 +193,8 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
       byRound.get(r)!.push(m);
     });
 
-    for (const [r, list] of byRound.entries()) {
+    // ✅ ES5 target 対策：MapIterator を for..of で回さない（downlevelIteration不要）
+    byRound.forEach((list, r) => {
       const sorted = [...list].sort((a, b) => {
         const aNo = Number(a.match_no ?? a.match_index ?? 0);
         const bNo = Number(b.match_no ?? b.match_index ?? 0);
@@ -200,7 +205,8 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
         const no = Number(m.match_no ?? m.match_index ?? 0) || i + 1;
         map.set(`${r}:${no}`, m);
       });
-    }
+    });
+
     return map;
   }, [matches]);
 
@@ -221,7 +227,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     try {
       console.log('[admin/finals] loadAll start', { tournamentId });
 
-      const { data: bRows, error: bErr } = await supabase
+      const { data: bRows, error: bErr } = await db
         .from('final_brackets')
         .select('*')
         .eq('tournament_id', tournamentId)
@@ -237,7 +243,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
       setBracket(b);
       console.log('[admin/finals] bracket ok', b.id);
 
-      const { data: eRows, error: eErr } = await supabase
+      const { data: eRows, error: eErr } = await db
         .from('final_round_entries')
         .select('id,bracket_id,round_no,slot_no,player_id')
         .eq('bracket_id', b.id)
@@ -250,7 +256,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
       console.log('[admin/finals] entries ok', es.length);
 
       // matches は order が通らない環境を考慮してフォールバック
-      const base = supabase.from('final_matches').select('*').eq('bracket_id', b.id);
+      const base = db.from('final_matches').select('*').eq('bracket_id', b.id);
       const { data: m1, error: mErr1 } = await base.order('round_no', { ascending: true });
 
       let ms: FinalMatchRow[] = [];
@@ -258,7 +264,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
         ms = (m1 ?? []) as FinalMatchRow[];
       } else {
         console.warn('[admin/finals] matches order failed -> fallback', mErr1);
-        const { data: m2, error: mErr2 } = await supabase.from('final_matches').select('*').eq('bracket_id', b.id);
+        const { data: m2, error: mErr2 } = await db.from('final_matches').select('*').eq('bracket_id', b.id);
         if (mErr2) throw mErr2;
         ms = (m2 ?? []) as FinalMatchRow[];
       }
@@ -267,14 +273,14 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
 
       const ids = Array.from(new Set(es.map((x) => x.player_id).filter((x): x is string => !!x)));
       if (ids.length) {
-        const { data: pRows, error: pErr } = await supabase
+        const { data: pRows, error: pErr } = await db
           .from('players')
           .select('id,handle_name,avatar_url,ranking_points,handicap')
           .in('id', ids);
         if (pErr) throw pErr;
 
         const dict: Record<string, Player> = {};
-        (pRows ?? []).forEach((p: any) => (dict[p.id] = p as Player));
+        (pRows ?? []).forEach((p: any) => (dict[String(p.id)] = p as Player));
         setPlayers(dict);
       } else {
         setPlayers({});
@@ -323,7 +329,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     loser_score: number | null;
     end_reason?: string | null;
   }) => {
-    const { data: found, error: fErr } = await supabase
+    const { data: found, error: fErr } = await db
       .from('final_matches')
       .select('id')
       .eq('bracket_id', row.bracket_id)
@@ -333,13 +339,13 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     if (fErr) throw fErr;
 
     if (found?.id) {
-      const { error: uErr } = await supabase.from('final_matches').update(row).eq('id', found.id);
+      const { error: uErr } = await db.from('final_matches').update(row).eq('id', found.id);
       if (uErr) throw uErr;
-      return found.id as string;
+      return String(found.id);
     } else {
-      const { data: ins, error: iErr } = await supabase.from('final_matches').insert(row).select('id').single();
+      const { data: ins, error: iErr } = await db.from('final_matches').insert(row).select('id').single();
       if (iErr) throw iErr;
-      return ins?.id as string;
+      return String(ins?.id);
     }
   };
 

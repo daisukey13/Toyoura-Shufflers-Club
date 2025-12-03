@@ -43,11 +43,8 @@ export default function GlobalNavigation() {
 
   // 初回マウント時に認証状態を更新
   useEffect(() => {
-    if (user && !player && !loading) {
-      console.log('User exists but player is null, refreshing auth...');
-      refreshAuth();
-    }
-  }, [user, player, loading]);
+   void refreshAuth();
+}, [refreshAuth]);
 
   // デバッグ用
   useEffect(() => {

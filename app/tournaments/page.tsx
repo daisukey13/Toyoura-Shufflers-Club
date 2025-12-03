@@ -3,11 +3,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
+import Image, { type ImageLoaderProps } from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { FaUsers, FaCalendarAlt, FaFlagCheckered, FaTrophy } from 'react-icons/fa';
 
 const supabase = createClient();
+const passthroughLoader = ({ src }: ImageLoaderProps) => src;
 
 type TournamentRow = {
   id: string;
@@ -19,11 +20,7 @@ type TournamentRow = {
   mode?: string | null;
   format?: string | null;
   created_at?: string | null;
-
-  // 予定参加人数（あなたの方針：これを参加人数として扱う）
   size?: number | string | null;
-
-  // 旧/別UIで入っている可能性があるので念のため
   bracket_size?: number | string | null;
 };
 
@@ -44,41 +41,28 @@ type TournamentSummary = {
 function pickTournamentName(t: TournamentRow) {
   return (t.name ?? t.title ?? '（大会名未設定）') as string;
 }
-
 function pickTournamentDate(t: TournamentRow) {
   return (t.start_date ?? t.tournament_date ?? t.date ?? null) as string | null;
 }
-
 function pickTournamentMode(t: TournamentRow) {
   return (t.mode ?? t.format ?? null) as string | null;
 }
-
 function safeDateLabel(iso: string | null) {
   if (!iso) return '—';
   return String(iso).slice(0, 10);
 }
-
 function toInt(v: unknown): number {
   const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
   return Number.isFinite(n) ? n : 0;
 }
-
 function pickPlannedParticipants(t: TournamentRow): number {
-  // 最優先：tournaments.size
   const s = toInt(t.size);
   if (s > 0) return s;
-
-  // 念のため別カラムも fallback
   const b = toInt((t as any).bracket_size);
   if (b > 0) return b;
-
   return 0;
 }
 
-/**
- * 一覧ページは anon で動くので final_matches を読みに行かない。
- * 優勝者は final_brackets.champion_player_id を正とする。
- */
 async function calcSummaryFromBracket(t: TournamentRow): Promise<{
   participantCount: number;
   championId: string | null;
@@ -86,7 +70,6 @@ async function calcSummaryFromBracket(t: TournamentRow): Promise<{
 }> {
   const planned = pickPlannedParticipants(t);
 
-  // 決勝 bracket（最新）
   const { data: bRows, error: bErr } = await supabase
     .from('final_brackets')
     .select('id,created_at,champion_player_id')
@@ -95,37 +78,20 @@ async function calcSummaryFromBracket(t: TournamentRow): Promise<{
     .limit(1);
 
   if (bErr || !bRows?.length) {
-    // 決勝自体が無い
-    return {
-      participantCount: planned,
-      championId: null,
-      finalsStatus: 'none',
-    };
+    return { participantCount: planned, championId: null, finalsStatus: 'none' };
   }
 
   const bracket = bRows[0] as any;
   const championId = bracket?.champion_player_id ? String(bracket.champion_player_id) : null;
 
-  // planned があればそれを優先。無ければ決勝枠から数える（読める環境のみ）
   let participantCount = planned;
-
   if (participantCount <= 0) {
     const bracketId = String(bracket.id);
-    const { data: eRows, error: eErr } = await supabase
-      .from('final_round_entries')
-      .select('player_id')
-      .eq('bracket_id', bracketId);
-
-    if (!eErr) {
-      participantCount = new Set((eRows ?? []).map((r: any) => r.player_id).filter(Boolean)).size;
-    }
+    const { data: eRows, error: eErr } = await supabase.from('final_round_entries').select('player_id').eq('bracket_id', bracketId);
+    if (!eErr) participantCount = new Set((eRows ?? []).map((r: any) => r.player_id).filter(Boolean)).size;
   }
 
-  return {
-    participantCount,
-    championId,
-    finalsStatus: championId ? 'done' : 'in_progress',
-  };
+  return { participantCount, championId, finalsStatus: championId ? 'done' : 'in_progress' };
 }
 
 export default function TournamentsIndexPage() {
@@ -133,6 +99,9 @@ export default function TournamentsIndexPage() {
   const [error, setError] = useState<string>('');
   const [tournaments, setTournaments] = useState<TournamentRow[]>([]);
   const [summaries, setSummaries] = useState<Record<string, TournamentSummary>>({});
+
+  // ✅ 大会ごとの画像エラー（フォールバック用）
+  const [champImgError, setChampImgError] = useState<Record<string, boolean>>({});
 
   const championIds = useMemo(() => {
     return Array.from(new Set(Object.values(summaries).map((s) => s.championId).filter(Boolean))) as string[];
@@ -172,8 +141,7 @@ export default function TournamentsIndexPage() {
                 champion: null,
                 finalsStatus: r.finalsStatus,
               };
-            } catch (e) {
-              // 失敗しても予定人数だけは出す
+            } catch {
               next[tid] = {
                 tournamentId: tid,
                 participantCount: pickPlannedParticipants(t),
@@ -185,8 +153,7 @@ export default function TournamentsIndexPage() {
           })
         );
 
-        if (cancelled) return;
-        setSummaries(next);
+        if (!cancelled) setSummaries(next);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || '大会一覧の取得に失敗しました');
       } finally {
@@ -199,28 +166,19 @@ export default function TournamentsIndexPage() {
     };
   }, []);
 
-  // champion players をまとめて取得して埋める
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       if (!championIds.length) return;
 
-      const { data, error } = await supabase
-        .from('players')
-        .select('id,handle_name,avatar_url')
-        .in('id', championIds);
-
+      const { data, error } = await supabase.from('players').select('id,handle_name,avatar_url').in('id', championIds);
       if (cancelled) return;
       if (error) return;
 
       const dict: Record<string, PlayerMini> = {};
       (data ?? []).forEach((p: any) => {
-        dict[String(p.id)] = {
-          id: String(p.id),
-          handle_name: p.handle_name ?? null,
-          avatar_url: p.avatar_url ?? null,
-        };
+        dict[String(p.id)] = { id: String(p.id), handle_name: p.handle_name ?? null, avatar_url: p.avatar_url ?? null };
       });
 
       setSummaries((prev) => {
@@ -271,7 +229,6 @@ export default function TournamentsIndexPage() {
               const name = pickTournamentName(t);
               const date = safeDateLabel(pickTournamentDate(t));
               const mode = pickTournamentMode(t) ?? '—';
-
               const participant = s?.participantCount ?? pickPlannedParticipants(t) ?? 0;
 
               const champName = s?.champion?.handle_name ?? null;
@@ -323,14 +280,17 @@ export default function TournamentsIndexPage() {
                       </div>
 
                       <div className="mt-3 flex items-center justify-end gap-2">
-                        {champAvatar ? (
+                        {champAvatar && !champImgError[tid] ? (
                           <div className="relative w-10 h-10 rounded-full overflow-hidden border border-white/20">
                             <Image
+                              loader={passthroughLoader}
+                              unoptimized
                               src={champAvatar}
-                              alt={champName ?? ''}
+                              alt={champName ?? 'champion'}
                               fill
                               sizes="40px"
                               className="object-cover"
+                              onError={() => setChampImgError((prev) => ({ ...prev, [tid]: true }))}
                             />
                           </div>
                         ) : (

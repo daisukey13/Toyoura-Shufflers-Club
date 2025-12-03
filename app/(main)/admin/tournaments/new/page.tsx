@@ -5,14 +5,14 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
+// ✅ Supabase型推論が never に崩れて next build が落ちる環境向けの最小回避（このファイル内だけ any 経由）
+const db: any = supabase;
 
 export default function AdminTournamentNewPage() {
   const router = useRouter();
 
   const [name, setName] = useState('');
-  const [date, setDate] = useState(
-    new Date().toISOString().slice(0, 10) // yyyy-mm-dd
-  );
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10)); // yyyy-mm-dd
   const [description, setDescription] = useState('');
   const [bonus, setBonus] = useState('1.0'); // ランキング係数
   const [mode, setMode] = useState<'singles' | 'teams'>('singles');
@@ -42,38 +42,51 @@ export default function AdminTournamentNewPage() {
     const bonusNum = Number(bonus);
     const bonusValue = Number.isFinite(bonusNum) && bonusNum > 0 ? bonusNum : 1.0;
 
-    const { data, error: insertErr } = await supabase
-      .from('tournaments')
-      .insert({
-        name: name.trim(),
-        tournament_date: date,
-        start_date: date,
-        end_date: date,
-        description: description || null,
-        bonus_coefficient: bonusValue,
-        mode,
-        is_active: true,
-        is_bracket: false, // とりあえずリーグ中心。決勝トーナメントはあとで
-        is_archived: false,
-        apply_handicap: applyHC,
-        size: sizeNum,      // NOT NULL: 参加人数
-        best_of: 3,         // NOT NULL: 基本は best of 3
-        point_cap: 15,      // NOT NULL: 得点上限（これまでの仕様に合わせて 15）
-        time_limit_minutes: 0, // NOT NULL: 制限時間なし扱いで 0
-        // bracket_size はリーグ中心大会なので設定しない（NULL のまま）
-      })
-      .select('id')
-      .single();
+    try {
+      const { data, error: insertErr } = await db
+        .from('tournaments')
+        .insert({
+          name: name.trim(),
+          tournament_date: date,
+          start_date: date,
+          end_date: date,
+          description: description || null,
+          bonus_coefficient: bonusValue,
+          mode,
+          is_active: true,
+          is_bracket: false, // とりあえずリーグ中心。決勝トーナメントはあとで
+          is_archived: false,
+          apply_handicap: applyHC,
+          size: sizeNum, // NOT NULL: 参加人数
+          best_of: 3, // NOT NULL: 基本は best of 3
+          point_cap: 15, // NOT NULL: 得点上限（これまでの仕様に合わせて 15）
+          time_limit_minutes: 0, // NOT NULL: 制限時間なし扱いで 0
+          // bracket_size はリーグ中心大会なので設定しない（NULL のまま）
+        })
+        .select('id')
+        .single();
 
-    if (insertErr) {
-      console.error(insertErr);
+      if (insertErr) {
+        console.error(insertErr);
+        setError(`大会の作成に失敗しました: ${insertErr.message ?? ''}`.trim());
+        setSaving(false);
+        return;
+      }
+
+      const newId = String(data?.id ?? '');
+      if (!newId) {
+        setError('大会IDの取得に失敗しました');
+        setSaving(false);
+        return;
+      }
+
+      // 作成した直後に、この大会のリーグ管理ページへ
+      router.push(`/admin/tournaments/${newId}/league`);
+    } catch (err) {
+      console.error(err);
       setError('大会の作成に失敗しました');
       setSaving(false);
-      return;
     }
-
-    // 作成した直後に、この大会のリーグ管理ページへ
-    router.push(`/admin/tournaments/${data.id}/league`);
   };
 
   return (
@@ -132,9 +145,7 @@ export default function AdminTournamentNewPage() {
         </div>
 
         <div className="space-y-1">
-          <label className="text-sm font-semibold">
-            ランキング係数（大会の重み）
-          </label>
+          <label className="text-sm font-semibold">ランキング係数（大会の重み）</label>
           <input
             type="number"
             step="0.1"
@@ -159,11 +170,7 @@ export default function AdminTournamentNewPage() {
         </div>
 
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={applyHC}
-            onChange={(e) => setApplyHC(e.target.checked)}
-          />
+          <input type="checkbox" checked={applyHC} onChange={(e) => setApplyHC(e.target.checked)} />
           ハンディキャップを適用する
         </label>
 

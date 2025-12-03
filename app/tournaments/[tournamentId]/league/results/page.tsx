@@ -1,13 +1,15 @@
+// app/tournaments/[tournamentId]/league/results/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
+import Image, { type ImageLoaderProps } from 'next/image';
 import { FaTrophy } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
+const passthroughLoader = ({ src }: ImageLoaderProps) => src;
 
 /* ========= Types ========= */
 type Tournament = {
@@ -47,21 +49,16 @@ type Player = {
 type MatchCard = {
   id: string;
   league_block_id: string;
-
-  // ★重要：対戦相手は player_a_id / player_b_id を基準にする
   player_a_id: string;
   player_b_id: string;
-
   winner_id: string | null;
   loser_id: string | null;
   winner_score: number | null;
   loser_score: number | null;
-
   end_reason: string | null;
   time_limit_seconds: number | null;
 };
 
-/* ========= Helpers ========= */
 function getPointDiffSafe(r: any): number {
   const direct = Number(r.point_diff ?? r.pointDiff);
   if (Number.isFinite(direct)) return direct;
@@ -112,7 +109,11 @@ function computeDisplayRank(ranking: RankingRow[], idx: number): number {
   const isAllSame =
     ranking.length > 1 &&
     ranking.every(
-      (r) => r.wins === base.wins && r.losses === base.losses && getPointDiffSafe(r) === baseDiff && baseDiff === 0
+      (r) =>
+        r.wins === base.wins &&
+        r.losses === base.losses &&
+        getPointDiffSafe(r) === baseDiff &&
+        baseDiff === 0
     );
 
   if (isAllSame) return 1;
@@ -128,13 +129,7 @@ function formatTimeLimit(seconds: number | null) {
   return `${m}分${s}秒`;
 }
 
-function EndReasonBadge({
-  end_reason,
-  time_limit_seconds,
-}: {
-  end_reason: string | null;
-  time_limit_seconds: number | null;
-}) {
+function EndReasonBadge({ end_reason, time_limit_seconds }: { end_reason: string | null; time_limit_seconds: number | null }) {
   if (!end_reason || end_reason === 'normal') return null;
 
   if (end_reason === 'time_limit') {
@@ -169,7 +164,6 @@ function EndReasonBadge({
   );
 }
 
-/* ========= Page ========= */
 export default function TournamentLeagueResultsPage() {
   const params = useParams();
   const tournamentId = typeof params?.tournamentId === 'string' ? (params.tournamentId as string) : '';
@@ -181,6 +175,9 @@ export default function TournamentLeagueResultsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // ✅ ブロック勝者アバターのエラー保持
+  const [blockWinnerImgError, setBlockWinnerImgError] = useState<Record<string, boolean>>({});
+
   const calcPointDiff = (r: any) => getPointDiffSafe(r);
   const formatSigned = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
@@ -190,15 +187,6 @@ export default function TournamentLeagueResultsPage() {
       const arr = m.get(c.league_block_id) ?? [];
       arr.push(c);
       m.set(c.league_block_id, arr);
-    }
-    // ✅ 最小の安定化：各ブロック内のカード並びを固定
-    for (const [bid, arr] of m.entries()) {
-      const sorted = [...arr].sort((a, b) => {
-        const aa = `${a.player_a_id}__${a.player_b_id}`;
-        const bb = `${b.player_a_id}__${b.player_b_id}`;
-        return aa.localeCompare(bb);
-      });
-      m.set(bid, sorted);
     }
     return m;
   }, [matchCards]);
@@ -214,7 +202,6 @@ export default function TournamentLeagueResultsPage() {
     setError(null);
 
     try {
-      /* ---- 1) 大会情報 ---- */
       const { data: tRow, error: tErr } = await supabase
         .from('tournaments')
         .select('id,name,start_date,notes,description')
@@ -229,7 +216,6 @@ export default function TournamentLeagueResultsPage() {
       }
       setTournament(tRow as Tournament);
 
-      /* ---- 2) ブロック一覧 ---- */
       const { data: blockRows, error: bErr } = await supabase
         .from('league_blocks')
         .select('id,label,status,tournament_id,winner_player_id,ranking_json')
@@ -253,16 +239,13 @@ export default function TournamentLeagueResultsPage() {
       }));
       setBlocks(lbList);
 
-      /* ---- 3) 試合（カード）を取得：未入力も含めて pair ごとに最新を採用 ---- */
       const blockIds = lbList.map((lb) => lb.id);
       let cards: MatchCard[] = [];
 
       if (blockIds.length > 0) {
         const { data: matchesData, error: mErr } = await supabase
           .from('matches')
-          .select(
-            'id,league_block_id,player_a_id,player_b_id,winner_id,loser_id,winner_score,loser_score,match_date,end_reason,time_limit_seconds'
-          )
+          .select('id,league_block_id,player_a_id,player_b_id,winner_id,loser_id,winner_score,loser_score,match_date,end_reason,time_limit_seconds')
           .eq('tournament_id', tournamentId)
           .in('league_block_id', blockIds)
           .order('match_date', { ascending: true });
@@ -277,12 +260,10 @@ export default function TournamentLeagueResultsPage() {
 
           for (const m of raw) {
             if (!m.league_block_id || !m.player_a_id || !m.player_b_id) continue;
-
             const key = m.league_block_id + '::' + pairKey(String(m.player_a_id), String(m.player_b_id));
             const prev = latestByBlockPair.get(key);
-            if (!prev) {
-              latestByBlockPair.set(key, m);
-            } else {
+            if (!prev) latestByBlockPair.set(key, m);
+            else {
               const prevDate = String(prev.match_date ?? '');
               const currDate = String(m.match_date ?? '');
               if (currDate > prevDate) latestByBlockPair.set(key, m);
@@ -302,8 +283,7 @@ export default function TournamentLeagueResultsPage() {
               winner_score: typeof m.winner_score === 'number' ? m.winner_score : m.winner_score ?? null,
               loser_score: typeof m.loser_score === 'number' ? m.loser_score : m.loser_score ?? null,
               end_reason: (m.end_reason ?? null) as string | null,
-              time_limit_seconds:
-                typeof m.time_limit_seconds === 'number' ? m.time_limit_seconds : m.time_limit_seconds ?? null,
+              time_limit_seconds: typeof m.time_limit_seconds === 'number' ? m.time_limit_seconds : m.time_limit_seconds ?? null,
             });
             idx += 1;
           }
@@ -312,7 +292,6 @@ export default function TournamentLeagueResultsPage() {
 
       setMatchCards(cards);
 
-      /* ---- 4) プレーヤー一括取得 ---- */
       const idsFromRanking = lbList.flatMap((lb) => [
         ...(lb.ranking_json ?? []).map((r) => r.player_id),
         lb.winner_player_id ?? undefined,
@@ -361,7 +340,6 @@ export default function TournamentLeagueResultsPage() {
   return (
     <div className="min-h-screen px-4 py-6 text-white">
       <div className="max-w-5xl mx-auto space-y-8">
-        {/* Tournament header */}
         <div className="rounded-2xl border border-purple-500/40 bg-purple-900/30 p-5">
           <div className="text-xs text-purple-200 mb-1">TOURNAMENT</div>
           <h1 className="text-2xl font-bold">{tournament.name ?? '大会名未設定'}</h1>
@@ -374,7 +352,6 @@ export default function TournamentLeagueResultsPage() {
           </div>
         </div>
 
-        {/* 各ブロックの結果 */}
         {blocks.map((block) => {
           const ranking = (block.ranking_json ?? []) as RankingRow[];
           const blockMatches = matchCardsByBlock.get(block.id) ?? [];
@@ -409,17 +386,23 @@ export default function TournamentLeagueResultsPage() {
                     <FaTrophy />
                   </div>
                   <div className="flex items-center gap-4">
-                    {winnerPlayer.avatar_url && (
+                    {winnerPlayer.avatar_url && !blockWinnerImgError[block.id] ? (
                       <div className="relative w-14 h-14 rounded-full overflow-hidden border border-yellow-300/60">
                         <Image
+                          loader={passthroughLoader}
+                          unoptimized
                           src={winnerPlayer.avatar_url}
-                          alt={winnerPlayer.handle_name ?? 'winner'}
+                          alt={winnerPlayer.handle_name ?? ''}
                           fill
                           sizes="56px"
                           className="object-cover"
+                          onError={() => setBlockWinnerImgError((prev) => ({ ...prev, [block.id]: true }))}
                         />
                       </div>
+                    ) : (
+                      <div className="w-14 h-14 rounded-full bg-white/10 border border-yellow-300/40" />
                     )}
+
                     <div>
                       <div className="text-sm text-blue-100">ブロック {block.label ?? ''} 優勝</div>
                       <div className="text-2xl font-bold">{winnerPlayer.handle_name ?? '優勝者'}</div>
@@ -432,7 +415,6 @@ export default function TournamentLeagueResultsPage() {
                 </div>
               )}
 
-              {/* ランキングテーブル */}
               {ranking.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm border border-white/20 border-collapse">
@@ -472,7 +454,6 @@ export default function TournamentLeagueResultsPage() {
                 </div>
               )}
 
-              {/* 対戦カード / 結果 */}
               <div className="mt-4">
                 <h3 className="text-lg font-semibold mb-2">対戦カード / 結果</h3>
                 <div className="overflow-x-auto">

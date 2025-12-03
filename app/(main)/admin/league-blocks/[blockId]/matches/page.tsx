@@ -9,6 +9,13 @@ import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
 
+type LeagueBlockRow = {
+  id: string;
+  tournament_id: string | null;
+  label?: string | null;
+  status?: string | null;
+};
+
 type MatchEndReason = 'normal' | 'time_limit' | 'walkover' | 'forfeit';
 
 type MatchRow = {
@@ -22,8 +29,6 @@ type MatchRow = {
   loser_score: number | null;
   status: string | null;
   mode?: string | null;
-
-  // ★追加：結果の理由（通常/時間制限/不戦勝/途中棄権）を残す
   end_reason?: MatchEndReason | string | null;
 };
 
@@ -140,17 +145,24 @@ export default function AdminLeagueBlockMatchesPage() {
     setMessage(null);
 
     try {
-      // 1) ブロック情報
-      const { data: blockData, error: blockErr } = await supabase
+      // 1) ブロック情報（✅最小修正：blockData が never にならないようローカルで型付け）
+      const { data: blockDataRaw, error: blockErr } = await supabase
         .from('league_blocks')
         .select('id, label, tournament_id')
         .eq('id', bId)
         .maybeSingle();
 
+      const blockData = (blockDataRaw as unknown as LeagueBlockRow | null) ?? null;
+
       if (blockErr || !blockData) {
         throw new Error('リーグブロック情報の取得に失敗しました');
       }
-      setBlock(blockData as BlockRow);
+
+      setBlock({
+        id: String(blockData.id),
+        label: (blockData.label ?? null) as string | null,
+        tournament_id: (blockData.tournament_id ?? null) as string | null,
+      });
 
       // 2) 大会情報
       if (blockData.tournament_id) {
@@ -161,13 +173,14 @@ export default function AdminLeagueBlockMatchesPage() {
           .maybeSingle();
 
         if (!tErr && tData) setTournament(tData as TournamentRow);
+      } else {
+        setTournament(null);
       }
 
       // 3) このブロックの試合一覧
       const { data: matchesData, error: mErr } = await supabase
         .from('matches')
         .select(
-          // ★ end_reason を追加（一覧で「どの試合が時間制限/不戦勝/棄権か」後で分かる）
           'id, match_date, player_a_id, player_b_id, winner_id, loser_id, winner_score, loser_score, status, mode, end_reason'
         )
         .eq('league_block_id', bId)
@@ -188,10 +201,7 @@ export default function AdminLeagueBlockMatchesPage() {
       );
 
       if (ids.length > 0) {
-        const { data: playersData, error: pErr } = await supabase
-          .from('players')
-          .select('id, handle_name')
-          .in('id', ids);
+        const { data: playersData, error: pErr } = await supabase.from('players').select('id, handle_name').in('id', ids);
 
         if (pErr) {
           console.warn('[admin/league-blocks/matches] players error:', pErr);
@@ -247,7 +257,6 @@ export default function AdminLeagueBlockMatchesPage() {
     return null;
   };
 
-  // 試合1件の結果登録（winner_score も入力）
   const handleReport = async (e: React.FormEvent<HTMLFormElement>, match: MatchRow) => {
     e.preventDefault();
     setError(null);
@@ -261,12 +270,9 @@ export default function AdminLeagueBlockMatchesPage() {
     const form = e.currentTarget;
 
     const winnerId = (form.elements.namedItem('winner_id') as HTMLSelectElement)?.value;
-
     const winnerScoreRaw = (form.elements.namedItem('winner_score') as HTMLInputElement)?.value;
-
     const loserScoreRaw = (form.elements.namedItem('loser_score') as HTMLInputElement)?.value;
 
-    // ★追加：試合種別（通常/時間制限/不戦勝/途中棄権）
     const endReasonRaw = (form.elements.namedItem('end_reason') as HTMLSelectElement)?.value;
     const endReason = normalizeEndReason(endReasonRaw);
 
@@ -296,7 +302,6 @@ export default function AdminLeagueBlockMatchesPage() {
           loser_id: loserId,
           winner_score: winnerScore,
           loser_score: loserScore,
-          // ★追加：後から判別できるように残す
           end_reason: endReason,
         }),
       });
@@ -325,25 +330,18 @@ export default function AdminLeagueBlockMatchesPage() {
   };
 
   if (authz === 'checking') {
-    return (
-      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">認証を確認しています...</div>
-    );
+    return <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">認証を確認しています...</div>;
   }
   if (authz === 'no') {
-    return (
-      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">アクセス権限がありません</div>
-    );
+    return <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">アクセス権限がありません</div>;
   }
   if (!blockId) {
-    return (
-      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">ブロックIDが指定されていません</div>
-    );
+    return <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">ブロックIDが指定されていません</div>;
   }
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
       <div className="container mx-auto px-4 py-8">
-        {/* ヘッダー */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full">
@@ -357,18 +355,13 @@ export default function AdminLeagueBlockMatchesPage() {
               </div>
             </div>
           </div>
-          <Link
-            href={`/admin/tournaments/${block?.tournament_id ?? ''}/league`}
-            className="text-xs md:text-sm text-blue-300 underline"
-          >
+          <Link href={`/admin/tournaments/${block?.tournament_id ?? ''}/league`} className="text-xs md:text-sm text-blue-300 underline">
             ← ブロック一覧に戻る
           </Link>
         </div>
 
         {error && (
-          <div className="mb-4 rounded-md border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">
-            {error}
-          </div>
+          <div className="mb-4 rounded-md border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">{error}</div>
         )}
         {message && (
           <div className="mb-4 rounded-md border border-green-500/50 bg-green-500/10 px-4 py-2 text-sm text-green-200">
@@ -440,7 +433,6 @@ export default function AdminLeagueBlockMatchesPage() {
                               {m.player_b_id && <option value={m.player_b_id}>{bName}</option>}
                             </select>
 
-                            {/* ★追加：試合の終了理由を残す（UIは既存フォーム行のまま、要素だけ追加） */}
                             <select
                               name="end_reason"
                               defaultValue={endReason}

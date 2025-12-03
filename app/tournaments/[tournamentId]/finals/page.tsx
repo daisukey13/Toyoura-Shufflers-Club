@@ -1,4 +1,3 @@
-// app/tournaments/[tournamentId]/finals/page.tsx
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -137,6 +136,8 @@ function PlayerLine({
   const subSize = isWinner ? 'text-sm md:text-base text-rose-100/90' : 'text-[11px] text-gray-300';
   const scoreSize = isWinner ? 'text-4xl md:text-5xl' : 'text-xl md:text-2xl';
 
+  const sizes = isWinner ? '56px' : '40px';
+
   return (
     <div className={[base, isWinner ? winnerStyle : loserStyle].join(' ')}>
       <div className="flex items-center gap-3 min-w-0">
@@ -144,9 +145,9 @@ function PlayerLine({
           <div className={`${avatarSize} relative rounded-full overflow-hidden border border-white/20 shrink-0`}>
             <Image
               src={p.avatar_url}
-              alt={p.handle_name ?? ''}
+              alt={p.handle_name ?? 'player'}
               fill
-              sizes={isWinner ? '(max-width: 768px) 48px, 56px' : '(max-width: 768px) 36px, 40px'}
+              sizes={sizes}
               className="object-cover"
             />
           </div>
@@ -209,11 +210,7 @@ export default function TournamentFinalsPage() {
 
     try {
       // 0) tournament（列差分対策で *）
-      const { data: tRow, error: tErr } = await supabase
-        .from('tournaments')
-        .select('*')
-        .eq('id', tournamentId)
-        .maybeSingle();
+      const { data: tRow, error: tErr } = await supabase.from('tournaments').select('*').eq('id', tournamentId).maybeSingle();
 
       if (!tErr && tRow) setTournament(tRow as TournamentRow);
       else setTournament(null);
@@ -553,9 +550,9 @@ export default function TournamentFinalsPage() {
                     <div className="relative w-16 h-16 md:w-20 md:h-20 rounded-full overflow-hidden border border-yellow-300/70">
                       <Image
                         src={winnerPlayerFinal.avatar_url}
-                        alt={winnerPlayerFinal.handle_name ?? ''}
+                        alt={winnerPlayerFinal.handle_name ?? 'champion'}
                         fill
-                        sizes="(max-width: 768px) 64px, 80px"
+                        sizes="80px"
                         className="object-cover"
                       />
                     </div>
@@ -647,7 +644,10 @@ export default function TournamentFinalsPage() {
                       const reason = normalizeReason(m);
 
                       return (
-                        <div key={`r${roundNo}-m${matchNo}`} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                        <div
+                          key={`r${roundNo}-m${matchNo}`}
+                          className="rounded-2xl border border-white/10 bg-black/20 p-3"
+                        >
                           <div className="text-xs text-gray-300 mb-2">
                             R{roundNo}-{matchNo}
                             {roundNo === rounds[rounds.length - 1] ? (
@@ -679,7 +679,9 @@ export default function TournamentFinalsPage() {
                     })}
                   </div>
 
-                  <div className="text-[11px] text-gray-400">※ 勝者カードは濃い赤＋縦長（約1.6倍）で強調表示されます。</div>
+                  <div className="text-[11px] text-gray-400">
+                    ※ 勝者カードは濃い赤＋縦長（約1.6倍）で強調表示されます。
+                  </div>
                 </div>
               </section>
             );
@@ -698,9 +700,9 @@ export default function TournamentFinalsPage() {
                   <div className="relative w-28 h-28 md:w-32 md:h-32 rounded-full overflow-hidden border border-yellow-300/80">
                     <Image
                       src={winnerPlayerFinal.avatar_url}
-                      alt={winnerPlayerFinal.handle_name ?? ''}
+                      alt={winnerPlayerFinal.handle_name ?? 'champion'}
                       fill
-                      sizes="(max-width: 768px) 112px, 128px"
+                      sizes="128px"
                       className="object-cover"
                     />
                   </div>
