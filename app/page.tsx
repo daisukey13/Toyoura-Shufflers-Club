@@ -53,7 +53,7 @@ type RecentMatch = {
   winner_id?: string | null;
   winner_name?: string | null;
   winner_avatar?: string | null;
-  winner_avatar_url?: string | null; // ← 追加フォールバック
+  winner_avatar_url?: string | null; // ← フォールバック
   winner_current_points?: number | null;
   winner_current_handicap?: number | null;
   winner_points_change?: number | null;
@@ -61,7 +61,7 @@ type RecentMatch = {
   loser_id?: string | null;
   loser_name?: string | null;
   loser_avatar?: string | null;
-  loser_avatar_url?: string | null; // ← 追加フォールバック
+  loser_avatar_url?: string | null; // ← フォールバック
   loser_score?: number | null;
   loser_current_points?: number | null;
   loser_current_handicap?: number | null;
@@ -72,6 +72,22 @@ type RecentMatch = {
   winner_team_name?: string | null;
   loser_team_id?: string | null;
   loser_team_name?: string | null;
+};
+
+type TournamentLite = {
+  id: string;
+  name?: string | null;
+  title?: string | null;
+  start_date?: string | null;
+  created_at?: string | null;
+
+  // 画像カラムがあれば拾う（無くてもOK）
+  banner_url?: string | null;
+  image_url?: string | null;
+  banner_image_url?: string | null;
+
+  // 任意
+  venue?: string | null;
 };
 
 type MemberLite = { id: string; handle_name: string; avatar_url: string | null };
@@ -115,7 +131,8 @@ export default function HomePage() {
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
   const [recentMatches, setRecentMatches] = useState<RecentMatch[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
-  const [teamMembersMap, setTeamMembersMap] = useState<Record<string, MemberLite[]>>({}); // team_id -> members[]
+  const [teamMembersMap, setTeamMembersMap] = useState<Record<string, MemberLite[]>>({});
+  const [recentTournaments, setRecentTournaments] = useState<TournamentLite[]>([]);
 
   const router = useRouter();
   const { user, player, loading } = useAuth();
@@ -125,10 +142,11 @@ export default function HomePage() {
     fetchTopPlayers();
     fetchRecentMatches();
     fetchNotices();
+    fetchRecentTournaments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // （任意）ログイン済みなら自動遷移
+  // （任意）ログイン済みなら自動遷移（既存挙動維持）
   useEffect(() => {
     if (user && player && !loading) {
       if (player.is_admin) router.push('/admin/dashboard');
@@ -147,7 +165,9 @@ export default function HomePage() {
       const activePlayers = players.filter((p) => (p as any).is_active);
       const avgPoints =
         players.length > 0
-          ? Math.round(players.reduce((sum: number, p: any) => sum + (p.ranking_points ?? 0), 0) / players.length)
+          ? Math.round(
+              players.reduce((sum: number, p: any) => sum + (p.ranking_points ?? 0), 0) / players.length,
+            )
           : 1000;
 
       setStats({
@@ -199,7 +219,8 @@ export default function HomePage() {
           .select('*')
           .order('created_at', { ascending: false })
           .limit(6);
-        if (!res.error) data = (res.data ?? []).map((m: any) => ({ ...m, mode: 'singles' })) as RecentMatch[];
+        if (!res.error)
+          data = (res.data ?? []).map((m: any) => ({ ...m, mode: 'singles' })) as RecentMatch[];
       }
 
       setRecentMatches(data ?? []);
@@ -217,13 +238,33 @@ export default function HomePage() {
         .order('date', { ascending: false })
         .limit(3);
 
-    if (error) {
+      if (error) {
         console.error('Error fetching notices:', error);
         return;
       }
       setNotices(data ?? []);
     } catch (error) {
       console.error('Error fetching notices:', error);
+    }
+  };
+
+  const fetchRecentTournaments = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('tournaments')
+        .select('*')
+        .order('start_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(3);
+
+      if (error) {
+        console.error('Error fetching recent tournaments:', error);
+        return;
+      }
+
+      setRecentTournaments((data ?? []) as any);
+    } catch (e) {
+      console.error('fetchRecentTournaments unexpected error:', e);
     }
   };
 
@@ -259,15 +300,13 @@ export default function HomePage() {
             recentMatches
               .filter(isTeamMatch)
               .flatMap((m) => [m.winner_team_id, m.loser_team_id])
-              .filter((x): x is string => !!x)
-          )
+              .filter((x): x is string => !!x),
+          ),
         );
 
-        // 既に取得済みの team_id を除外（再フェッチ抑制）
         const missing = ids.filter((id) => !(id in teamMembersMap));
         if (missing.length === 0) return;
 
-        // team_members から player_id を収集
         const { data: tm, error: tmErr } = await supabase
           .from('team_members')
           .select('team_id, player_id')
@@ -281,7 +320,6 @@ export default function HomePage() {
         const playerIds = Array.from(new Set((tm ?? []).map((r) => (r as any).player_id)));
         if (playerIds.length === 0) return;
 
-        // players 情報取得
         const { data: ps, error: pErr } = await supabase
           .from('players')
           .select('id, handle_name, avatar_url')
@@ -301,7 +339,6 @@ export default function HomePage() {
           });
         });
 
-        // team_id -> members[] の形に整形（ハンドルネーム昇順）
         const grouped: Record<string, MemberLite[]> = {};
         (tm ?? []).forEach((row) => {
           const tid = (row as any).team_id as string;
@@ -314,7 +351,7 @@ export default function HomePage() {
         Object.keys(grouped).forEach((tid) => {
           grouped[tid] = grouped[tid]
             .sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'))
-            .slice(0, 4); // 表示は最大4名
+            .slice(0, 4);
         });
 
         setTeamMembersMap((prev) => ({ ...prev, ...grouped }));
@@ -323,10 +360,9 @@ export default function HomePage() {
       }
     };
 
-    if (recentMatches.length) {
-      void loadTeamMembers();
-    }
-  }, [recentMatches, teamMembersMap]);
+    if (recentMatches.length) void loadTeamMembers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recentMatches]);
 
   // null/undefined 安全な Link ラッパ
   const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
@@ -337,7 +373,7 @@ export default function HomePage() {
     const members = useMemo(() => {
       if (!teamId) return [] as MemberLite[];
       return teamMembersMap[teamId] ?? [];
-    }, [teamId, teamMembersMap]);
+    }, [teamId]);
 
     if (!teamId || members.length === 0) return null;
 
@@ -361,6 +397,73 @@ export default function HomePage() {
   /** 個人戦アバターの安全な取得（winner/loser） */
   const winnerAvatarOf = (m: RecentMatch) => m.winner_avatar ?? m.winner_avatar_url ?? null;
   const loserAvatarOf = (m: RecentMatch) => m.loser_avatar ?? m.loser_avatar_url ?? null;
+
+  // ────────────────────────── 大会バナー（UI追加部分） ──────────────────────────
+  const tournamentTitleOf = (t: TournamentLite) => t.name ?? t.title ?? '大会';
+
+  const tournamentDateLabel = (t: TournamentLite) => {
+    const raw = t.start_date || t.created_at;
+    if (!raw) return '';
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+  };
+
+  const tournamentBannerUrlOf = (t: TournamentLite) =>
+    (t as any).banner_url ?? (t as any).banner_image_url ?? (t as any).image_url ?? null;
+
+  const TournamentBannerCard = ({ t }: { t: TournamentLite }) => {
+    const title = tournamentTitleOf(t);
+    const dateLabel = tournamentDateLabel(t);
+    const bannerUrl = tournamentBannerUrlOf(t);
+
+    return (
+      <Link href={`/tournaments/${t.id}`} className="w-full sm:w-[300px] lg:w-[320px]" aria-label={title}>
+        <div className="glass-card rounded-xl overflow-hidden border border-amber-500/25 hover:border-amber-400/40 hover:shadow-lg hover:shadow-amber-500/10 transition-all group">
+          <div className="relative h-24 sm:h-28">
+            {bannerUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={bannerUrl}
+                alt={title}
+                className="absolute inset-0 w-full h-full object-cover"
+                loading="lazy"
+                decoding="async"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-r from-amber-500/20 via-purple-500/15 to-pink-500/15" />
+            )}
+
+            <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
+            <div className="absolute inset-0 bg-white/5 group-hover:bg-white/10 transition-colors" />
+
+            <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[11px] border bg-amber-900/25 border-amber-500/40 text-amber-200">
+              <FaMedal className="inline mr-1" />
+              大会
+            </div>
+
+            <div className="absolute inset-0 p-3 flex flex-col justify-end">
+              <div className="text-[11px] sm:text-xs text-gray-200/90 flex items-center gap-1">
+                <FaCalendar className="opacity-80" />
+                <span>{dateLabel || '近日'}</span>
+                {t.venue && (
+                  <>
+                    <span className="opacity-60">・</span>
+                    <span className="truncate max-w-[12rem]">{t.venue}</span>
+                  </>
+                )}
+              </div>
+              <div className="text-sm sm:text-base font-bold text-yellow-100 truncate">{title}</div>
+            </div>
+          </div>
+        </div>
+      </Link>
+    );
+  };
+  // ───────────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen">
@@ -403,7 +506,6 @@ export default function HomePage() {
 
           {/* CTA */}
           <div className="flex flex-col sm:flex-row gap-3 justify-center max-w-xs mx-auto sm:max-w-none">
-            {/* プレーヤー新規登録 */}
             <Link
               href="/register"
               className="gradient-button px-6 py-2.5 sm:px-8 sm:py-3 rounded-full text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
@@ -411,12 +513,10 @@ export default function HomePage() {
               <FaUserPlus className="text-sm" /> 新規登録
             </Link>
 
-            {/* 既存の「試合登録」ボタンを置き換え */}
             <div className="px-0 sm:px-0">
               <RegisterButtons />
             </div>
 
-            {/* ログイン状態に応じて色・文言を切替 */}
             <AuthAwareLoginButtonClient />
           </div>
 
@@ -460,16 +560,12 @@ export default function HomePage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-8 sm:mb-12">
           {menuItems.map((item, index) => {
             const cardClass =
-              index === 0
-                ? 'ranking-card'
-                : index === 1
-                ? 'members-card'
-                : index === 2
-                ? 'teams-card'
-                : 'matches-card';
+              index === 0 ? 'ranking-card' : index === 1 ? 'members-card' : index === 2 ? 'teams-card' : 'matches-card';
             return (
               <Link key={index} href={item.href}>
-                <div className={`${cardClass} glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer group h-full`}>
+                <div
+                  className={`${cardClass} glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer group h-full`}
+                >
                   <div className="flex flex-col items-center text-center">
                     <div className="p-3 sm:p-4 rounded-full bg-gradient-to-br from-purple-600/20 to-pink-600/20 mb-2 sm:mb-4 group-hover:scale-110 transition-transform">
                       <item.icon className="text-xl sm:text-3xl text-purple-400" />
@@ -502,15 +598,14 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* トッププレーヤー（省略なし・元のままの構成） */}
-        {/* --- ここはご提示コードと同様のレイアウト／内容を維持しています --- */}
-        {/* モバイル 1–5位 */}
+        {/* トッププレーヤー */}
         <div className="mb-8 sm:mb-12">
           <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-2 text-yellow-100">
             <FaTrophy className="text-yellow-400 text-lg sm:text-2xl" />
             トッププレーヤー
           </h2>
 
+          {/* モバイル */}
           <div className="sm:hidden space-y-2">
             {topPlayers.slice(0, 5).map((p, idx) => {
               const rank = idx + 1;
@@ -524,26 +619,42 @@ export default function HomePage() {
               const s = (sizeMap as any)[rank] ?? sizeMap[5];
 
               const badgeColor =
-                rank === 1 ? 'bg-yellow-400 text-gray-900' : rank === 2 ? 'bg-gray-300 text-gray-900' : rank === 3 ? 'bg-orange-500 text-white' : 'bg-purple-600 text-white';
+                rank === 1
+                  ? 'bg-yellow-400 text-gray-900'
+                  : rank === 2
+                    ? 'bg-gray-300 text-gray-900'
+                    : rank === 3
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-purple-600 text-white';
 
               return (
                 <Link key={p?.id ?? `rank-${rank}`} href={p ? `/players/${p.id}` : '#'}>
-                  <div className={`glass-card rounded-xl px-3 py-3 border ${rank === 1 ? 'border-2 border-yellow-400/70 shadow-yellow-400/20' : 'border-purple-500/30' } ${s.h}`}>
+                  <div
+                    className={`glass-card rounded-xl px-3 py-3 border ${
+                      rank === 1 ? 'border-2 border-yellow-400/70 shadow-yellow-400/20' : 'border-purple-500/30'
+                    } ${s.h}`}
+                  >
                     <div className="flex items-center gap-3">
-                      <div className={`rounded-full ${badgeColor} ${s.badge} font-extrabold flex items-center justify-center shrink-0`}>
+                      <div
+                        className={`rounded-full ${badgeColor} ${s.badge} font-extrabold flex items-center justify-center shrink-0`}
+                      >
                         {rank}
                       </div>
                       <AvatarImg
                         src={p?.avatar_url}
                         alt={p?.handle_name || `Rank ${rank}`}
                         size={s.av}
-                        className={`rounded-full object-cover border-2 ${rank === 1 ? 'border-yellow-400' : 'border-purple-500'}`}
+                        className={`rounded-full object-cover border-2 ${
+                          rank === 1 ? 'border-yellow-400' : 'border-purple-500'
+                        }`}
                       />
                       <div className="flex-1 min-w-0">
                         <div className={`font-semibold text-yellow-100 truncate ${s.name}`}>{p?.handle_name ?? '—'}</div>
                         <div className="text-xs text-gray-400">HC {p?.handicap ?? '—'}</div>
                         <div className="mt-1 flex items-center gap-2">
-                          <span className={`px-2 py-0.5 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${s.rp}`}>
+                          <span
+                            className={`px-2 py-0.5 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${s.rp}`}
+                          >
                             RP <b className="text-yellow-100 ml-1">{p?.ranking_points ?? '—'}</b>
                           </span>
                           <span className="px-2 py-0.5 rounded-full bg-blue-900/40 text-blue-200 border border-blue-500/30 text-xs">
@@ -565,11 +676,56 @@ export default function HomePage() {
               const rank = idx + 1;
               const sizeByRank = (r: number) => {
                 switch (r) {
-                  case 1: return { cardH: 'min-h-[18rem]', avatar: 110, badge: 'w-10 h-10 text-base', ring: 'ring-4', border: 'border-4 border-yellow-400/70', glow: 'shadow-xl shadow-yellow-400/20', pill: 'text-base' };
-                  case 2: return { cardH: 'min-h-[15rem]', avatar: 92,  badge: 'w-9 h-9 text-sm',  ring: 'ring-2', border: 'border-2 border-gray-300/80',  glow: 'shadow-lg shadow-gray-300/10',  pill: 'text-sm'  };
-                  case 3: return { cardH: 'min-h-[13rem]', avatar: 84,  badge: 'w-9 h-9 text-sm',  ring: 'ring-2', border: 'border-2 border-orange-500/80',glow: 'shadow-lg shadow-orange-400/10', pill: 'text-sm'  };
-                  case 4: return { cardH: 'min-h-[11rem]', avatar: 72,  badge: 'w-8 h-8 text-xs',  ring: 'ring-0', border: 'border border-purple-400/40', glow: 'shadow',                    pill: 'text-xs'  };
-                  default:return { cardH: 'min-h-[10rem]', avatar: 64,  badge: 'w-8 h-8 text-xs',  ring: 'ring-0', border: 'border border-purple-400/40', glow: 'shadow',                    pill: 'text-xs'  };
+                  case 1:
+                    return {
+                      cardH: 'min-h-[18rem]',
+                      avatar: 110,
+                      badge: 'w-10 h-10 text-base',
+                      ring: 'ring-4',
+                      border: 'border-4 border-yellow-400/70',
+                      glow: 'shadow-xl shadow-yellow-400/20',
+                      pill: 'text-base',
+                    };
+                  case 2:
+                    return {
+                      cardH: 'min-h-[15rem]',
+                      avatar: 92,
+                      badge: 'w-9 h-9 text-sm',
+                      ring: 'ring-2',
+                      border: 'border-2 border-gray-300/80',
+                      glow: 'shadow-lg shadow-gray-300/10',
+                      pill: 'text-sm',
+                    };
+                  case 3:
+                    return {
+                      cardH: 'min-h-[13rem]',
+                      avatar: 84,
+                      badge: 'w-9 h-9 text-sm',
+                      ring: 'ring-2',
+                      border: 'border-2 border-orange-500/80',
+                      glow: 'shadow-lg shadow-orange-400/10',
+                      pill: 'text-sm',
+                    };
+                  case 4:
+                    return {
+                      cardH: 'min-h-[11rem]',
+                      avatar: 72,
+                      badge: 'w-8 h-8 text-xs',
+                      ring: 'ring-0',
+                      border: 'border border-purple-400/40',
+                      glow: 'shadow',
+                      pill: 'text-xs',
+                    };
+                  default:
+                    return {
+                      cardH: 'min-h-[10rem]',
+                      avatar: 64,
+                      badge: 'w-8 h-8 text-xs',
+                      ring: 'ring-0',
+                      border: 'border border-purple-400/40',
+                      glow: 'shadow',
+                      pill: 'text-xs',
+                    };
                 }
               };
               const S = sizeByRank(rank);
@@ -577,12 +733,18 @@ export default function HomePage() {
                 rank === 1
                   ? 'from-yellow-400/25 to-yellow-600/25'
                   : rank === 2
-                  ? 'from-gray-300/20 to-gray-500/20'
-                  : rank === 3
-                  ? 'from-orange-400/20 to-orange-600/20'
-                  : 'from-purple-600/10 to-pink-600/10';
+                    ? 'from-gray-300/20 to-gray-500/20'
+                    : rank === 3
+                      ? 'from-orange-400/20 to-orange-600/20'
+                      : 'from-purple-600/10 to-pink-600/10';
               const badgeColor =
-                rank === 1 ? 'bg-yellow-400 text-gray-900' : rank === 2 ? 'bg-gray-300 text-gray-900' : rank === 3 ? 'bg-orange-500 text-white' : 'bg-purple-600 text-white';
+                rank === 1
+                  ? 'bg-yellow-400 text-gray-900'
+                  : rank === 2
+                    ? 'bg-gray-300 text-gray-900'
+                    : rank === 3
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-purple-600 text-white';
 
               return (
                 <Link key={`rank-card-${rank}`} href={p ? `/players/${p.id}` : '#'}>
@@ -597,7 +759,9 @@ export default function HomePage() {
                     ].join(' ')}
                     aria-label={`第${rank}位 ${p?.handle_name ?? ''}`}
                   >
-                    <div className={`absolute -top-3 -right-3 ${badgeColor} ${S.badge} rounded-full font-extrabold flex items-center justify-center shadow`}>
+                    <div
+                      className={`absolute -top-3 -right-3 ${badgeColor} ${S.badge} rounded-full font-extrabold flex items-center justify-center shadow`}
+                    >
                       {rank}
                     </div>
                     {rank === 1 && (
@@ -614,7 +778,9 @@ export default function HomePage() {
                     />
                     <div className={`absolute inset-0 rounded-full ring-yellow-400/40 ${S.ring} pointer-events-none`} />
                     <div className="mt-3">
-                      <div className="font-semibold text-yellow-100 text-base truncate max-w-[10rem]">{p?.handle_name ?? '—'}</div>
+                      <div className="font-semibold text-yellow-100 text-base truncate max-w-[10rem]">
+                        {p?.handle_name ?? '—'}
+                      </div>
                       <div className="text-xs text-gray-400 mt-0.5">HC {p?.handicap ?? '—'}</div>
                     </div>
                     <div className="mt-3 flex items-center justify-center gap-2">
@@ -637,6 +803,29 @@ export default function HomePage() {
             })}
           </div>
         </div>
+
+        {/* 直近の大会バナー（最近の試合の上） */}
+        {recentTournaments.length > 0 && (
+          <div className="mb-8 sm:mb-10">
+            <div className="text-center mb-4">
+              <h2 className="text-lg sm:text-xl font-bold text-yellow-100 inline-flex items-center gap-2">
+                <FaTrophy className="text-amber-300" />
+                直近の大会
+              </h2>
+              <div className="mt-2 flex items-center justify-center gap-1">
+                <div className="w-10 h-px bg-gradient-to-r from-transparent to-amber-400/50" />
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                <div className="w-10 h-px bg-gradient-to-l from-transparent to-amber-400/50" />
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row flex-wrap items-center justify-center gap-3 sm:gap-4">
+              {recentTournaments.slice(0, 3).map((t) => (
+                <TournamentBannerCard key={t.id} t={t} />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 最近の試合 */}
         <div>
@@ -661,14 +850,22 @@ export default function HomePage() {
 
               const team = isTeamMatch(m);
               const winnerHref = team
-                ? (m.winner_team_id ? `/teams/${m.winner_team_id}` : undefined)
-                : (m.winner_id ? `/players/${m.winner_id}` : undefined);
+                ? m.winner_team_id
+                  ? `/teams/${m.winner_team_id}`
+                  : undefined
+                : m.winner_id
+                  ? `/players/${m.winner_id}`
+                  : undefined;
               const loserHref = team
-                ? (m.loser_team_id ? `/teams/${m.loser_team_id}` : undefined)
-                : (m.loser_id ? `/players/${m.loser_id}` : undefined);
+                ? m.loser_team_id
+                  ? `/teams/${m.loser_team_id}`
+                  : undefined
+                : m.loser_id
+                  ? `/players/${m.loser_id}`
+                  : undefined;
 
-              const winnerName = team ? (m.winner_team_name ?? m.winner_name ?? '—') : (m.winner_name ?? '—');
-              const loserName = team ? (m.loser_team_name ?? m.loser_name ?? '—') : (m.loser_name ?? '—');
+              const winnerName = team ? m.winner_team_name ?? m.winner_name ?? '—' : m.winner_name ?? '—';
+              const loserName = team ? m.loser_team_name ?? m.loser_name ?? '—' : m.loser_name ?? '—';
 
               const winnerAvatar = team ? null : winnerAvatarOf(m);
               const loserAvatar = team ? null : loserAvatarOf(m);
@@ -740,8 +937,8 @@ export default function HomePage() {
                           scoreDiff >= 10
                             ? 'bg-gradient-to-r from-red-500/80 to-red-600/80'
                             : scoreDiff >= 5
-                            ? 'bg-gradient-to-r from-orange-500/80 to-orange-600/80'
-                            : 'bg-gradient-to-r from-blue-500/80 to-blue-600/80'
+                              ? 'bg-gradient-to-r from-orange-500/80 to-orange-600/80'
+                              : 'bg-gradient-to-r from-blue-500/80 to-blue-600/80'
                         }`}
                         title={`点差 ${scoreDiff}`}
                       >

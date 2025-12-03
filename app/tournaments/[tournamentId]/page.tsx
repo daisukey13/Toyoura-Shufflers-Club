@@ -225,8 +225,8 @@ export default function TournamentTopPage() {
 
             <div className="shrink-0 text-right flex flex-col items-end gap-2">
               <div className="flex items-center gap-3 text-xs">
-                <Link href="/matches" className="text-blue-300 hover:text-blue-200 underline">
-                  試合結果へ
+                <Link href="/tournaments" className="text-blue-300 hover:text-blue-200 underline">
+                  大会一覧へ
                 </Link>
                 <Link href={`/tournaments/${tournamentId}/finals`} className="text-blue-300 hover:text-blue-200 underline">
                   決勝へ

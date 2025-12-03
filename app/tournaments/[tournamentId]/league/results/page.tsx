@@ -510,8 +510,8 @@ export default function TournamentLeagueResultsPage() {
         })}
 
         <div className="mt-6 text-right text-xs">
-          <Link href={`/tournaments/${tournament.id}/league`} className="text-blue-300 underline">
-            大会のリーグ一覧に戻る
+          <Link href={`/tournaments/${tournament.id}`} className="text-blue-300 underline">
+            大会トップに戻る
           </Link>
         </div>
       </div>
