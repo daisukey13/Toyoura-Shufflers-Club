@@ -198,7 +198,6 @@ export default function TournamentTopPage() {
 
   const championName = champion?.handle_name ?? null;
   const championAvatar = champion?.avatar_url ?? null;
-
   const winnerLabel = championName ? `優勝者：${championName}` : '優勝者：未確定（決勝結果の入力待ち）';
 
   return (
@@ -210,21 +209,31 @@ export default function TournamentTopPage() {
             <div className="absolute -left-24 -bottom-24 w-72 h-72 rounded-full bg-pink-600 blur-3xl" />
           </div>
 
-          <div className="relative flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="text-xs text-gray-300">TOURNAMENT</div>
-              <h1 className="text-2xl md:text-3xl font-bold truncate">{title}</h1>
-              {tournament?.description && <p className="text-sm text-gray-300 mt-2">{tournament.description}</p>}
+          {/* ✅ ここから：ヘッダーを「情報→リンク→優勝者カード(下段)」の縦構成に変更 */}
+          <div className="relative">
+            {/* 上段：大会情報 + ナビリンク（モバイルは縦、md で横） */}
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-xs text-gray-300">TOURNAMENT</div>
 
-              <div className="mt-3 flex items-center gap-2 text-sm text-gray-200">
-                <FaCalendarAlt className="opacity-80" />
-                <span className="opacity-80">開催日</span>
-                <span className="font-semibold">{date}</span>
+                {/* ✅ モバイルでタイトルが縦潰れしないよう truncate を外し、折り返し許可 */}
+                <h1 className="text-2xl md:text-3xl font-bold break-words leading-tight">{title}</h1>
+
+                {tournament?.description && (
+                  <p className="text-sm text-gray-300 mt-2 break-words leading-relaxed">
+                    {tournament.description}
+                  </p>
+                )}
+
+                <div className="mt-3 flex items-center gap-2 text-sm text-gray-200">
+                  <FaCalendarAlt className="opacity-80" />
+                  <span className="opacity-80">開催日</span>
+                  <span className="font-semibold">{date}</span>
+                </div>
               </div>
-            </div>
 
-            <div className="shrink-0 text-right flex flex-col items-end gap-2">
-              <div className="flex items-center gap-3 text-xs">
+              {/* ✅ リンクは右寄せに集約（モバイルは左寄せ/折り返し） */}
+              <div className="flex items-center md:justify-end gap-3 text-xs flex-wrap">
                 <Link href="/tournaments" className="text-blue-300 hover:text-blue-200 underline">
                   大会一覧へ
                 </Link>
@@ -235,36 +244,41 @@ export default function TournamentTopPage() {
                   予選（リーグ）へ
                 </Link>
               </div>
+            </div>
 
-              <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 min-w-[260px]">
+            {/* 下段：優勝者カード（✅ここへ移動） */}
+            <div className="mt-4 flex md:justify-end">
+              <div className="w-full md:w-[420px] rounded-xl border border-white/10 bg-black/20 px-4 py-3">
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="text-base md:text-lg font-bold flex items-center gap-2">
                       <FaTrophy className="text-yellow-300" />
-                      <span className="truncate">{winnerLabel}</span>
+                      {/* ✅ 省略しすぎない（折り返しOK） */}
+                      <span className="break-words leading-snug">{winnerLabel}</span>
                     </div>
                   </div>
 
                   {championAvatar && !championImgError ? (
-                    <div className="relative w-20 h-20 md:w-24 md:h-24 rounded-full overflow-hidden border border-white/20">
+                    <div className="relative w-16 h-16 md:w-24 md:h-24 rounded-full overflow-hidden border border-white/20 shrink-0">
                       <Image
                         loader={passthroughLoader}
                         unoptimized
                         src={championAvatar}
                         alt={championName ?? 'champion'}
                         fill
-                        sizes="(min-width: 768px) 96px, 80px"
+                        sizes="(min-width: 768px) 96px, 64px"
                         className="object-cover"
                         onError={() => setChampionImgError(true)}
                       />
                     </div>
                   ) : (
-                    <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-white/10 border border-white/20" />
+                    <div className="w-16 h-16 md:w-24 md:h-24 rounded-full bg-white/10 border border-white/20 shrink-0" />
                   )}
                 </div>
               </div>
             </div>
           </div>
+          {/* ✅ ここまで */}
         </div>
 
         {error && (
