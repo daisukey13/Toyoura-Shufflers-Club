@@ -109,7 +109,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
           method: 'GET',
           headers: {
             apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
+            Authorization: token ? `Bearer ${token}` : undefined,
             'Content-Type': 'application/json',
           },
           signal: abortRef.current.signal,
@@ -232,8 +232,7 @@ async function fetchPlayersLite(playerIds: string[], requireAuth: boolean) {
     method: 'GET',
     headers: {
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
-      'Content-Type': 'application/json',
+      Authorization: token ? `Bearer ${token}` : undefined,
     },
     cache: 'no-store',
   });
@@ -517,7 +516,7 @@ export async function updatePlayer(playerId: string, updates: any) {
       method: 'PATCH',
       headers: {
         apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`, // ★ ユーザーのアクセストークン
+        Authorization: token ? `Bearer ${token}` : undefined,
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
@@ -547,7 +546,7 @@ export async function createMatch(matchData: any) {
       method: 'POST',
       headers: {
         apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`, // ★ ユーザーのアクセストークン
+        Authorization: token ? `Bearer ${token}` : undefined,
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },

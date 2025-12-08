@@ -23,24 +23,21 @@ function uniqStrings(input: string[]): string[] {
   return out;
 }
 
-function readCookie(name: string) {
-  const store = cookies();
-  const c = store.get(name);
-  return c ? c.value : undefined;
-}
-
 export async function GET(_req: NextRequest) {
+  // ✅ Next.js 15+: cookies() は await が必要
+  const cookieStore = await cookies();
+
   // Supabase SSR クライアント（Cookie連携）
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const supabase = createServerClient(supabaseUrl, supabaseAnon, {
     cookies: {
-      get: readCookie,
-      set: (name, value, options) => {
-        // App RouterのRoute内ではレスポンス側でSet-Cookieするのが推奨ですが、
-        // 今回は読み取り専用用途なので set/remove はno-opで問題ありません。
+      get(name: string) {
+        return cookieStore.get(name)?.value;
       },
-      remove: () => {},
+      // 読み取り専用用途なので no-op（Route HandlerでSet-Cookieしない方針を維持）
+      set(_name: string, _value: string, _options: any) {},
+      remove(_name: string, _options: any) {},
     },
   });
 
@@ -48,10 +45,7 @@ export async function GET(_req: NextRequest) {
   const { data: userRes } = await supabase.auth.getUser();
   const user = userRes?.user;
   if (!user) {
-    return NextResponse.json(
-      { ok: false, message: 'Unauthorized' },
-      { status: 401 }
-    );
+    return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
   }
 
   // 管理者フラグ（存在しない場合は false にフォールバック）
@@ -70,11 +64,7 @@ export async function GET(_req: NextRequest) {
   // まずはユーザーの所属チームIDを取得
   let teamIds: string[] = [];
   try {
-    const { data, error } = await supabase
-      .from('team_members')
-      .select('team_id')
-      .eq('player_id', user.id);
-
+    const { data, error } = await supabase.from('team_members').select('team_id').eq('player_id', user.id);
     if (error) throw error;
 
     const rawIds: string[] = [];
@@ -84,7 +74,7 @@ export async function GET(_req: NextRequest) {
       if (id) rawIds[rawIds.length] = id;
     }
     teamIds = uniqStrings(rawIds);
-  } catch (e) {
+  } catch {
     // 所属取得に失敗した場合は空のまま続行
     teamIds = [];
   }
@@ -95,10 +85,7 @@ export async function GET(_req: NextRequest) {
   // 管理者なら全チームを取得（失敗したら所属チームのみにフォールバック）
   if (admin) {
     try {
-      const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .order('name', { ascending: true });
+      const { data, error } = await supabase.from('teams').select('id, name').order('name', { ascending: true });
       if (error) throw error;
       teams = (data || []) as Team[];
     } catch {
@@ -109,10 +96,7 @@ export async function GET(_req: NextRequest) {
   // 非管理者 or 管理者の全件取得が失敗 → 所属チームのみ返す
   if (teams.length === 0 && teamIds.length > 0) {
     try {
-      const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .in('id', teamIds);
+      const { data, error } = await supabase.from('teams').select('id, name').in('id', teamIds);
       if (error) throw error;
       teams = (data || []) as Team[];
     } catch {

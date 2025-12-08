@@ -48,7 +48,7 @@ async function restGet<T = any>(path: string, token?: string) {
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       apikey: ANON,
-      Authorization: `Bearer ${token ?? ANON}`,
+      Authorization: token ? `Bearer ${token}` : ANON,
       'Content-Type': 'application/json',
     },
     cache: 'no-store',

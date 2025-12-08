@@ -26,14 +26,16 @@ async function restGet<T = any>(path: string) {
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       apikey: ANON,
-      Authorization: `Bearer ${ANON}`,
       'Content-Type': 'application/json',
+      // ★ token が無い状態では Authorization を送らない
     },
     cache: 'no-store',
   });
+
   if (!res.ok) throw new Error(await res.text());
   return (await res.json()) as T;
 }
+
 
 function useIsSmallScreen() {
   const [small, setSmall] = useState(false);

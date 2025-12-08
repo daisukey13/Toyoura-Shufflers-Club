@@ -62,9 +62,6 @@ async function updateFinalMatchWithReasonFallback(matchId: string, base: AnyBody
 }
 
 async function getDefPlayerId(): Promise<string> {
-  // もし環境変数で固定したいならここで読むのもOK
-  // const env = process.env.DEF_PLAYER_ID; if (env) return env;
-
   const { data, error } = await supabaseAdmin
     .from('players')
     .select('id')
@@ -87,7 +84,6 @@ async function propagateWinnerToNextRound(bracketId: string, roundNo: number, ma
   const nextRound = roundNo + 1;
   const nextSlot = matchNo; // ★標準：RのM#勝者は、R+1のslot_no=match_no に入れる
 
-  // 既存行があれば update、なければ insert
   const { data: found, error: fErr } = await supabaseAdmin
     .from('final_round_entries')
     .select('id')
@@ -97,7 +93,6 @@ async function propagateWinnerToNextRound(bracketId: string, roundNo: number, ma
     .maybeSingle();
 
   if (fErr) {
-    // ここで止めない（試合確定を優先）
     console.warn('[finals] propagate lookup failed:', fErr);
     return;
   }
@@ -117,7 +112,6 @@ async function propagateWinnerToNextRound(bracketId: string, roundNo: number, ma
 }
 
 async function recomputeChampionInFinalBrackets(bracketId: string) {
-  // winner_id が入っている最大 round の match_no が最小の勝者を champion とみなす（表示ロジックと一致）
   const { data, error } = await supabaseAdmin
     .from('final_matches')
     .select('round_no,match_no,winner_id')
@@ -151,8 +145,9 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    // ★ 認証（既存の流れを維持）
-    const cookieStore = cookies();
+    // ✅ Next.js 15+: cookies() は await が必要
+    const cookieStore = await cookies();
+
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -187,7 +182,6 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
     }
 
-    // ★ 対象 match を取得（ここから player_a/player_b を確実に取る）
     const { data: mRow, error: mErr } = await supabaseAdmin
       .from('final_matches')
       .select('id,bracket_id,round_no,match_no,player_a_id,player_b_id,winner_id,loser_id')
@@ -208,7 +202,6 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
 
     const defId = await getDefPlayerId();
 
-    // player_a / player_b が空の可能性もあるので entries から補完
     let playerA = mRow.player_a_id ? String(mRow.player_a_id) : null;
     let playerB = mRow.player_b_id ? String(mRow.player_b_id) : null;
 
@@ -239,7 +232,6 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     const aIsDef = playerA === defId;
     const bIsDef = playerB === defId;
 
-    // 入力（通常の報告値）
     let winnerId = String(body.winner_id || '').trim() || null;
     let loserId = String(body.loser_id || '').trim() || null;
 
@@ -248,9 +240,6 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     let winnerScore = clampInt(body.winner_score, 0, 99, 15);
     let loserScore = clampInt(body.loser_score, 0, 99, 0);
 
-    // ★ def が絡む場合は “自動確定” を優先
-    // real vs def → real 勝ち、成績は付かない
-    // def vs def → def 勝ち上がり扱い（ただし loser は null にして安全運用）
     let affects_rating: boolean | null = null;
     let forcedReason: string | null = null;
 
@@ -275,7 +264,6 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
         loserScore = 0;
       }
     } else {
-      // def じゃない通常試合：入力検証
       if (!winnerId || !loserId || winnerId === loserId) {
         return NextResponse.json({ ok: false, message: '勝者/敗者が不正です。' }, { status: 400 });
       }
@@ -287,7 +275,6 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       }
     }
 
-    // ★ 更新（存在する列だけ更新：理由列は fallback）
     const updateRow: AnyBody = {
       winner_id: winnerId,
       loser_id: loserId,
@@ -296,15 +283,11 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       reason: forcedReason ?? reason,
     };
 
-    // affects_rating 列がある前提だが、無い環境も想定して fallback
-    // （あなたのスキーマにはあるので通常は通る）
     {
       const { error } = await supabaseAdmin.from('final_matches').select('id,affects_rating').limit(1);
       if (!error) updateRow.affects_rating = affects_rating ?? true;
     }
 
-    // 変動はゼロに固定（列があれば）
-    // ※ def絡みは必ずゼロ、通常試合でもこのAPIでは変動させない方針ならここは常にゼロでもOK
     updateRow.winner_points_change = 0;
     updateRow.loser_points_change = 0;
     updateRow.winner_handicap_change = 0;
@@ -312,10 +295,7 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
 
     await updateFinalMatchWithReasonFallback(matchId, updateRow);
 
-    // ★ 次ラウンドへ勝者を自動搬送（枠がある場合）
     await propagateWinnerToNextRound(bracketId, roundNo, matchNo, winnerId);
-
-    // ★ champion_player_id を自動更新（DBトリガが無くても確実に埋まる）
     await recomputeChampionInFinalBrackets(bracketId);
 
     return NextResponse.json(

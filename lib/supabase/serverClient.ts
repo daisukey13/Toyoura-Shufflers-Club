@@ -3,22 +3,16 @@ import { cookies } from 'next/headers';
 import type { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
-/**
- * 共通 ENV 取得（開発時のみ強い警告）
- */
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim();
+const ANON = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim();
 
 if ((!URL || !ANON) && process.env.NODE_ENV !== 'production') {
   // eslint-disable-next-line no-console
-  console.error(
-    '[supabase] Missing env: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY'
-  );
+  console.error('[supabase] Missing env: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY');
 }
 
 /**
- * CookieOptions を Next.js の cookies().set / res.cookies.set に
- * そのまま渡せる形にして返す（ほぼ同一だが型を明示）
+ * Next / Supabase cookie options の整形
  */
 function toCookieOptions(options: CookieOptions = {}): CookieOptions {
   return {
@@ -33,12 +27,12 @@ function toCookieOptions(options: CookieOptions = {}): CookieOptions {
 }
 
 /**
- * Server Components / Server Actions 用の Supabase クライアント。
- * - cookies() を直接利用
- * - 一部の場面（RSC）では cookies().set が禁止のため try/catch で安全化
+ * Server Components / Server Actions 用（Next.js 15 互換）
+ * - ★重要: token無しで Authorization に ANON/sb_* を入れない
+ * - createServerClient(URL, ANON, ...) に渡すだけで apikey は担保される
  */
-export function createServerSupabaseClient() {
-  const cookieStore = cookies();
+export async function createServerSupabaseClient() {
+  const cookieStore = await cookies();
 
   return createServerClient(URL!, ANON!, {
     cookies: {
@@ -47,10 +41,14 @@ export function createServerSupabaseClient() {
       },
       set(name: string, value: string, options?: CookieOptions) {
         try {
-          // Next.js 14 ではオブジェクト or (name, value, options) の両方に対応
-          cookieStore.set({ name, value, ...toCookieOptions(options) });
+          cookieStore.set({
+            name,
+            value,
+            ...toCookieOptions(options),
+            path: options?.path ?? '/',
+          } as any);
         } catch {
-          // RSC など set 禁止文脈では無視（Server Actions / Route Handlers で上書きされる）
+          // RSC など set 禁止文脈では無視
         }
       },
       remove(name: string, options?: CookieOptions) {
@@ -59,7 +57,9 @@ export function createServerSupabaseClient() {
             name,
             value: '',
             ...toCookieOptions({ ...options, maxAge: 0 }),
-          });
+            path: options?.path ?? '/',
+            maxAge: 0,
+          } as any);
         } catch {
           // 同上
         }
@@ -69,14 +69,10 @@ export function createServerSupabaseClient() {
 }
 
 /**
- * Route Handler 用の Supabase クライアント（推奨）。
- * - req/resp の Cookie を確実に同期できる
- * - 例: const supabase = createRouteHandlerSupabaseClient(req, res);
+ * Route Handler 用（req/res 同期）
+ * - ★重要: token無しで Authorization に ANON/sb_* を入れない
  */
-export function createRouteHandlerSupabaseClient(
-  req: NextRequest,
-  res: NextResponse
-) {
+export function createRouteHandlerSupabaseClient(req: NextRequest, res: NextResponse) {
   return createServerClient(URL!, ANON!, {
     cookies: {
       get(name: string) {
@@ -101,20 +97,8 @@ export function createRouteHandlerSupabaseClient(
 }
 
 /**
- * Middleware 用の Supabase クライアント。
- * - Middleware では NextResponse を自分で生成してから渡す必要があります。
- *   例:
- *     export async function middleware(req: NextRequest) {
- *       const res = NextResponse.next();
- *       const supabase = createMiddlewareSupabaseClient(req, res);
- *       const { data: { user } } = await supabase.auth.getUser();
- *       // ...（判定して必要に応じて res を返す）
- *       return res;
- *     }
+ * Middleware 用（現状維持）
  */
-export function createMiddlewareSupabaseClient(
-  req: NextRequest,
-  res: NextResponse
-) {
+export function createMiddlewareSupabaseClient(req: NextRequest, res: NextResponse) {
   return createRouteHandlerSupabaseClient(req, res);
 }

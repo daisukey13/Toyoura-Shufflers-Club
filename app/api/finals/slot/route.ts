@@ -1,3 +1,4 @@
+// app/api/finals/slot/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
@@ -35,7 +36,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    const cookieStore = cookies();
+    // ✅ Next.js 15+: cookies() は await が必要
+    const cookieStore = await cookies();
+
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -45,10 +48,21 @@ export async function POST(req: NextRequest) {
             return cookieStore.get(name)?.value;
           },
           set(name: string, value: string, options?: any) {
-            cookieStore.set({ name, value, ...(options || {}) } as any);
+            cookieStore.set({
+              name,
+              value,
+              ...(options || {}),
+              path: options?.path ?? '/',
+            } as any);
           },
           remove(name: string, options?: any) {
-            cookieStore.set({ name, value: '', ...(options || {}) } as any);
+            cookieStore.set({
+              name,
+              value: '',
+              ...(options || {}),
+              path: options?.path ?? '/',
+              maxAge: 0,
+            } as any);
           },
         },
       } as any

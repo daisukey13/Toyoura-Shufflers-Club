@@ -19,12 +19,12 @@ export const supabaseConfig = {
 // ヘッダーの共通設定
 export const supabaseHeaders = {
   'apikey': SUPABASE_ANON_KEY,
-  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+  'Authorization': SUPABASE_ANON_KEY,
   'Content-Type': 'application/json',
 } as const;
 
 // Storageヘッダー（Content-Type なし）
 export const supabaseStorageHeaders = {
   'apikey': SUPABASE_ANON_KEY,
-  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+  'Authorization': SUPABASE_ANON_KEY,
 } as const;

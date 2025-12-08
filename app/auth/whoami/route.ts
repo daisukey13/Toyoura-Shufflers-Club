@@ -3,12 +3,13 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
-export const dynamic = 'force-dynamic'; // 常に最新の判定
+export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET() {
   try {
-    const cookieStore = cookies();
+    // ✅ Next.js 15+: cookies() は await が必要
+    const cookieStore = await cookies();
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,7 +20,6 @@ export async function GET() {
             return cookieStore.get(name)?.value;
           },
           set(name: string, value: string, options: CookieOptions) {
-            // site-wide で確実に適用
             cookieStore.set({
               name,
               value,
@@ -28,7 +28,6 @@ export async function GET() {
             });
           },
           remove(name: string, options: CookieOptions) {
-            // 削除は maxAge=0 / path=/ を明示
             cookieStore.set({
               name,
               value: '',

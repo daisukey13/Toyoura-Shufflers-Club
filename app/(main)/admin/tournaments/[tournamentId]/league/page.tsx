@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import TournamentsIndexPage from '@/app/tournaments/page';
 
 const supabase = createClient();
 // ✅ Supabase 型推論が "never" に崩れる環境があるので、このページ内は any 経由で安全に扱う
@@ -654,6 +655,26 @@ export default function AdminTournamentLeaguePage() {
           </div>
         )}
       </div>
+
+<div className="flex flex-wrap items-center gap-2">
+  <Link
+    href={`/admin/tournaments/${encodeURIComponent(tournamentId)}/finals`}
+    className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm hover:bg-black/5"
+  >
+    トーナメント管理へ
+  </Link>
+
+  <Link
+    href="/admin/tournaments"
+    className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm hover:bg-black/5"
+  >
+    大会管理へ
+  </Link>
+</div>
+
+
+
+
     </div>
   );
 }

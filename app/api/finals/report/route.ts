@@ -1,102 +1,157 @@
 // app/api/finals/report/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
 
-function jsonError(message: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+type SetScore = { a: number; b: number };
+
+function toInt(v: any, fb = 0) {
+  const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
+  return Number.isFinite(n) ? n : fb;
 }
 
-function isUuidLike(s: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+function normalizeSets(raw: any): SetScore[] {
+  if (!raw) return [];
+  let v: any = raw;
+
+  // 文字列JSONでもOK
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(v)) return [];
+
+  const out: SetScore[] = [];
+  for (const s of v.slice(0, 5)) {
+    const a = toInt(s?.a ?? s?.score_a ?? s?.p1 ?? s?.player1, -1);
+    const b = toInt(s?.b ?? s?.score_b ?? s?.p2 ?? s?.player2, -1);
+    if (a < 0 || b < 0) continue;
+    out.push({ a, b });
+  }
+  return out;
 }
 
-export async function GET() {
-  return NextResponse.json({ ok: true, route: '/api/finals/report', methods: ['POST'] });
+function calcSetWins(sets: SetScore[]) {
+  let aWins = 0;
+  let bWins = 0;
+  for (const s of sets.slice(0, 5)) {
+    if (s.a === s.b) continue;
+    if (s.a > s.b) aWins++;
+    else bWins++;
+  }
+  return { aWins, bWins };
 }
 
-export async function POST(req: Request) {
+function pickAdminKey() {
+  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim();
+
+  // ★新キー優先：SUPABASE_SECRET_KEY（sb_secret_...）
+  // 互換：SUPABASE_SERVICE_ROLE_KEY / SUPABASE_SERVICE_KEY
+  const key = (
+    process.env.SUPABASE_SECRET_KEY ??
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.SUPABASE_SERVICE_KEY ??
+    ''
+  ).trim();
+
+  // 省略表示や改行混入を弾く（40文字台の sb_secret_ は正常なので length では弾かない）
+  const looksBroken =
+    !url ||
+    !key ||
+    /\s/.test(key) ||
+    key.includes('...') ||
+    key.includes('…');
+
+  return { url, key, looksBroken };
+}
+
+export async function POST(req: NextRequest) {
   try {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
-    if (!url || !key) {
-      return jsonError('Supabase env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)', 500);
+    const body = await req.json();
+
+    // ✅ snake/camel 両対応
+    const matchId = String(body?.match_id ?? body?.matchId ?? '').trim();
+    if (!matchId) {
+      return NextResponse.json({ ok: false, error: 'match_id is required' }, { status: 400 });
     }
 
-    const supabase = createClient(url, key, { auth: { persistSession: false } });
+    // ✅ sets_json / sets どっちで来てもOK
+    const sets = normalizeSets(body?.sets_json ?? body?.sets);
 
-    const body = await req.json().catch(() => null);
-    if (!body) return jsonError('Invalid JSON');
+    // 理由（両方カラムがある前提なら両方更新してOK）
+    const finish_reason = body?.finish_reason != null ? String(body.finish_reason) : null;
+    const end_reason = body?.end_reason != null ? String(body.end_reason) : null;
 
-    const bracket_id = String(body.bracket_id ?? '').trim();
-    const round_no = Number(body.round_no ?? NaN);
-    const match_no = Number(body.match_no ?? body.matchNo ?? NaN);
+    // supabase（server/admin key 推奨：RLSに阻まれない）
+    const { url, key, looksBroken } = pickAdminKey();
+    if (looksBroken) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'Supabase env is missing or invalid (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY)',
+        },
+        { status: 500 }
+      );
+    }
 
-    if (!bracket_id) return jsonError('bracket_id is required');
-    if (!isUuidLike(bracket_id)) return jsonError('bracket_id must be uuid');
-    if (!Number.isFinite(round_no) || round_no <= 0) return jsonError('round_no is invalid');
-    if (!Number.isFinite(match_no) || match_no <= 0) return jsonError('match_no is invalid');
+    const supabase = createClient(url, key, {
+      auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+    });
 
-    const payload: any = {
-      bracket_id,
-      round_no,
-      match_no,
-      winner_id: body.winner_id ?? null,
-      loser_id: body.loser_id ?? null,
-      winner_score: body.winner_score ?? null,
-      loser_score: body.loser_score ?? null,
-      end_reason: body.end_reason ?? body.finish_reason ?? null,
-      sets_json: body.sets ?? body.sets_json ?? null,
-      winner_sets: body.winner_sets ?? null,
-      loser_sets: body.loser_sets ?? null,
+    // 既存行を読んで player_a_id/player_b_id を掴む（winner_score計算に使う）
+    const { data: existing, error: exErr } = await supabase
+      .from('final_matches')
+      .select('id, player_a_id, player_b_id, winner_id, loser_id, winner_score, loser_score')
+      .eq('id', matchId)
+      .maybeSingle();
+
+    if (exErr) {
+      return NextResponse.json({ ok: false, error: exErr.message }, { status: 400 });
+    }
+    if (!existing) {
+      return NextResponse.json({ ok: false, error: 'final_matches row not found' }, { status: 404 });
+    }
+
+    // winner/loser は送られてきたら採用、なければ既存維持（必須にしない）
+    const winner_id = body?.winner_id ? String(body.winner_id) : existing.winner_id;
+    const loser_id = body?.loser_id ? String(body.loser_id) : existing.loser_id;
+
+    // setsが入っているならセット勝数を計算して winner_score/loser_score を更新
+    let winner_score = existing.winner_score;
+    let loser_score = existing.loser_score;
+
+    if (sets.length > 0 && existing.player_a_id && existing.player_b_id && winner_id) {
+      const { aWins, bWins } = calcSetWins(sets);
+      const winnerIsA = String(winner_id) === String(existing.player_a_id);
+      winner_score = winnerIsA ? aWins : bWins;
+      loser_score = winnerIsA ? bWins : aWins;
+    }
+
+    const updatePayload: any = {
+      sets_json: sets.length ? sets : null,
+      winner_id: winner_id ?? null,
+      loser_id: loser_id ?? null,
+      winner_score: winner_score ?? null,
+      loser_score: loser_score ?? null,
       updated_at: new Date().toISOString(),
     };
 
-    // 既存検索
-    const { data: found, error: fErr } = await supabase
-      .from('final_matches')
-      .select('id')
-      .eq('bracket_id', bracket_id)
-      .eq('round_no', round_no)
-      .eq('match_no', match_no)
-      .maybeSingle();
+    // ✅ カラムがあるなら更新（無い環境でも落ちないように null のときは入れない）
+    if (finish_reason !== null) updatePayload.finish_reason = finish_reason;
+    if (end_reason !== null) updatePayload.end_reason = end_reason;
 
-    if (fErr) return jsonError(fErr.message, 500, { hint: 'finder failed' });
-
-    let savedId: string | null = null;
-
-    if (found?.id) {
-      const { error: uErr } = await supabase.from('final_matches').update(payload).eq('id', found.id);
-      if (uErr) return jsonError(uErr.message, 500, { hint: 'update failed' });
-      savedId = found.id;
-    } else {
-      const { data: ins, error: iErr } = await supabase.from('final_matches').insert(payload).select('id').single();
-      if (iErr) return jsonError(iErr.message, 500, { hint: 'insert failed' });
-      savedId = ins?.id ?? null;
+    const { error: upErr } = await supabase.from('final_matches').update(updatePayload).eq('id', matchId);
+    if (upErr) {
+      return NextResponse.json({ ok: false, error: upErr.message }, { status: 400 });
     }
 
-    // ✅ 決勝なら champion_player_id を更新
-    // bracket.max_round を見て、round_no==max_round && match_no==1 の winner_id を採用
-    const { data: b, error: bErr } = await supabase
-      .from('final_brackets')
-      .select('id,max_round')
-      .eq('id', bracket_id)
-      .maybeSingle();
-
-    if (!bErr && b?.id) {
-      const isFinal = Number(round_no) === Number(b.max_round) && Number(match_no) === 1;
-      if (isFinal) {
-        await supabase
-          .from('final_brackets')
-          .update({ champion_player_id: payload.winner_id ?? null, updated_at: new Date().toISOString() })
-          .eq('id', b.id);
-      }
-    }
-
-    return NextResponse.json({ ok: true, id: savedId });
+    return NextResponse.json({ ok: true, match_id: matchId });
   } catch (e: any) {
-    return jsonError(e?.message ?? 'Unknown error', 500);
+    return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
   }
 }

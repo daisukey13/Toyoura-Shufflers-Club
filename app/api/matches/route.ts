@@ -135,8 +135,6 @@ async function isMemberOfTeam(playerId: string, teamId: string): Promise<boolean
 
 /**
  * ★end_reason / time_limit_seconds / tournament_id が無いスキーマでも落ちないようにする
- * - REST 側の典型エラー: "Could not find the 'xxx' column of 'matches' in the schema cache"
- * - Postgres 側の典型: "column \"xxx\" of relation \"matches\" does not exist"
  */
 function isMissingColumnErrorMessage(msg: string, col: string) {
   const m = msg.toLowerCase();
@@ -148,7 +146,6 @@ function isMissingColumnErrorMessage(msg: string, col: string) {
 }
 
 function omitField(row: AnyBody, key: string): AnyBody {
-  // eslint-disable-next-line no-unused-vars
   const next = { ...row };
   delete next[key];
   return next;
@@ -157,14 +154,12 @@ function omitField(row: AnyBody, key: string): AnyBody {
 async function insertMatchWithOptionalFields(row: AnyBody) {
   const tryInsert = async (r: AnyBody) => await supabaseAdmin.from('matches').insert(r).select('id').single();
 
-  // まずフルで試す
   let current: AnyBody = { ...row };
   let first = await tryInsert(current);
   if (!first.error) return first;
 
   const msg1 = String(first.error.message || '');
 
-  // tournament_id 無しでやり直し
   if (isMissingColumnErrorMessage(msg1, 'tournament_id')) {
     current = omitField(current, 'tournament_id');
     first = await tryInsert(current);
@@ -173,7 +168,6 @@ async function insertMatchWithOptionalFields(row: AnyBody) {
 
   const msg2 = String(first.error?.message || '');
 
-  // end_reason 無しでやり直し
   if (isMissingColumnErrorMessage(msg2, 'end_reason')) {
     current = omitField(current, 'end_reason');
     first = await tryInsert(current);
@@ -182,7 +176,6 @@ async function insertMatchWithOptionalFields(row: AnyBody) {
 
   const msg3 = String(first.error?.message || '');
 
-  // time_limit_seconds 無しでやり直し
   if (isMissingColumnErrorMessage(msg3, 'time_limit_seconds')) {
     current = omitField(current, 'time_limit_seconds');
     first = await tryInsert(current);
@@ -202,7 +195,7 @@ async function insertMatchWithModeFallback(baseRow: AnyBody, modeCandidates: str
 
     last = error;
     const msg = String(error.message || '');
-    if (msg.includes('matches_mode_check')) continue; // ここだけリトライ
+    if (msg.includes('matches_mode_check')) continue;
     break;
   }
   return { data: null, error: last, used_mode: null };
@@ -214,7 +207,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    const cookieStore = cookies();
+    // ✅ Next.js 15+: cookies() は await が必要
+    const cookieStore = await cookies();
+
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -224,10 +219,21 @@ export async function POST(req: NextRequest) {
             return cookieStore.get(name)?.value;
           },
           set(name: string, value: string, options?: any) {
-            cookieStore.set({ name, value, ...(options || {}) } as any);
+            cookieStore.set({
+              name,
+              value,
+              ...(options || {}),
+              path: options?.path ?? '/',
+            } as any);
           },
           remove(name: string, options?: any) {
-            cookieStore.set({ name, value: '', ...(options || {}) } as any);
+            cookieStore.set({
+              name,
+              value: '',
+              ...(options || {}),
+              path: options?.path ?? '/',
+              maxAge: 0,
+            } as any);
           },
         },
       } as any
@@ -269,12 +275,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'スコアが不正です。' }, { status: 400 });
     }
 
-    // ★UI側が end_reason を送ってくる想定
     const finish_reason = normalizeFinishReason(body);
     const apply_rating = normalizeApplyRating(body, finish_reason);
     const tournament_id = body.tournament_id ? String(body.tournament_id) : null;
 
-    // ★time_limit_seconds が送られてきた場合だけ保持（列が無い環境でも insertMatchWithOptionalFields で安全に落とす）
     const time_limit_seconds =
       body.time_limit_seconds != null && String(finish_reason).toLowerCase() === 'time_limit'
         ? clamp(toInt(body.time_limit_seconds, 0), 0, 24 * 60 * 60)
@@ -285,7 +289,6 @@ export async function POST(req: NextRequest) {
       let winner_id = body.winner_id ? String(body.winner_id) : '';
       let loser_id = body.loser_id ? String(body.loser_id) : '';
 
-      // 旧payload対応：opponent_id + i_won から復元
       if ((!winner_id || !loser_id) && body.opponent_id != null && body.i_won != null) {
         const opp = String(body.opponent_id);
         const iWon = Boolean(body.i_won);

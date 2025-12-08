@@ -19,7 +19,7 @@ import {
   FaEdit,
   FaEye,
   FaEyeSlash,
-  FaListUl, // ★ 大会インデックス用
+  FaListUl,
 } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
@@ -44,15 +44,25 @@ type Notice = {
 type AdminRow = { user_id: string };
 type PlayerFlagRow = { is_admin: boolean | null };
 type PlayerStatRow = { id: string; is_active: boolean | null };
-type MatchRow = { id: string; created_at: string | null };
+type MatchRow = { id: string; created_at?: string | null; match_date?: string | null; played_at?: string | null };
 
-// ★ 大会の一覧用
+// ★ 大会の一覧用（UIはこの型で扱う）
 type TournamentRow = {
   id: string;
   name: string | null;
   tournament_date: string | null;
   mode: string | null;
 };
+
+function isMissingColumnError(err: any) {
+  const code = String(err?.code ?? '');
+  const msg = String(err?.message ?? '').toLowerCase();
+  // Postgres undefined_column
+  if (code === '42703') return true;
+  // PostgREST column not found
+  if (code === 'PGRST204') return true;
+  return msg.includes('does not exist') || msg.includes('column') || msg.includes('schema cache');
+}
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -114,10 +124,7 @@ export default function AdminDashboard() {
 
         let isAdmin = false;
         const [adminResp, playerResp] = await Promise.all([
-          (supabase.from('app_admins') as any)
-            .select('user_id')
-            .eq('user_id', user.id)
-            .maybeSingle(),
+          (supabase.from('app_admins') as any).select('user_id').eq('user_id', user.id).maybeSingle(),
           (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
         ]);
         const adminRow = (adminResp?.data ?? null) as AdminRow | null;
@@ -145,23 +152,41 @@ export default function AdminDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, router]);
 
-  /** 統計情報 */
+  /** 統計情報（created_at 列差に耐える） */
   const fetchStats = async () => {
     try {
       const [playersResp, matchesResp] = await Promise.all([
         (supabase.from('players') as any).select('id,is_active'),
+        // まず created_at を試す
         (supabase.from('matches') as any).select('id,created_at'),
       ]);
+
       const players = (playersResp?.data ?? []) as PlayerStatRow[];
-      const matches = (matchesResp?.data ?? []) as MatchRow[];
+      let matches = (matchesResp?.data ?? []) as MatchRow[];
+
+      // created_at が無い環境 → 代替列を試す（match_date / played_at）
+      if (matchesResp?.error && isMissingColumnError(matchesResp.error)) {
+        const r2 = await (supabase.from('matches') as any).select('id,match_date');
+        if (!r2.error) matches = (r2.data ?? []) as MatchRow[];
+        else {
+          const r3 = await (supabase.from('matches') as any).select('id,played_at');
+          if (!r3.error) matches = (r3.data ?? []) as MatchRow[];
+          else matches = [];
+        }
+      }
 
       const todayISO = new Date().toISOString().split('T')[0];
+
       const totalPlayers = players.length;
       const activePlayers = players.filter((p) => !!p.is_active).length;
+
       const totalMatches = matches.length;
-      const todayMatches = matches.filter((m) =>
-        typeof m.created_at === 'string' ? m.created_at.startsWith(todayISO) : false
-      ).length;
+
+      // 「今日の試合」は created_at / match_date / played_at のどれかがあればカウント。無ければ 0
+      const todayMatches = matches.filter((m) => {
+        const d = (m.created_at ?? (m as any).match_date ?? (m as any).played_at) as string | null | undefined;
+        return typeof d === 'string' ? d.startsWith(todayISO) : false;
+      }).length;
 
       setStats({ totalPlayers, activePlayers, totalMatches, todayMatches });
     } catch (error) {
@@ -169,38 +194,106 @@ export default function AdminDashboard() {
     }
   };
 
-  /** お知らせ取得（最新3件、公開/非公開問わず） */
+  /** お知らせ取得（created_at 列が無い環境でも落とさない） */
   const fetchNotices = async () => {
     setNLoading(true);
     try {
-      const { data, error } = await (supabase.from('notices') as any)
+      // まずは created_at あり想定
+      const r1 = await (supabase.from('notices') as any)
         .select('*')
         .order('date', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(3);
-      if (error) throw error;
-      setNotices((data ?? []) as Notice[]);
+
+      if (!r1.error) {
+        setNotices((r1.data ?? []) as Notice[]);
+        return;
+      }
+
+      // created_at が無い環境 → order(created_at) を外して再試行
+      if (isMissingColumnError(r1.error)) {
+        const r2 = await (supabase.from('notices') as any).select('*').order('date', { ascending: false }).limit(3);
+        if (!r2.error) {
+          setNotices((r2.data ?? []) as Notice[]);
+          return;
+        }
+        console.error('[admin/dashboard] notices fetch error (fallback):', r2.error);
+        setNotices([]);
+        return;
+      }
+
+      console.error('[admin/dashboard] notices fetch error:', r1.error);
+      setNotices([]);
     } catch (e) {
-      console.error('[admin/dashboard] notices fetch error:', e);
+      console.error('[admin/dashboard] notices fetch fatal:', e);
+      setNotices([]);
     } finally {
       setNLoading(false);
     }
   };
 
-  /** ★ 大会一覧取得（直近10件くらい） */
+  /** ★ 大会一覧取得（tournament_date 列差に耐える） */
   const fetchTournaments = async () => {
     setTLoading(true);
     setTError(null);
     try {
-      const { data, error } = await (supabase.from('tournaments') as any)
+      // 1) まずは tournament_date を試す（現行）
+      const r1 = await (supabase.from('tournaments') as any)
         .select('id,name,tournament_date,mode')
         .order('tournament_date', { ascending: false })
         .limit(10);
 
-      if (error) throw error;
-      setTournaments((data ?? []) as TournamentRow[]);
+      if (!r1.error) {
+        setTournaments((r1.data ?? []) as TournamentRow[]);
+        return;
+      }
+
+      // 2) tournament_date が無い環境 → date / start_date を順に試す
+      if (isMissingColumnError(r1.error)) {
+        const r2 = await (supabase.from('tournaments') as any)
+          .select('id,name,date,mode')
+          .order('date', { ascending: false })
+          .limit(10);
+
+        if (!r2.error) {
+          const mapped = (r2.data ?? []).map((x: any) => ({
+            id: String(x.id),
+            name: x.name ?? null,
+            tournament_date: x.date ?? null,
+            mode: x.mode ?? null,
+          })) as TournamentRow[];
+          setTournaments(mapped);
+          return;
+        }
+
+        const r3 = await (supabase.from('tournaments') as any)
+          .select('id,name,start_date,mode')
+          .order('start_date', { ascending: false })
+          .limit(10);
+
+        if (!r3.error) {
+          const mapped = (r3.data ?? []).map((x: any) => ({
+            id: String(x.id),
+            name: x.name ?? null,
+            tournament_date: x.start_date ?? null,
+            mode: x.mode ?? null,
+          })) as TournamentRow[];
+          setTournaments(mapped);
+          return;
+        }
+
+        console.error('[admin/dashboard] tournaments fetch error (fallback):', r2.error || r3.error);
+        setTournaments([]);
+        setTError('大会一覧の取得に失敗しました。');
+        return;
+      }
+
+      console.error('[admin/dashboard] tournaments fetch error:', r1.error);
+      setTournaments([]);
+      setTError('大会一覧の取得に失敗しました。');
     } catch (e: any) {
-      console.error('[admin/dashboard] tournaments fetch error:', e);
+      console.error('[admin/dashboard] tournaments fetch fatal:', e);
+      setTournaments([]);
       setTError('大会一覧の取得に失敗しました。');
     } finally {
       setTLoading(false);
@@ -212,16 +305,11 @@ export default function AdminDashboard() {
     const next = !target.is_published;
     setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
     try {
-      const { error } = await (supabase.from('notices') as any)
-        .update({ is_published: next } as any)
-        .eq('id', target.id);
-
+      const { error } = await (supabase.from('notices') as any).update({ is_published: next } as any).eq('id', target.id);
       if (error) throw error;
     } catch (e) {
       console.error('[admin/dashboard] toggle publish error:', e);
-      setNotices((prev) =>
-        prev.map((n) => (n.id === target.id ? { ...n, is_published: !next } : n))
-      );
+      setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: !next } : n)));
       alert('公開状態の更新に失敗しました。RLS の許可設定をご確認ください。');
     }
   };
@@ -233,10 +321,15 @@ export default function AdminDashboard() {
   const loadConfig = async () => {
     try {
       const r = await fetch('/api/admin/ranking-config', { cache: 'no-store' });
-      const j = await r.json();
+      let j: any = null;
+      try {
+        j = await r.json();
+      } catch {
+        j = null;
+      }
+
       if (r.ok && j?.ok && j.config) {
-        const clamp = (v: number, min: number, max: number) =>
-          Math.min(max, Math.max(min, Number(v)));
+        const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, Number(v)));
         const cfg = j.config as RankingConfig;
         const normalized: RankingConfig = {
           k_factor: clamp(cfg.k_factor, 10, 64),
@@ -246,6 +339,9 @@ export default function AdminDashboard() {
           handicap_change_amount: clamp(cfg.handicap_change_amount, -10, 10),
         };
         setConfig((prev) => ({ ...prev, ...normalized }));
+      } else {
+        // ✅ 500/不正JSONでも UI は生かす
+        console.warn('[admin/dashboard] loadConfig non-ok:', r.status, j);
       }
     } catch (e) {
       console.warn('[admin/dashboard] loadConfig error:', e);
@@ -301,19 +397,11 @@ export default function AdminDashboard() {
   };
 
   if (authz === 'checking') {
-    return (
-      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
-        認証を確認しています...
-      </div>
-    );
+    return <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">認証を確認しています...</div>;
   }
 
   if (authz === 'no') {
-    return (
-      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
-        アクセス権限がありません
-      </div>
-    );
+    return <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">アクセス権限がありません</div>;
   }
 
   return (
@@ -343,9 +431,7 @@ export default function AdminDashboard() {
           <button
             onClick={() => setActiveTab('overview')}
             className={`pb-3 px-6 flex items-center gap-2 transition-all ${
-              activeTab === 'overview'
-                ? 'border-b-2 border-purple-400 text-purple-400'
-                : 'text-gray-400 hover:text-gray-300'
+              activeTab === 'overview' ? 'border-b-2 border-purple-400 text-purple-400' : 'text-gray-400 hover:text-gray-300'
             }`}
           >
             <FaChartLine />
@@ -354,9 +440,7 @@ export default function AdminDashboard() {
           <button
             onClick={() => setActiveTab('settings')}
             className={`pb-3 px-6 flex items-center gap-2 transition-all ${
-              activeTab === 'settings'
-                ? 'border-b-2 border-purple-400 text-purple-400'
-                : 'text-gray-400 hover:text-gray-300'
+              activeTab === 'settings' ? 'border-b-2 border-purple-400 text-purple-400' : 'text-gray-400 hover:text-gray-300'
             }`}
           >
             <FaCog />
@@ -379,10 +463,7 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full"
-                    style={{ width: '100%' }}
-                  />
+                  <div className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full" style={{ width: '100%' }} />
                 </div>
               </div>
 
@@ -415,10 +496,7 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full"
-                    style={{ width: '100%' }}
-                  />
+                  <div className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full" style={{ width: '100%' }} />
                 </div>
               </div>
 
@@ -441,7 +519,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* ★ 大会クイック操作（最小追加・UIトーン維持） */}
+            {/* ★ 大会クイック操作 */}
             <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 mb-8">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-2xl font-bold flex items-center gap-3">
@@ -456,60 +534,41 @@ export default function AdminDashboard() {
                   大会インデックスへ
                 </Link>
               </div>
-              <p className="text-xs text-gray-400 mb-4">
-                ここから「大会一覧 → ブロック管理 → 試合登録 → 公開確認」まで迷わず移動できます。
-              </p>
+              <p className="text-xs text-gray-400 mb-4">ここから「大会一覧 → ブロック管理 → 試合登録 → 公開確認」まで迷わず移動できます。</p>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Link
-                  href="/admin/tournaments"
-                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
-                >
+                <Link href="/admin/tournaments" className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl group-hover:shadow-lg group-hover:shadow-emerald-500/20 transition-all">
                       <FaListUl className="text-xl text-white" />
                     </div>
                     <div>
                       <div className="font-semibold">大会一覧・新規作成</div>
-                      <div className="text-xs text-gray-400">
-                        大会作成/編集、リーグブロック作成へ
-                      </div>
+                      <div className="text-xs text-gray-400">大会作成/編集、リーグブロック作成へ</div>
                     </div>
                   </div>
                 </Link>
 
-                <Link
-                  href="/matches"
-                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
-                >
+                <Link href="/matches" className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl group-hover:shadow-lg group-hover:shadow-yellow-500/20 transition-all">
                       <FaGamepad className="text-xl text-white" />
                     </div>
                     <div>
                       <div className="font-semibold">試合結果を登録</div>
-                      <div className="text-xs text-gray-400">
-                        大会紐付け含めて結果入力（既存UI）
-                      </div>
+                      <div className="text-xs text-gray-400">大会紐付け含めて結果入力（既存UI）</div>
                     </div>
                   </div>
                 </Link>
 
-                <Link
-                  href="/tournaments"
-                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
-                  target="_blank"
-                  rel="noreferrer"
-                >
+                <Link href="/tournaments" className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all" target="_blank" rel="noreferrer">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl group-hover:shadow-lg group-hover:shadow-pink-500/20 transition-all">
                       <FaEye className="text-xl text-white" />
                     </div>
                     <div>
                       <div className="font-semibold">公開ページ確認</div>
-                      <div className="text-xs text-gray-400">
-                        一般公開側の大会/リーグ表示チェック
-                      </div>
+                      <div className="text-xs text-gray-400">一般公開側の大会/リーグ表示チェック</div>
                     </div>
                   </div>
                 </Link>
@@ -518,10 +577,7 @@ export default function AdminDashboard() {
 
             {/* 管理リンク */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <Link
-                href="/players"
-                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
-              >
+              <Link href="/admin/players" className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105">
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-4 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-xl group-hover:shadow-lg group-hover:shadow-blue-500/30 transition-all">
                     <FaUsers className="text-3xl text-white" />
@@ -531,10 +587,7 @@ export default function AdminDashboard() {
                 <p className="text-gray-400">プレイヤーの情報を編集・管理できます</p>
               </Link>
 
-              <Link
-                href="/matches"
-                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
-              >
+              <Link href="/matches" className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105">
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-4 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl group-hover:shadow-lg group-hover:shadow-yellow-500/30 transition-all">
                     <FaGamepad className="text-3xl text-white" />
@@ -544,10 +597,7 @@ export default function AdminDashboard() {
                 <p className="text-gray-400">試合結果の編集・削除を行えます</p>
               </Link>
 
-              <Link
-                href="/admin/notices"
-                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
-              >
+              <Link href="/admin/notices" className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105">
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl group-hover:shadow-lg group-hover:shadow-pink-500/30 transition-all">
                     <FaBullhorn className="text-3xl text-white" />
@@ -557,23 +607,18 @@ export default function AdminDashboard() {
                 <p className="text-gray-400">お知らせの作成・公開設定・編集・削除</p>
               </Link>
 
-              <Link
-                href="/admin/tournaments"
-                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
-              >
+              <Link href="/admin/tournaments" className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105">
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-4 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl group-hover:shadow-lg group-hover:shadow-emerald-500/30 transition-all">
                     <FaListUl className="text-3xl text-white" />
                   </div>
                   <h3 className="text-2xl font-bold">大会管理</h3>
                 </div>
-                <p className="text-gray-400">
-                  大会インデックスからリーグブロックの作成・確認ができます
-                </p>
+                <p className="text-gray-400">大会インデックスからリーグブロックの作成・確認ができます</p>
               </Link>
             </div>
 
-            {/* ★ 最近の大会一覧（ブロック管理 & 公開ページリンク + 試合登録リンク） */}
+            {/* ★ 最近の大会一覧 */}
             <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 mb-8">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-2xl font-bold flex items-center gap-3">
@@ -588,9 +633,7 @@ export default function AdminDashboard() {
                   大会インデックスへ
                 </Link>
               </div>
-              <p className="text-xs text-gray-400 mb-3">
-                「ブロック管理」→リーグブロック作成・集計、「試合登録」→大会を紐付けて結果追加、「公開リーグ」→一般公開ページ確認。
-              </p>
+              <p className="text-xs text-gray-400 mb-3">「ブロック管理」→リーグブロック作成・集計、「試合登録」→大会を紐付けて結果追加、「公開リーグ」→一般公開ページ確認。</p>
 
               {tLoading ? (
                 <div className="text-sm text-gray-400">読み込み中...</div>
@@ -614,11 +657,7 @@ export default function AdminDashboard() {
                     <tbody>
                       {tournaments.map((t) => {
                         const dateLabel = t.tournament_date
-                          ? new Date(t.tournament_date).toLocaleDateString('ja-JP', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                            })
+                          ? new Date(t.tournament_date).toLocaleDateString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric' })
                           : '-';
 
                         const modeLabel =
@@ -630,27 +669,18 @@ export default function AdminDashboard() {
 
                         return (
                           <tr key={t.id} className="hover:bg-gray-800/60">
-                            <td className="border border-gray-700 px-2 py-1">
-                              {t.name || '(名称未設定)'}
-                            </td>
+                            <td className="border border-gray-700 px-2 py-1">{t.name || '(名称未設定)'}</td>
                             <td className="border border-gray-700 px-2 py-1">{dateLabel}</td>
                             <td className="border border-gray-700 px-2 py-1">{modeLabel}</td>
 
                             <td className="border border-gray-700 px-2 py-1">
-                              <Link
-                                href={`/admin/tournaments/${t.id}/league`}
-                                className="text-xs text-blue-300 underline hover:text-blue-200"
-                              >
+                              <Link href={`/admin/tournaments/${t.id}/league`} className="text-xs text-blue-300 underline hover:text-blue-200">
                                 ブロック管理
                               </Link>
                             </td>
 
-                            {/* ★ 安全：/matches は既存。クエリは未対応でも壊れない */}
                             <td className="border border-gray-700 px-2 py-1">
-                              <Link
-                                href={`/matches?tournament_id=${encodeURIComponent(t.id)}`}
-                                className="text-xs text-yellow-300 underline hover:text-yellow-200"
-                              >
+                              <Link href={`/matches?tournament_id=${encodeURIComponent(t.id)}`} className="text-xs text-yellow-300 underline hover:text-yellow-200">
                                 この大会で登録
                               </Link>
                             </td>
@@ -674,7 +704,7 @@ export default function AdminDashboard() {
               )}
             </div>
 
-            {/* 最新のお知らせ（管理ウィジェット） */}
+            {/* 最新のお知らせ */}
             <div className="bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-2xl font-bold flex items-center gap-3">
@@ -688,10 +718,7 @@ export default function AdminDashboard() {
                   >
                     <FaPlus /> 新規作成
                   </Link>
-                  <Link
-                    href="/admin/notices"
-                    className="px-4 py-2 border border-purple-500/40 rounded-lg hover:bg-purple-900/20 transition-colors"
-                  >
+                  <Link href="/admin/notices" className="px-4 py-2 border border-purple-500/40 rounded-lg hover:bg-purple-900/20 transition-colors">
                     一覧へ
                   </Link>
                 </div>
@@ -704,42 +731,22 @@ export default function AdminDashboard() {
               ) : (
                 <div className="space-y-3">
                   {notices.map((n) => (
-                    <div
-                      key={n.id}
-                      className="flex items-start justify-between gap-4 p-4 rounded-xl border border-purple-500/20 bg-gray-900/40"
-                    >
+                    <div key={n.id} className="flex items-start justify-between gap-4 p-4 rounded-xl border border-purple-500/20 bg-gray-900/40">
                       <div className="min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
-                          <h3 className="text-lg font-semibold text-yellow-100 break-all">
-                            {n.title || '無題'}
-                          </h3>
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-xs ${
-                              n.is_published
-                                ? 'bg-green-500/20 text-green-400'
-                                : 'bg-gray-500/20 text-gray-300'
-                            }`}
-                          >
+                          <h3 className="text-lg font-semibold text-yellow-100 break-all">{n.title || '無題'}</h3>
+                          <span className={`px-2 py-0.5 rounded-full text-xs ${n.is_published ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-300'}`}>
                             {n.is_published ? '公開中' : '非公開'}
                           </span>
                           <span className="text-sm text-gray-400">
                             {n.date
-                              ? new Date(n.date).toLocaleDateString('ja-JP', {
-                                  year: 'numeric',
-                                  month: 'long',
-                                  day: 'numeric',
-                                })
+                              ? new Date(n.date).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })
                               : ''}
                           </span>
                         </div>
                         <p
                           className="text-gray-300 mt-1 overflow-hidden text-ellipsis"
-                          style={{
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            whiteSpace: 'normal',
-                          }}
+                          style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', whiteSpace: 'normal' }}
                           title={n.content}
                         >
                           {n.content}
@@ -752,11 +759,7 @@ export default function AdminDashboard() {
                           className="p-2 rounded-lg hover:bg-purple-900/30 transition-colors"
                           title={n.is_published ? '非公開にする' : '公開する'}
                         >
-                          {n.is_published ? (
-                            <FaEyeSlash className="text-gray-300" />
-                          ) : (
-                            <FaEye className="text-purple-300" />
-                          )}
+                          {n.is_published ? <FaEyeSlash className="text-gray-300" /> : <FaEye className="text-purple-300" />}
                         </button>
                         <Link
                           href={`/admin/notices/${n.id}/edit`}
@@ -785,9 +788,7 @@ export default function AdminDashboard() {
               <div className="space-y-8">
                 {/* K係数 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    K係数（ELOレーティング）
-                  </label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">K係数（ELOレーティング）</label>
                   <p className="text-sm text-gray-400 mb-4">レーティング変動の大きさ。通常は16〜64。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -795,9 +796,7 @@ export default function AdminDashboard() {
                       min={16}
                       max={64}
                       value={config.k_factor}
-                      onChange={(e) =>
-                        setConfig({ ...config, k_factor: parseInt(e.target.value, 10) })
-                      }
+                      onChange={(e) => setConfig({ ...config, k_factor: parseInt(e.target.value, 10) })}
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
@@ -808,9 +807,7 @@ export default function AdminDashboard() {
 
                 {/* スコア差倍率 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    スコア差倍率
-                  </label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">スコア差倍率</label>
                   <p className="text-sm text-gray-400 mb-4">0.01〜0.10 推奨。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -819,27 +816,18 @@ export default function AdminDashboard() {
                       max={0.1}
                       step={0.01}
                       value={Number(config.score_diff_multiplier)}
-                      onChange={(e) =>
-                        setConfig({
-                          ...config,
-                          score_diff_multiplier: parseFloat(e.target.value),
-                        })
-                      }
+                      onChange={(e) => setConfig({ ...config, score_diff_multiplier: parseFloat(e.target.value) })}
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">
-                        {config.score_diff_multiplier}
-                      </span>
+                      <span className="text-2xl font-bold text-purple-400">{config.score_diff_multiplier}</span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ差倍率 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    ハンディキャップ差倍率
-                  </label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ差倍率</label>
                   <p className="text-sm text-gray-400 mb-4">0.01〜0.05 推奨。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -848,57 +836,37 @@ export default function AdminDashboard() {
                       max={0.05}
                       step={0.01}
                       value={Number(config.handicap_diff_multiplier)}
-                      onChange={(e) =>
-                        setConfig({
-                          ...config,
-                          handicap_diff_multiplier: parseFloat(e.target.value),
-                        })
-                      }
+                      onChange={(e) => setConfig({ ...config, handicap_diff_multiplier: parseFloat(e.target.value) })}
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">
-                        {config.handicap_diff_multiplier}
-                      </span>
+                      <span className="text-2xl font-bold text-purple-400">{config.handicap_diff_multiplier}</span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ変更閾値 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    ハンディキャップ変更閾値（点差）
-                  </label>
-                  <p className="text-sm text-gray-400 mb-4">
-                    この点差以上で勝利した場合にハンディを調整。
-                  </p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ変更閾値（点差）</label>
+                  <p className="text-sm text-gray-400 mb-4">この点差以上で勝利した場合にハンディを調整。</p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
                       min={5}
                       max={15}
                       value={config.win_threshold_handicap_change}
-                      onChange={(e) =>
-                        setConfig({
-                          ...config,
-                          win_threshold_handicap_change: parseInt(e.target.value, 10),
-                        })
-                      }
+                      onChange={(e) => setConfig({ ...config, win_threshold_handicap_change: parseInt(e.target.value, 10) })}
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">
-                        {config.win_threshold_handicap_change}点
-                      </span>
+                      <span className="text-2xl font-bold text-purple-400">{config.win_threshold_handicap_change}点</span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ変更量 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">
-                    ハンディキャップ変更量
-                  </label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ変更量</label>
                   <p className="text-sm text-gray-400 mb-4">閾値を超えた場合の変更量。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -906,18 +874,11 @@ export default function AdminDashboard() {
                       min={1}
                       max={5}
                       value={config.handicap_change_amount}
-                      onChange={(e) =>
-                        setConfig({
-                          ...config,
-                          handicap_change_amount: parseInt(e.target.value, 10),
-                        })
-                      }
+                      onChange={(e) => setConfig({ ...config, handicap_change_amount: parseInt(e.target.value, 10) })}
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">
-                        {config.handicap_change_amount}
-                      </span>
+                      <span className="text-2xl font-bold text-purple-400">{config.handicap_change_amount}</span>
                     </div>
                   </div>
                 </div>

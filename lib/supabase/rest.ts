@@ -3,7 +3,8 @@ const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function restGet<T = any>(path: string, token?: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { apikey: ANON, Authorization: `Bearer ${token ?? ANON}` },
+    headers: { apikey: ANON, headers: { apikey: ANON, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+ },
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(await res.text());
@@ -15,7 +16,7 @@ export async function restPost<T = any>(path: string, body: any, token?: string)
     method: 'POST',
     headers: {
       apikey: ANON,
-      Authorization: `Bearer ${token ?? ANON}`,
+      headers: { apikey: ANON, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       'Content-Type': 'application/json',
       Prefer: 'return=representation',
     },
@@ -30,7 +31,7 @@ export async function restPatch<T = any>(path: string, body: any, token?: string
     method: 'PATCH',
     headers: {
       apikey: ANON,
-      Authorization: `Bearer ${token ?? ANON}`,
+      headers: { apikey: ANON, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       'Content-Type': 'application/json',
       Prefer: 'return=representation',
     },

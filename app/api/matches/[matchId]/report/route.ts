@@ -27,7 +27,7 @@ const toBool = (v: unknown): boolean | null => {
 
 function normalizeEndReason(v: unknown): EndReason {
   const s = String(v ?? '').trim().toLowerCase();
-  if (s === 'time_limit' || s === 'walkover' || s === 'forfeit') return s;
+  if (s === 'time_limit' || s === 'walkover' || s === 'forfeit') return s as EndReason;
   return 'normal';
 }
 
@@ -127,7 +127,9 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     const matchId = String(ctx?.params?.matchId ?? '').trim();
     if (!matchId) return NextResponse.json({ ok: false, message: 'matchId が不正です。' }, { status: 400 });
 
-    const cookieStore = cookies();
+    // ✅ Next.js 15+: cookies() は await が必要
+    const cookieStore = await cookies();
+
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -247,8 +249,12 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
           .update({
             matches_played: Math.max(0, toInt(ow.matches_played, 0) - 1),
             wins: Math.max(0, toInt(ow.wins, 0) - 1),
-            ranking_points: oldAffects ? clamp(toInt(ow.ranking_points, 0) - oldWpd, 0, 99999) : toInt(ow.ranking_points, 0),
-            handicap: oldAffects ? clamp(toInt(ow.handicap, 0) - oldWhd, 0, 50) : toInt(ow.handicap, 0),
+            ranking_points: oldAffects
+              ? clamp(toInt(ow.ranking_points, 0) - oldWpd, 0, 99999)
+              : toInt(ow.ranking_points, 0),
+            handicap: oldAffects
+              ? clamp(toInt(ow.handicap, 0) - oldWhd, 0, 50)
+              : toInt(ow.handicap, 0),
           })
           .eq('id', oldWinnerId);
       }
@@ -258,8 +264,12 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
           .update({
             matches_played: Math.max(0, toInt(ol.matches_played, 0) - 1),
             losses: Math.max(0, toInt(ol.losses, 0) - 1),
-            ranking_points: oldAffects ? clamp(toInt(ol.ranking_points, 0) - oldLpd, 0, 99999) : toInt(ol.ranking_points, 0),
-            handicap: oldAffects ? clamp(toInt(ol.handicap, 0) - oldLhd, 0, 50) : toInt(ol.handicap, 0),
+            ranking_points: oldAffects
+              ? clamp(toInt(ol.ranking_points, 0) - oldLpd, 0, 99999)
+              : toInt(ol.ranking_points, 0),
+            handicap: oldAffects
+              ? clamp(toInt(ol.handicap, 0) - oldLhd, 0, 50)
+              : toInt(ol.handicap, 0),
           })
           .eq('id', oldLoserId);
       }
@@ -291,10 +301,18 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       : { winnerPointsChange: 0, loserPointsChange: 0, winnerHandicapChange: 0, loserHandicapChange: 0 };
 
     // RP/HC は affects_rating の時だけ変化、ただし勝敗/試合数は更新する（要件は RP/HCのみ無変化）
-    const nextWRP = affects_rating ? clamp(toInt(w.ranking_points, 0) + delta.winnerPointsChange, 0, 99999) : toInt(w.ranking_points, 0);
-    const nextLRP = affects_rating ? clamp(toInt(l.ranking_points, 0) + delta.loserPointsChange, 0, 99999) : toInt(l.ranking_points, 0);
-    const nextWHC = affects_rating ? clamp(toInt(w.handicap, 0) + delta.winnerHandicapChange, 0, 50) : toInt(w.handicap, 0);
-    const nextLHC = affects_rating ? clamp(toInt(l.handicap, 0) + delta.loserHandicapChange, 0, 50) : toInt(l.handicap, 0);
+    const nextWRP = affects_rating
+      ? clamp(toInt(w.ranking_points, 0) + delta.winnerPointsChange, 0, 99999)
+      : toInt(w.ranking_points, 0);
+    const nextLRP = affects_rating
+      ? clamp(toInt(l.ranking_points, 0) + delta.loserPointsChange, 0, 99999)
+      : toInt(l.ranking_points, 0);
+    const nextWHC = affects_rating
+      ? clamp(toInt(w.handicap, 0) + delta.winnerHandicapChange, 0, 50)
+      : toInt(w.handicap, 0);
+    const nextLHC = affects_rating
+      ? clamp(toInt(l.handicap, 0) + delta.loserHandicapChange, 0, 50)
+      : toInt(l.handicap, 0);
 
     await Promise.all([
       supabaseAdmin

@@ -1,15 +1,9 @@
 // app/(main)/players/page.tsx
 'use client';
 
-import { useState, useMemo, memo, useCallback } from 'react';
+import { useState, useMemo, memo, useCallback, type ChangeEvent } from 'react';
 import Link from 'next/link';
-import {
-  FaUsers,
-  FaSearch,
-  FaFilter,
-  FaChartLine,
-  FaCrown,
-} from 'react-icons/fa';
+import { FaUsers, FaSearch, FaFilter, FaChartLine, FaCrown } from 'react-icons/fa';
 import { useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 
@@ -49,6 +43,10 @@ interface Player {
   wins?: number | null;
   losses?: number | null;
   is_admin?: boolean | null;
+
+  // 追加(あってもなくてもOK): 公開一覧では除外に使う
+  is_active?: boolean | null;
+  is_dummy?: boolean | null;
 }
 
 /* ───────────────────────────── Helpers ───────────────────────────── */
@@ -88,8 +86,7 @@ const RankBadge = memo(function RankBadge({
   prominent?: boolean;
 }) {
   const isTop3 = rank <= 3;
-  const base =
-    'flex items-center justify-center rounded-full font-bold shadow-md';
+  const base = 'flex items-center justify-center rounded-full font-bold shadow-md';
   const size = prominent
     ? 'w-10 h-10 text-base sm:w-12 sm:h-12 sm:text-lg'
     : 'w-8 h-8 text-sm sm:w-9 sm:h-9 sm:text-sm';
@@ -123,11 +120,7 @@ const PlayerCard = memo(function PlayerCard({
   const games = gamesOf(player);
 
   return (
-    <Link
-      href={`/players/${player.id}`}
-      prefetch={false}
-      aria-label={`${player.handle_name} のプロフィール`}
-    >
+    <Link href={`/players/${player.id}`} prefetch={false} aria-label={`${player.handle_name} のプロフィール`}>
       <div
         className={`relative glass-card rounded-xl p-4 sm:p-5 lg:p-6 transition-all cursor-pointer
           ${isTop3 ? 'border-2' : 'border'} border-gradient bg-gradient-to-r from-purple-700/10 to-pink-700/10
@@ -144,9 +137,7 @@ const PlayerCard = memo(function PlayerCard({
           <div className="absolute top-2 left-2">
             <div className="flex items-center gap-1 px-2 py-1 bg-yellow-500/20 border border-yellow-500/30 rounded-full">
               <FaCrown className="text-yellow-400 text-xs" />
-              <span className="text-yellow-400 text-xs font-medium hidden sm:inline">
-                管理者
-              </span>
+              <span className="text-yellow-400 text-xs font-medium hidden sm:inline">管理者</span>
             </div>
           </div>
         )}
@@ -154,11 +145,7 @@ const PlayerCard = memo(function PlayerCard({
         {/* ヘッダ行 */}
         <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-4">
           <div className="relative">
-            {isTop3 && (
-              <div
-                className={`absolute -inset-1 rounded-full blur-sm bg-gradient-to-br ${ring}`}
-              />
-            )}
+            {isTop3 && <div className={`absolute -inset-1 rounded-full blur-sm bg-gradient-to-br ${ring}`} />}
             <LazyImage
               src={player.avatar_url || '/default-avatar.png'}
               alt={player.handle_name}
@@ -168,31 +155,21 @@ const PlayerCard = memo(function PlayerCard({
           </div>
 
           <div className="min-w-0 flex-1">
-            <h3 className="text-base sm:text-lg font-bold text-yellow-100 truncate">
-              {player.handle_name}
-            </h3>
-            <p className="text-xs sm:text-sm text-gray-400 truncate">
-              {player.address || '—'}
-            </p>
+            <h3 className="text-base sm:text-lg font-bold text-yellow-100 truncate">{player.handle_name}</h3>
+            <p className="text-xs sm:text-sm text-gray-400 truncate">{player.address || '—'}</p>
           </div>
         </div>
 
         {/* 主要スタッツ */}
         <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
           <div className="text-center">
-            <div
-              className={`text-xl sm:text-2xl font-extrabold ${
-                isTop3 ? 'text-yellow-100' : 'text-purple-300'
-              }`}
-            >
+            <div className={`text-xl sm:text-2xl font-extrabold ${isTop3 ? 'text-yellow-100' : 'text-purple-300'}`}>
               {player.ranking_points ?? 0}
             </div>
             <div className="text-xs text-gray-400">ポイント</div>
           </div>
           <div className="text-center">
-            <div className="text-xl sm:text-2xl font-extrabold text-purple-300">
-              {player.handicap ?? 0}
-            </div>
+            <div className="text-xl sm:text-2xl font-extrabold text-purple-300">{player.handicap ?? 0}</div>
             <div className="text-xs text-gray-400">ハンディ</div>
           </div>
         </div>
@@ -200,8 +177,7 @@ const PlayerCard = memo(function PlayerCard({
         {/* 戦績行（試合数は wins+losses を採用） */}
         <div className="flex justify-between items-center text-xs sm:text-sm">
           <div className="text-gray-400">
-            試合数:{' '}
-            <span className="text-yellow-100 font-semibold">{games}</span>
+            試合数: <span className="text-yellow-100 font-semibold">{games}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-green-400">{player.wins ?? 0}勝</span>
@@ -216,11 +192,7 @@ const PlayerCard = memo(function PlayerCard({
             <span className="text-xs sm:text-sm text-gray-400">勝率</span>
             <span
               className={`text-xs sm:text-sm font-bold ${
-                wr >= 60
-                  ? 'text-green-400'
-                  : wr >= 40
-                  ? 'text-yellow-400'
-                  : 'text-red-400'
+                wr >= 60 ? 'text-green-400' : wr >= 40 ? 'text-yellow-400' : 'text-red-400'
               }`}
             >
               {wr}%
@@ -229,11 +201,7 @@ const PlayerCard = memo(function PlayerCard({
           <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-500 ${
-                wr >= 60
-                  ? 'bg-green-500'
-                  : wr >= 40
-                  ? 'bg-yellow-500'
-                  : 'bg-red-500'
+                wr >= 60 ? 'bg-green-500' : wr >= 40 ? 'bg-yellow-500' : 'bg-red-500'
               }`}
               style={{ width: `${wr}%` }}
             />
@@ -245,11 +213,7 @@ const PlayerCard = memo(function PlayerCard({
 });
 
 /* ───────────────────────── PageHeader ───────────────────────── */
-const PageHeader = memo(function PageHeader({
-  playerCount,
-}: {
-  playerCount: number;
-}) {
+const PageHeader = memo(function PageHeader({ playerCount }: { playerCount: number }) {
   return (
     <div className="mb-6 sm:mb-8 text-center pt-16 lg:pt-0">
       <div className="inline-block p-3 sm:p-4 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-purple-400/20 to-pink-600/20">
@@ -258,9 +222,7 @@ const PageHeader = memo(function PageHeader({
       <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
         プレーヤー一覧
       </h1>
-      <p className="text-gray-300 text-sm sm:text-base">
-        総勢 {playerCount} 名のシャッフラーズ
-      </p>
+      <p className="text-gray-300 text-sm sm:text-base">総勢 {playerCount} 名のシャッフラーズ</p>
     </div>
   );
 });
@@ -270,9 +232,7 @@ export default function PlayersPage() {
   const { players, loading, error, retrying, refetch } = useFetchPlayersData();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAddress, setFilterAddress] = useState('all');
-  const [sortBy, setSortBy] = useState<
-    'ranking' | 'handicap' | 'wins' | 'matches'
-  >('ranking');
+  const [sortBy, setSortBy] = useState<'ranking' | 'handicap' | 'wins' | 'matches'>('ranking');
 
   const addressOptions = useMemo(
     () => [
@@ -292,14 +252,22 @@ export default function PlayersPage() {
     []
   );
 
+  // 公開一覧の最小ルール：
+  // - is_active=false は非表示（カラム無ければ無視）
+  // - is_dummy=true は非表示（カラム無ければ無視）
+  const visiblePlayers = useMemo(() => {
+    return (players as Player[]).filter((p) => {
+      if (p.is_active === false) return false;
+      if ((p as any).is_dummy === true) return false;
+      return true;
+    });
+  }, [players]);
+
   // フィルタ & ソート
   const filteredAndSortedPlayers = useMemo(() => {
-    const list = (players as Player[]).filter((p) => {
-      const matchesSearch = safeLower(p.handle_name).includes(
-        safeLower(searchTerm)
-      );
-      const matchesAddress =
-        filterAddress === 'all' || (p.address ?? '') === filterAddress;
+    const list = visiblePlayers.filter((p) => {
+      const matchesSearch = safeLower(p.handle_name).includes(safeLower(searchTerm));
+      const matchesAddress = filterAddress === 'all' || (p.address ?? '') === filterAddress;
       return matchesSearch && matchesAddress;
     });
 
@@ -320,33 +288,24 @@ export default function PlayersPage() {
           return 0;
       }
     });
-  }, [players, searchTerm, filterAddress, sortBy]);
+  }, [visiblePlayers, searchTerm, filterAddress, sortBy]);
 
   // ハンドラ
-  const handleSearchChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      setSearchTerm(e.target.value);
-    },
-    []
-  );
-  const handleAddressFilterChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setFilterAddress(e.target.value);
-    },
-    []
-  );
-  const handleSortChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSortBy(e.target.value as typeof sortBy);
-    },
-    []
-  );
+  const handleSearchChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value);
+  }, []);
+  const handleAddressFilterChange = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
+    setFilterAddress(e.target.value);
+  }, []);
+  const handleSortChange = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
+    setSortBy(e.target.value as typeof sortBy);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-0">
       <div className="container mx-auto px-4 py-4 sm:py-8">
-        {/* ヘッダー */}
-        <PageHeader playerCount={players.length} />
+        {/* ヘッダー（表示対象人数に合わせる） */}
+        <PageHeader playerCount={visiblePlayers.length} />
 
         {/* ローディング/エラー状態 */}
         <MobileLoadingState
@@ -355,11 +314,11 @@ export default function PlayersPage() {
           retrying={retrying}
           onRetry={refetch}
           emptyMessage="登録されているプレーヤーがいません"
-          dataLength={players.length}
+          dataLength={visiblePlayers.length}
         />
 
         {/* コンテンツ */}
-        {!loading && !error && players.length > 0 && (
+        {!loading && !error && visiblePlayers.length > 0 && (
           <>
             {/* 検索・フィルタ */}
             <div className="mb-6 sm:mb-8 space-y-3 sm:space-y-4">
@@ -424,19 +383,12 @@ export default function PlayersPage() {
             {/* リスト */}
             {filteredAndSortedPlayers.length === 0 ? (
               <div className="text-center py-8 sm:py-12">
-                <p className="text-gray-400 text-sm sm:text-base">
-                  該当するプレーヤーが見つかりませんでした
-                </p>
+                <p className="text-gray-400 text-sm sm:text-base">該当するプレーヤーが見つかりませんでした</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                 {filteredAndSortedPlayers.map((player, i) => (
-                  <PlayerCard
-                    key={player.id}
-                    player={player}
-                    rank={i + 1}
-                    sortBy={sortBy}
-                  />
+                  <PlayerCard key={player.id} player={player} rank={i + 1} sortBy={sortBy} />
                 ))}
               </div>
             )}
