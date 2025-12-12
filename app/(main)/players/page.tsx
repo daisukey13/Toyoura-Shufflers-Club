@@ -77,6 +77,9 @@ function emojiForRank(rank: number) {
   return null;
 }
 
+/** ✅ 公開一覧から除外するハンドル（最小対応：def / admin） */
+const HIDDEN_HANDLES = new Set(['def', 'admin']);
+
 /* ───────────────────────── RankBadge ───────────────────────── */
 const RankBadge = memo(function RankBadge({
   rank,
@@ -255,10 +258,17 @@ export default function PlayersPage() {
   // 公開一覧の最小ルール：
   // - is_active=false は非表示（カラム無ければ無視）
   // - is_dummy=true は非表示（カラム無ければ無視）
+  // - handle_name が def / admin は非表示（今回追加・最小）
   const visiblePlayers = useMemo(() => {
     return (players as Player[]).filter((p) => {
+      const hn = safeLower(p?.handle_name);
+
+      // ✅ 追加：システム用プレイヤーは一覧から除外
+      if (HIDDEN_HANDLES.has(hn)) return false;
+
       if (p.is_active === false) return false;
       if ((p as any).is_dummy === true) return false;
+
       return true;
     });
   }, [players]);

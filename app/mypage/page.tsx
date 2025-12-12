@@ -25,7 +25,6 @@ import {
   FaPlus,
 } from 'react-icons/fa';
 
-
 const TeamRegisterFile = dynamic(() => import('./TeamRegisterFile'), { ssr: false });
 
 /* ================================ 型 ================================ */
@@ -67,18 +66,6 @@ type PickerItem = {
   created_at?: string | null;
 };
 
-/** fetchRecentMatches 用の簡易型 */
-type MatchPlayerRowLite = {
-  match_id: string;
-  side_no: number;
-  matches?: MatchRow | null;
-};
-type OppRow = {
-  match_id: string;
-  player_id: string;
-  players?: { id: string; handle_name: string } | null;
-};
-
 const supabase = createClient();
 const cls = (...xs: Array<string | false | null | undefined>) => xs.filter(Boolean).join(' ');
 
@@ -108,10 +95,7 @@ export default function MyPage() {
   const [pickerMsg, setPickerMsg] = useState<string>('');
   const PAGE_SIZE = 20;
   const [pickerPage, setPickerPage] = useState(1);
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(pickerItems.length / PAGE_SIZE)),
-    [pickerItems.length]
-  );
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(pickerItems.length / PAGE_SIZE)), [pickerItems.length]);
   const pageSlice = useMemo(() => {
     const s = (pickerPage - 1) * PAGE_SIZE;
     return pickerItems.slice(s, s + PAGE_SIZE);
@@ -148,17 +132,14 @@ export default function MyPage() {
         // players
         const { data: player, error } = await supabase
           .from('players')
-          .select(
-            'id, handle_name, avatar_url, ranking_points, handicap, wins, losses, matches_played, created_at'
-          )
+          .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses, matches_played, created_at')
           .eq('id', user.id)
           .maybeSingle();
         if (error && error.code !== 'PGRST116') throw error;
 
         let current = player as Player | null;
         if (!current) {
-          const initialHandle =
-            (user.email?.split('@')[0] || 'Player') + '-' + user.id.slice(0, 6);
+          const initialHandle = (user.email?.split('@')[0] || 'Player') + '-' + user.id.slice(0, 6);
           const { data: created, error: iErr } = await supabase
             .from('players')
             .insert([{ id: user.id, handle_name: initialHandle }] as any)
@@ -198,60 +179,59 @@ export default function MyPage() {
     })();
   }, [router]);
 
-  /* ===== 最近試合取得 ===== */
+  /* ===== 最近試合取得 =====
+     重要: match_players は存在しないので、match_details ビューだけで完結させる */
   const fetchRecentMatches = useCallback(async () => {
     if (!userId) return;
+
     setMatchesLoading(true);
     setRecentMatches(null);
     setMatchFetchNote(null);
+
     try {
       const { data, error } = await supabase
-        .from('match_players')
-        .select(
-          'match_id, side_no, matches:matches ( id, mode, status, match_date, winner_score, loser_score )'
-        )
-        .eq('player_id', userId)
-        .order('match_date', { foreignTable: 'matches', ascending: false })
-        .limit(30);
+        .from('match_details') // ✅ ホームと同じビュー
+        .select('*')
+        .or(`winner_id.eq.${userId},loser_id.eq.${userId}`)
+        .order('match_date', { ascending: false })
+        .limit(50);
+
       if (error) throw error;
 
-      const rows = (data ?? []) as MatchPlayerRowLite[];
+      const rows = (data ?? []) as any[];
 
-      const matchIds = rows.map((r) => r.match_id);
-      if (matchIds.length === 0) {
+      if (rows.length === 0) {
         setRecentMatches([]);
         return;
       }
 
-      const { data: opponents } = await supabase
-        .from('match_players')
-        .select('match_id, player_id, players:players(id, handle_name)')
-        .in('match_id', matchIds);
+      const joined: JoinedMatch[] = rows.map((m) => {
+        const isWinner = String(m.winner_id ?? '') === String(userId);
 
-      const byMatch = new Map<string, Array<{ id: string; handle_name: string }>>();
-      ((opponents ?? []) as OppRow[]).forEach((row) => {
-        const arr = byMatch.get(row.match_id) || [];
-        if (row.players?.id) {
-          arr.push({ id: row.players.id, handle_name: row.players.handle_name });
-        }
-        byMatch.set(row.match_id, arr);
-      });
+        const opponentId = isWinner ? (m.loser_id ?? null) : (m.winner_id ?? null);
+        const opponentName = isWinner ? (m.loser_name ?? '—') : (m.winner_name ?? '—');
 
-      const joined: JoinedMatch[] = rows.map((r) => {
-        const people = byMatch.get(r.match_id) || [];
-        const opp = people.find((p) => p.id !== userId) || null;
+        const matchRow: MatchRow = {
+          id: String(m.id),
+          mode: String(m.mode ?? ''),
+          status: (m.status ?? null) as any,
+          match_date: (m.match_date ?? m.created_at ?? null) as any,
+          winner_score: (m.winner_score ?? m.winner_sets ?? null) as any,
+          loser_score: (m.loser_score ?? m.loser_sets ?? null) as any,
+        };
+
         return {
-          match_id: r.match_id,
-          side_no: r.side_no,
-          matches: (r.matches ?? undefined) as MatchRow | undefined,
-          opponent: opp,
+          match_id: String(m.id),
+          side_no: isWinner ? 1 : 2,
+          matches: matchRow,
+          opponent: opponentId ? { id: String(opponentId), handle_name: String(opponentName ?? '—') } : null,
         };
       });
 
       setRecentMatches(joined);
     } catch (e: any) {
       console.warn('戦績取得に失敗:', e?.message || e);
-      setMatchFetchNote('戦績テーブル/ビューが未設定のため、最近の試合履歴を表示できません。');
+      setMatchFetchNote('戦績ビュー(match_details)の取得に失敗したため、最近の試合履歴を表示できません。');
       setRecentMatches([]);
     } finally {
       setMatchesLoading(false);
@@ -269,16 +249,11 @@ export default function MyPage() {
     setSavingProfile(true);
     try {
       const payload = { handle_name: handle.trim(), avatar_url: avatarUrl ?? null };
-      const { error } = await (supabase as any)
-        .from('players')
-        .update(payload)
-        .eq('id', userId);
+      const { error } = await (supabase as any).from('players').update(payload).eq('id', userId);
       if (error) throw error;
 
       setProfileMsg('保存しました。');
-      setMe((m) =>
-        m ? { ...m, handle_name: payload.handle_name, avatar_url: payload.avatar_url } : m
-      );
+      setMe((m) => (m ? { ...m, handle_name: payload.handle_name, avatar_url: payload.avatar_url } : m));
       setTimeout(() => setProfileMsg(''), 2500);
     } catch (e: any) {
       setProfileMsg(e?.message || '保存に失敗しました');
@@ -304,8 +279,7 @@ export default function MyPage() {
         upsert: true,
       });
       if (up.error) {
-        if (String(up.error.message || '').toLowerCase().includes('bucket'))
-          setAvatarBucketMissing(true);
+        if (String(up.error.message || '').toLowerCase().includes('bucket')) setAvatarBucketMissing(true);
         throw up.error;
       }
       const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
@@ -329,12 +303,10 @@ export default function MyPage() {
     setPickerPage(1);
     try {
       // 自分の画像
-      const ownListRes = await supabase.storage
-        .from('avatars')
-        .list(`public/users/${userId}`, {
-          limit: 200,
-          sortBy: { column: 'created_at', order: 'desc' },
-        });
+      const ownListRes = await supabase.storage.from('avatars').list(`public/users/${userId}`, {
+        limit: 200,
+        sortBy: { column: 'created_at', order: 'desc' },
+      });
       const ownItems: PickerItem[] = (ownListRes.data || [])
         .filter((f) => !f.name.endsWith('/'))
         .map((f) => {
@@ -368,9 +340,7 @@ export default function MyPage() {
 
       const all = [...ownItems, ...presetItems].filter((x) => !!x.url);
       if (all.length === 0)
-        setPickerMsg(
-          '候補がありません（自分でアップロードするか、管理者にプリセットの追加を依頼してください）。'
-        );
+        setPickerMsg('候補がありません（自分でアップロードするか、管理者にプリセットの追加を依頼してください）。');
       setPickerItems(all);
     } catch (e: any) {
       setPickerItems([]);
@@ -386,8 +356,7 @@ export default function MyPage() {
     setPickerOpen(false);
   };
 
-  const gotoPage = (p: number) =>
-    setPickerPage((t) => Math.max(1, Math.min(totalPages, p)));
+  const gotoPage = (p: number) => setPickerPage((t) => Math.max(1, Math.min(totalPages, p)));
   const Pager = () => {
     if (pickerItems.length === 0) return null;
     return (
@@ -447,11 +416,7 @@ export default function MyPage() {
       return;
     }
     const t = setTimeout(async () => {
-      const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .ilike('name', `%${teamSearch.trim()}%`)
-        .limit(10);
+      const { data, error } = await supabase.from('teams').select('id, name').ilike('name', `%${teamSearch.trim()}%`).limit(10);
       if (!error) setTeamCandidates((data || []) as TeamLite[]);
     }, 250);
     return () => clearTimeout(t);
@@ -466,26 +431,17 @@ export default function MyPage() {
     }
     setJoinBusy(true);
     try {
-      const { count } = await supabase
-        .from('team_members')
-        .select('player_id', { count: 'exact', head: true })
-        .eq('team_id', team.id);
+      const { count } = await supabase.from('team_members').select('player_id', { count: 'exact', head: true }).eq('team_id', team.id);
       if ((count ?? 0) >= TEAM_CAP) {
         setJoinMsg('定員オーバーのため参加できません（各チーム最大4名）。');
         return;
       }
-      const { data: already } = await supabase
-        .from('team_members')
-        .select('team_id')
-        .eq('player_id', userId)
-        .limit(1);
+      const { data: already } = await supabase.from('team_members').select('team_id').eq('player_id', userId).limit(1);
       if ((already || []).length > 0) {
         setJoinMsg('すでにチームに参加済みです。');
         return;
       }
-      const { error: jErr } = await supabase
-        .from('team_members')
-        .insert([{ team_id: team.id, player_id: userId }] as any);
+      const { error: jErr } = await supabase.from('team_members').insert([{ team_id: team.id, player_id: userId }] as any);
       if (jErr) throw jErr;
       setMyTeam({ id: team.id, name: team.name });
       setJoinMsg(`「${team.name}」に参加しました！`);
@@ -503,11 +459,7 @@ export default function MyPage() {
     setJoinBusy(true);
     setJoinMsg('');
     try {
-      const { error } = await supabase
-        .from('team_members')
-        .delete()
-        .eq('player_id', userId)
-        .eq('team_id', myTeam.id);
+      const { error } = await supabase.from('team_members').delete().eq('player_id', userId).eq('team_id', myTeam.id);
       if (error) throw error;
       setMyTeam(null);
       setJoinMsg('チームを脱退しました。');
@@ -546,9 +498,7 @@ export default function MyPage() {
   const [regOpp, setRegOpp] = useState<number>(0);
 
   const [oppoQuery, setOppoQuery] = useState('');
-  const [oppoOptions, setOppoOptions] = useState<
-    Array<{ id: string; handle_name: string; avatar_url?: string | null }>
-  >([]);
+  const [oppoOptions, setOppoOptions] = useState<Array<{ id: string; handle_name: string; avatar_url?: string | null }>>([]);
   const [oppo, setOppo] = useState<{ id: string; handle_name: string } | null>(null);
 
   // 相手検索
@@ -559,17 +509,13 @@ export default function MyPage() {
         setOppoOptions([]);
         return;
       }
-      const { data } = await supabase
-        .from('players')
-        .select('id, handle_name, avatar_url')
-        .ilike('handle_name', `%${oppoQuery.trim()}%`)
-        .neq('id', userId)
-        .limit(10);
+      const { data } = await supabase.from('players').select('id, handle_name, avatar_url').ilike('handle_name', `%${oppoQuery.trim()}%`).neq('id', userId).limit(10);
       setOppoOptions(data || []);
     }, 250);
     return () => clearTimeout(t);
   }, [oppoQuery, regOpen, userId]);
 
+  // ✅ match_players を使わず、matches に winner_id/loser_id を持たせる前提で登録
   const submitRegister = async () => {
     if (!userId) return;
     setRegError('');
@@ -590,10 +536,12 @@ export default function MyPage() {
 
     setRegSaving(true);
     try {
+      const meWin = regMy > regOpp;
+      const winner_id = meWin ? userId : oppo.id;
+      const loser_id = meWin ? oppo.id : userId;
       const winner_score = Math.max(regMy, regOpp);
       const loser_score = Math.min(regMy, regOpp);
 
-      // matches を挿入し id を厳密に取得
       const insertRes = await supabase
         .from('matches')
         .insert(
@@ -602,6 +550,8 @@ export default function MyPage() {
               mode: regMode,
               status: 'completed',
               match_date: dt.toISOString(),
+              winner_id,
+              loser_id,
               winner_score,
               loser_score,
             },
@@ -612,33 +562,16 @@ export default function MyPage() {
 
       if (insertRes.error) throw insertRes.error;
 
-      const row = insertRes.data as { id: string } | null;
-      if (!row) throw new Error('試合IDの取得に失敗しました。');
-
-      const matchId: string = row.id;
-
-      // match_players（自分=side 1、相手=side 2）
-      const { error: mpErr } = await supabase
-        .from('match_players')
-        .insert(
-          [
-            { match_id: matchId, player_id: userId, side_no: 1 },
-            { match_id: matchId, player_id: oppo.id, side_no: 2 },
-          ] as any
-        );
-      if (mpErr) throw mpErr;
-
       setRegDone('試合を登録しました。');
       setRegOpen(false);
       setRegMy(0);
       setRegOpp(0);
       setOppo(null);
       setOppoQuery('');
+
       await fetchRecentMatches();
     } catch (e: any) {
-      setRegError(
-        e?.message || '登録に失敗しました。スキーマとRLSをご確認ください。'
-      );
+      setRegError(e?.message || '登録に失敗しました。スキーマとRLSをご確認ください。');
     } finally {
       setRegSaving(false);
     }
@@ -696,43 +629,22 @@ export default function MyPage() {
             {/* Avatar */}
             <div className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={avatarUrl || '/default-avatar.png'}
-                alt="avatar"
-                className="w-24 h-24 rounded-full border-2 border-purple-500 object-cover"
-              />
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={onAvatarFile}
-              />
+              <img src={avatarUrl || '/default-avatar.png'} alt="avatar" className="w-24 h-24 rounded-full border-2 border-purple-500 object-cover" />
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFile} />
               <div className="flex gap-2 mt-3 flex-wrap">
                 <button
                   type="button"
                   onClick={onPickAvatar}
                   disabled={uploadBusy}
-                  className={cls(
-                    'px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2',
-                    'bg-purple-600 hover:bg-purple-700 disabled:opacity-60'
-                  )}
+                  className={cls('px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2', 'bg-purple-600 hover:bg-purple-700 disabled:opacity-60')}
                 >
                   <FaUpload /> 画像をアップロード
                 </button>
-                <button
-                  type="button"
-                  onClick={openPicker}
-                  className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600"
-                >
+                <button type="button" onClick={openPicker} className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600">
                   <FaSearch /> 候補から選ぶ
                 </button>
                 {avatarUrl && (
-                  <button
-                    type="button"
-                    onClick={() => setAvatarUrl(null)}
-                    className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600"
-                  >
+                  <button type="button" onClick={() => setAvatarUrl(null)} className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600">
                     <FaTimes /> クリア
                   </button>
                 )}
@@ -788,38 +700,35 @@ export default function MyPage() {
                   type="button"
                   onClick={saveProfile}
                   disabled={savingProfile}
-                  className={cls(
-                    'px-4 py-2 rounded-lg inline-flex items-center gap-2',
-                    'bg-green-600 hover:bg-green-700 disabled:opacity-60'
-                  )}
+                  className={cls('px-4 py-2 rounded-lg inline-flex items-center gap-2', 'bg-green-600 hover:bg-green-700 disabled:opacity-60')}
                 >
                   {savingProfile ? <FaSpinner className="animate-spin" /> : <FaSave />} 保存
                 </button>
 
+                {/* ✅ エクスポートも match_players を使わず match_details に統一 */}
                 <button
                   type="button"
                   onClick={async () => {
                     if (!userId) return;
                     const payload: any = {};
-                    const { data: p } = await supabase
-                      .from('players')
-                      .select('*')
-                      .eq('id', userId)
-                      .single();
+                    const { data: p } = await supabase.from('players').select('*').eq('id', userId).single();
                     payload.player = p || null;
+
                     try {
-                      const { data: mp } = await supabase
-                        .from('match_players')
-                        .select('*, matches:matches(*)')
-                        .eq('player_id', userId)
+                      const { data: md, error: mdErr } = await supabase
+                        .from('match_details')
+                        .select('*')
+                        .or(`winner_id.eq.${userId},loser_id.eq.${userId}`)
+                        .order('match_date', { ascending: false })
                         .limit(200);
-                      payload.matches = mp || [];
+
+                      if (mdErr) throw mdErr;
+                      payload.matches = md || [];
                     } catch {
                       payload.matches = [];
                     }
-                    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-                      type: 'application/json',
-                    });
+
+                    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
@@ -845,9 +754,7 @@ export default function MyPage() {
             <h3 className="text-lg font-semibold text-purple-200 mb-3">概要</h3>
             <div className="grid grid-cols-2 gap-3 text-center">
               <div className="rounded-lg bg-purple-900/30 p-3">
-                <div className="text-2xl font-bold text-yellow-100">
-                  {me.ranking_points ?? 0}
-                </div>
+                <div className="text-2xl font-bold text-yellow-100">{me.ranking_points ?? 0}</div>
                 <div className="text-xs text-gray-400">ポイント</div>
               </div>
               <div className="rounded-lg bg-purple-900/30 p-3">
@@ -863,30 +770,21 @@ export default function MyPage() {
                 <div className="text-xs text-gray-400">敗</div>
               </div>
               <div className="col-span-2 rounded-lg bg-purple-900/30 p-3">
-                <div className="text-2xl font-bold text-blue-400">
-                  {games > 0 ? `${winRate}%` : '—'}
-                </div>
+                <div className="text-2xl font-bold text-blue-400">{games > 0 ? `${winRate}%` : '—'}</div>
                 <div className="text-xs text-gray-400">勝率</div>
               </div>
             </div>
 
             <div className="mt-5 flex gap-2 flex-col">
-             <Link
-              href="/matches/register/singles"  
-              className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2"
-            >
-             <FaGamepad /> 個人戦に登録
-            </Link>
-              <Link
-                href="/teams"
-                className="px-4 py-2 rounded-lg bg-purple-600/30 hover:bg-purple-600/40 inline-flex items-center gap-2"
-              >
+              <Link href="/matches/register/singles" className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2">
+                <FaGamepad /> 個人戦に登録
+              </Link>
+
+              <Link href="/teams" className="px-4 py-2 rounded-lg bg-purple-600/30 hover:bg-purple-600/40 inline-flex items-center gap-2">
                 <FaTrophy /> チームを探す
               </Link>
-              <button
-                onClick={signOut}
-                className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 inline-flex items-center gap-2"
-              >
+
+              <button onClick={signOut} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 inline-flex items-center gap-2">
                 <FaSignOutAlt /> ログアウト
               </button>
             </div>
@@ -918,9 +816,7 @@ export default function MyPage() {
               </div>
             ) : (
               <>
-                <p className="text-sm text-gray-400 mb-3">
-                  参加するチームを検索して選択してください（各チーム最大4名／複数チーム参加不可）。
-                </p>
+                <p className="text-sm text-gray-400 mb-3">参加するチームを検索して選択してください（各チーム最大4名／複数チーム参加不可）。</p>
                 <div className="relative">
                   <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
@@ -933,18 +829,14 @@ export default function MyPage() {
                 {teamCandidates.length > 0 && (
                   <div className="mt-3 rounded-lg border border-purple-500/30 overflow-hidden">
                     {teamCandidates.map((t) => (
-                      <div
-                        key={t.id}
-                        className="flex items-center justify-between px-3 py-2 bg-gray-900/60"
-                      >
+                      <div key={t.id} className="flex items-center justify-between px-3 py-2 bg-gray-900/60">
                         <div className="truncate">{t.name}</div>
                         <button
                           disabled={joinBusy}
                           onClick={() => joinTeam(t)}
                           className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 inline-flex items-center gap-2 text-sm"
                         >
-                          {joinBusy ? <FaSpinner className="animate-spin" /> : <FaPlus />}{' '}
-                          参加する
+                          {joinBusy ? <FaSpinner className="animate-spin" /> : <FaPlus />} 参加する
                         </button>
                       </div>
                     ))}
@@ -966,10 +858,7 @@ export default function MyPage() {
         <div className="lg:col-span-2 glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-purple-200">最近の試合</h2>
-            <Link
-              href="/rankings"
-              className="px-3 py-2 rounded-lg bg-purple-700/70 hover:bg-purple-700 inline-flex items-center gap-2"
-            >
+            <Link href="/rankings" className="px-3 py-2 rounded-lg bg-purple-700/70 hover:bg-purple-700 inline-flex items-center gap-2">
               ランキングへ
             </Link>
           </div>
@@ -995,9 +884,7 @@ export default function MyPage() {
                         {m.mode} / {m.status || '-'}
                       </div>
                       {r.opponent && (
-                        <div className="text-xs text-gray-400 truncate">
-                          vs {r.opponent.handle_name}
-                        </div>
+                        <div className="text-xs text-gray-400 truncate">vs {r.opponent.handle_name}</div>
                       )}
                     </div>
                     <div className="text-right">
@@ -1013,9 +900,7 @@ export default function MyPage() {
             <div className="p-6 text-center text-gray-400">試合がありません。</div>
           )}
 
-          {matchFetchNote && (
-            <div className="mt-3 text-xs text-gray-400">{matchFetchNote}</div>
-          )}
+          {matchFetchNote && <div className="mt-3 text-xs text-gray-400">{matchFetchNote}</div>}
         </div>
 
         {/* 予備スペース／お知らせ等 */}
@@ -1033,10 +918,7 @@ export default function MyPage() {
           <div className="w-full max-w-lg rounded-xl border border-purple-500/30 bg-gray-900/95 p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-purple-200">個人戦の登録</h3>
-              <button
-                onClick={() => setRegOpen(false)}
-                className="px-2 py-1 rounded-md bg-gray-700 hover:bg-gray-600"
-              >
+              <button onClick={() => setRegOpen(false)} className="px-2 py-1 rounded-md bg-gray-700 hover:bg-gray-600">
                 <FaTimes />
               </button>
             </div>
@@ -1100,10 +982,7 @@ export default function MyPage() {
               {regDone && <p className="text-sm text-green-300">{regDone}</p>}
 
               <div className="mt-4 flex items-center justify-end gap-2">
-                <button
-                  onClick={() => setRegOpen(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"
-                >
+                <button onClick={() => setRegOpen(false)} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">
                   キャンセル
                 </button>
                 <button

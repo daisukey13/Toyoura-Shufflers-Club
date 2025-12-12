@@ -1,24 +1,17 @@
 // lib/hooks/useNotices.ts
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
-export type Notice = {
+type Notice = {
   id: string;
-  title: string;
-  content: string;
-  date: string | null;         // YYYY-MM-DD or null
+  title: string | null;
+  content: string | null;
+  date: string | null;         // date型 or null
   is_published: boolean;
   created_at?: string | null;
   updated_at?: string | null;
-};
-
-type UseNoticesOptions = {
-  enabled?: boolean;
-  includeUnpublished?: boolean;
-  limit?: number;
-  search?: string;
 };
 
 function asTime(v?: string | null) {
@@ -27,55 +20,60 @@ function asTime(v?: string | null) {
   return Number.isFinite(t) ? t : 0;
 }
 
-export function useNotices(opts: UseNoticesOptions = {}) {
-  const supabase = useMemo(() => createClient(), []);
+export function useNotices(options?: { limit?: number; onlyPublished?: boolean }) {
   const [notices, setNotices] = useState<Notice[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetcher = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      let q = supabase.from('notices').select('*');
-
-      if (!opts.includeUnpublished) {
-        q = q.eq('is_published', true);
-      }
-
-      const s = (opts.search ?? '').trim();
-      if (s) {
-        q = q.or(`title.ilike.%${s}%,content.ilike.%${s}%`);
-      }
-
-      if (opts.limit && Number.isFinite(opts.limit)) {
-        q = q.limit(opts.limit as number);
-      }
-
-      // ⚠️ サーバー側 order(date) は使わない（400回避）
-      const { data, error } = await q;
-      if (error) throw error;
-
-      const sorted = (data ?? []).sort((a: Notice, b: Notice) => {
-        // 優先キー: date → 次点 created_at
-        const at = asTime(a.date ?? a.created_at ?? null);
-        const bt = asTime(b.date ?? b.created_at ?? null);
-        return bt - at; // 降順
-      });
-
-      setNotices(sorted);
-    } catch (e: any) {
-      console.error('[useNotices] fetch error:', e);
-      setError(e?.message || 'failed to fetch notices');
-    } finally {
-      setLoading(false);
-    }
-  }, [supabase, opts.includeUnpublished, opts.limit, opts.search]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (opts.enabled === false) return;
-    fetcher();
-  }, [fetcher, opts.enabled]);
+    let cancelled = false;
+    const supabase = createClient();
 
-  return { notices, loading, error, refetch: fetcher };
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        // カラム名差異で落としたくないので、できるだけワイドに select
+        const { data, error } = await (supabase.from('notices') as any).select('*');
+        if (error) {
+          console.error('[useNotices] select error:', error);
+          setError(error);
+          setNotices([]);
+          return;
+        }
+
+        const list = (data ?? []) as Notice[];
+
+        // クライアント側で安定ソート
+        const sorted = list
+          // 公開のみフィルタ
+          .filter((n) => (options?.onlyPublished ? n.is_published : true))
+          .sort((a, b) => {
+            // date（YYYY-MM-DD）優先 → created_at で補完
+            const at = asTime(a.date ?? a.created_at ?? null);
+            const bt = asTime(b.date ?? b.created_at ?? null);
+            return bt - at; // 降順
+          });
+
+        const limited = options?.limit ? sorted.slice(0, options.limit) : sorted;
+        if (!cancelled) {
+          setNotices(limited);
+        }
+      } catch (e: any) {
+        console.error('[useNotices] fatal error:', e);
+        if (!cancelled) {
+          setError(e instanceof Error ? e : new Error(String(e)));
+          setNotices([]); // ここでも空配列を返し、絶対に throw はしない
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [options?.limit, options?.onlyPublished]);
+
+  return { notices, loading, error };
 }

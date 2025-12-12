@@ -1,25 +1,25 @@
 // app/admin/notices/new/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, type FormEvent } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-const supabase = createClient();
-
 // --- 型定義（never回避のため最小限） ---
 type PlayerFlagRow = { is_admin: boolean | null };
+
 type NoticeInsert = {
   title: string;
   content: string;
-  date: string;          // YYYY-MM-DD （DBは date 型想定）
+  date: string; // YYYY-MM-DD （DBは date 型想定）
   is_published: boolean;
   created_by: string;
 };
 
 export default function NewNoticePage() {
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
 
   // フォーム状態
   const [title, setTitle] = useState('');
@@ -37,7 +37,10 @@ export default function NewNoticePage() {
   useEffect(() => {
     (async () => {
       try {
-        const { data: { user }, error: userErr } = await supabase.auth.getUser();
+        const {
+          data: { user },
+          error: userErr,
+        } = await supabase.auth.getUser();
         if (userErr) throw userErr;
 
         if (!user) {
@@ -67,10 +70,10 @@ export default function NewNoticePage() {
         setBooting(false);
       }
     })();
-  }, [router]);
+  }, [router, supabase]);
 
   // 送信
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (loading) return;
 
@@ -81,21 +84,23 @@ export default function NewNoticePage() {
 
     setLoading(true);
     try {
-      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
       if (userErr) throw userErr;
       if (!user) throw new Error('Not authenticated');
 
       // notices: title, content, date, is_published, created_by
       const payload: NoticeInsert = {
         title: title.trim(),
-        content: content,         // Markdown/テキストそのまま
-        date,                     // "YYYY-MM-DD"
+        content, // Markdown/テキストそのまま
+        date, // "YYYY-MM-DD"
         is_published: isPublished,
         created_by: user.id,
       };
 
-      const { error: insErr } = await (supabase.from('notices') as any)
-        .insert(payload as any);
+      const { error: insErr } = await (supabase.from('notices') as any).insert(payload as any);
 
       if (insErr) throw insErr;
 
@@ -152,7 +157,7 @@ export default function NewNoticePage() {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg紫-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none transition-colors"
+                className="w-full px-4 py-3 rounded-lg bg-purple-900/20 border border-purple-500/30 focus:border-purple-400 focus:outline-none transition-colors"
                 required
               />
             </div>

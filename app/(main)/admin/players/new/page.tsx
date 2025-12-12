@@ -1,13 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { FaArrowLeft, FaPlus } from 'react-icons/fa';
-
-const supabase = createClient();
 
 export default function AdminPlayerNewPage() {
   const router = useRouter();
@@ -37,62 +34,36 @@ export default function AdminPlayerNewPage() {
     }
   }, [loading, user, player, router]);
 
-  // 最下位RPを取得して初期値にする（失敗しても1000のまま）
-  useEffect(() => {
-    if (loading || !user || !player?.is_admin) return;
-
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('players')
-          .select('ranking_points')
-          .eq('is_admin', false)
-          .order('ranking_points', { ascending: true })
-          .limit(1);
-
-        if (error) return;
-        const min = Number((data?.[0] as any)?.ranking_points ?? 1000);
-        if (Number.isFinite(min)) setRankingPoints(min);
-      } catch {
-        // noop
-      }
-    })();
-  }, [loading, user, player?.is_admin]);
-
   const create = async () => {
     setBusy(true);
     setErr('');
     setMsg('');
+
     try {
-      const payloadBase: any = {
-        handle_name: handleName.trim() || null,
-        avatar_url: avatarUrl.trim() || null,
-        ranking_points: rankingPoints,
-        handicap: handicap,
-        is_active: isActive,
-        is_admin: false,
-      };
+      const res = await fetch('/api/admin/players/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          handle_name: handleName,
+          avatar_url: avatarUrl,
+          ranking_points: rankingPoints,
+          handicap,
+          is_active: isActive,
+          is_dummy: isDummy,
+          memo,
+        }),
+      });
 
-      // is_dummy/memo カラムが無い可能性があるので、まず入れて試し、失敗なら外して作成
-      const tryInsert = async (p: any) => {
-        const { data, error } = await supabase.from('players').insert([p]).select('id').maybeSingle();
-        return { data, error };
-      };
-
-      let { data, error } = await tryInsert({ ...payloadBase, is_dummy: isDummy, memo });
-      if (error) {
-        const r2 = await tryInsert(payloadBase);
-        data = r2.data;
-        error = r2.error;
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || json?.message || `作成に失敗しました (HTTP ${res.status})`);
       }
-      if (error) throw error;
 
       setMsg('作成しました');
-      const newId = (data as any)?.id;
-      if (newId) router.replace(`/admin/players/${newId}`);
+      if (json.id) router.replace(`/admin/players/${json.id}`);
       else router.replace('/admin/players');
     } catch (e: any) {
-      setErr(e?.message || '作成に失敗しました（必須カラムが他にもある場合はテーブル定義に合わせて項目を追加します）');
+      setErr(e?.message || '作成に失敗しました');
     } finally {
       setBusy(false);
     }
@@ -104,14 +75,15 @@ export default function AdminPlayerNewPage() {
     <div className="min-h-screen">
       <div className="container mx-auto px-4 py-8 sm:py-10">
         <div className="glass-card rounded-2xl border border-purple-500/30 p-5 sm:p-6">
-          <Link href="/admin/players" className="text-purple-300 hover:text-purple-200 inline-flex items-center gap-2 text-sm">
+          <Link
+            href="/admin/players"
+            className="text-purple-300 hover:text-purple-200 inline-flex items-center gap-2 text-sm"
+          >
             <FaArrowLeft /> プレイヤー一覧へ
           </Link>
 
           <h1 className="mt-2 text-xl sm:text-2xl font-bold text-yellow-100">プレイヤー新規作成</h1>
-          <p className="text-xs sm:text-sm text-gray-400 mt-1">
-            初期値：HC=30 / RP=最下位（取得できない場合1000）
-          </p>
+          <p className="text-xs sm:text-sm text-gray-400 mt-1">初期値：HC=30 / RP=1000（必要なら後で編集）</p>
 
           {err && (
             <div className="mt-4 p-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
@@ -181,7 +153,7 @@ export default function AdminPlayerNewPage() {
                 checked={isDummy}
                 onChange={(e) => setIsDummy(e.target.checked)}
                 className="accent-amber-500"
-                title="players.is_dummy がある場合のみDBに保存されます（無ければ自動フォールバック）"
+                title="players.is_dummy がある場合のみDBに保存されます（無ければサーバ側で自動フォールバック）"
               />
             </div>
 

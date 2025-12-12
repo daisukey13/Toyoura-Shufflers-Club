@@ -1,49 +1,61 @@
+// lib/hooks/useFetchNoticeDetail.ts
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { useEffect, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
 
-type Notice = {
+type NoticeDetail = {
   id: string;
   title: string | null;
   content: string | null;
-  created_at: string | null;
-  // 必要に応じてフィールドを追加
+  date: string | null;
+  is_published: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
-export function useFetchNoticeDetail(id: string) {
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<unknown>(null);
-
-  const fetchNotice = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
-
-      const { data, error } = await supabase
-        .from('notices')          // ← テーブル名を実際に合わせてください
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (error) throw error;
-      setNotice(data as Notice);
-    } catch (e) {
-      setError(e);
-      setNotice(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [id]);
+export function useFetchNoticeDetail(id: string | null) {
+  const [notice, setNotice] = useState<NoticeDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (id) fetchNotice();
-  }, [id, fetchNotice]);
+    if (!id) return;
+    let cancelled = false;
+    const supabase = createClient();
 
-  return { notice, loading, error, refetch: fetchNotice };
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { data, error } = await (supabase.from('notices') as any)
+          .select('*')
+          .eq('id', id)
+          .maybeSingle();
+
+        if (error) {
+          console.error('[useFetchNoticeDetail] fetch error:', error);
+          setError(error);
+          setNotice(null);
+          return;
+        }
+
+        if (!cancelled) setNotice((data ?? null) as NoticeDetail | null);
+      } catch (e: any) {
+        console.error('[useFetchNoticeDetail] fatal error:', e);
+        if (!cancelled) {
+          setError(e instanceof Error ? e : new Error(String(e)));
+          setNotice(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  return { notice, loading, error };
 }

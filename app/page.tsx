@@ -1,7 +1,7 @@
 // app/(main)/page.tsx
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, type ReactNode } from 'react';
 import Link from 'next/link';
 import RegisterButtons from '@/components/RegisterButtons';
 import AuthAwareLoginButtonClient from '@/components/client/AuthAwareLoginButton.client';
@@ -92,6 +92,13 @@ type TournamentLite = {
 
 type MemberLite = { id: string; handle_name: string; avatar_url: string | null };
 
+type TournamentWinnerLite = {
+  tournament_id: string;
+  winner_id: string;
+  handle_name: string | null;
+  avatar_url: string | null;
+};
+
 /** 画像（汎用アバター）: 404時はデフォルトにフォールバック */
 function AvatarImg({
   src,
@@ -122,6 +129,17 @@ function AvatarImg({
   );
 }
 
+function safeJaMD(dateLike: any) {
+  try {
+    if (!dateLike) return '';
+    const d = new Date(dateLike);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
 export default function HomePage() {
   const [stats, setStats] = useState<Stats>({
     totalMatches: 0,
@@ -133,6 +151,8 @@ export default function HomePage() {
   const [notices, setNotices] = useState<any[]>([]);
   const [teamMembersMap, setTeamMembersMap] = useState<Record<string, MemberLite[]>>({});
   const [recentTournaments, setRecentTournaments] = useState<TournamentLite[]>([]);
+  const [tournamentWinnersById, setTournamentWinnersById] =
+    useState<Record<string, TournamentWinnerLite>>({});
 
   const router = useRouter();
   const { user, player, loading } = useAuth();
@@ -149,7 +169,7 @@ export default function HomePage() {
   // （任意）ログイン済みなら自動遷移（既存挙動維持）
   useEffect(() => {
     if (user && player && !loading) {
-      if (player.is_admin) router.push('/admin/dashboard');
+      if ((player as any).is_admin) router.push('/admin/dashboard');
       else router.push(`/players/${player.id}`);
     }
   }, [user, player, loading, router]);
@@ -158,7 +178,13 @@ export default function HomePage() {
     try {
       const [matchesResult, playersResult] = await Promise.all([
         supabase.from('matches').select('id', { count: 'exact', head: true }),
-        supabase.from('players').select('id, ranking_points, is_active').eq('is_admin', false),
+        supabase
+          .from('players')
+          .select('id, ranking_points, is_active, handle_name')
+          .eq('is_admin', false)
+          // ✅ def/admin を統計から除外
+          .neq('handle_name', 'def')
+          .neq('handle_name', 'admin'),
       ]);
 
       const players = playersResult.data ?? [];
@@ -187,6 +213,9 @@ export default function HomePage() {
         .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses')
         .eq('is_active', true)
         .eq('is_admin', false)
+        // ✅ def/admin を除外
+        .neq('handle_name', 'def')
+        .neq('handle_name', 'admin')
         .order('ranking_points', { ascending: false })
         .limit(5);
 
@@ -217,10 +246,23 @@ export default function HomePage() {
         const res = await supabase
           .from('match_details')
           .select('*')
-          .order('created_at', { ascending: false })
+          // match_details 側で created_at が無い環境もあるので、まず match_date を優先
+          .order('match_date', { ascending: false })
           .limit(6);
-        if (!res.error)
+
+        if (!res.error) {
           data = (res.data ?? []).map((m: any) => ({ ...m, mode: 'singles' })) as RecentMatch[];
+        } else {
+          // さらにフォールバック（環境差がある場合）
+          const res2 = await supabase
+            .from('match_details')
+            .select('*')
+            .order('id', { ascending: false })
+            .limit(6);
+          if (!res2.error) {
+            data = (res2.data ?? []).map((m: any) => ({ ...m, mode: 'singles' })) as RecentMatch[];
+          }
+        }
       }
 
       setRecentMatches(data ?? []);
@@ -231,12 +273,16 @@ export default function HomePage() {
 
   const fetchNotices = async () => {
     try {
-      const { data, error } = await supabase
+      const q = supabase
         .from('notices')
         .select('*')
         .eq('is_published', true)
+        // ✅ created_at が無いので使わない。date → id の順で安定化（order()はチェーン可能） :contentReference[oaicite:1]{index=1}
         .order('date', { ascending: false })
+        .order('id', { ascending: false })
         .limit(3);
+
+      const { data, error } = await q;
 
       if (error) {
         console.error('Error fetching notices:', error);
@@ -262,7 +308,38 @@ export default function HomePage() {
         return;
       }
 
-      setRecentTournaments((data ?? []) as any);
+      const list = (data ?? []) as any as TournamentLite[];
+      setRecentTournaments(list);
+
+      // ✅ 直近大会の優勝者をまとめて取得（view: tournament_winners）
+      const ids = list.map((t) => t.id).filter(Boolean);
+      if (ids.length === 0) {
+        setTournamentWinnersById({});
+        return;
+      }
+
+      const { data: winners, error: wErr } = await supabase
+        .from('tournament_winners')
+        .select('tournament_id,winner_id,handle_name,avatar_url')
+        .in('tournament_id', ids);
+
+      if (wErr) {
+        console.error('Error fetching tournament winners:', wErr);
+        setTournamentWinnersById({});
+        return;
+      }
+
+      const map: Record<string, TournamentWinnerLite> = {};
+      (winners ?? []).forEach((w: any) => {
+        if (!w?.tournament_id) return;
+        map[String(w.tournament_id)] = {
+          tournament_id: String(w.tournament_id),
+          winner_id: String(w.winner_id),
+          handle_name: w.handle_name ?? null,
+          avatar_url: w.avatar_url ?? null,
+        };
+      });
+      setTournamentWinnersById(map);
     } catch (e) {
       console.error('fetchRecentTournaments unexpected error:', e);
     }
@@ -323,7 +400,10 @@ export default function HomePage() {
         const { data: ps, error: pErr } = await supabase
           .from('players')
           .select('id, handle_name, avatar_url')
-          .in('id', playerIds);
+          .in('id', playerIds)
+          // ✅ def/admin を除外
+          .neq('handle_name', 'def')
+          .neq('handle_name', 'admin');
 
         if (pErr) {
           console.error('fetch players error:', pErr);
@@ -365,7 +445,7 @@ export default function HomePage() {
   }, [recentMatches]);
 
   // null/undefined 安全な Link ラッパ
-  const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
+  const MaybeLink = ({ href, children }: { href?: string; children: ReactNode }) =>
     href ? <Link href={href}>{children}</Link> : <div>{children}</div>;
 
   // メンバー列（アバター＋名前を横並び / 団体戦用）
@@ -373,7 +453,7 @@ export default function HomePage() {
     const members = useMemo(() => {
       if (!teamId) return [] as MemberLite[];
       return teamMembersMap[teamId] ?? [];
-    }, [teamId]);
+    }, [teamId, teamMembersMap]);
 
     if (!teamId || members.length === 0) return null;
 
@@ -412,7 +492,7 @@ export default function HomePage() {
   const tournamentBannerUrlOf = (t: TournamentLite) =>
     (t as any).banner_url ?? (t as any).banner_image_url ?? (t as any).image_url ?? null;
 
-  const TournamentBannerCard = ({ t }: { t: TournamentLite }) => {
+  const TournamentBannerCard = ({ t, winner }: { t: TournamentLite; winner?: TournamentWinnerLite | null }) => {
     const title = tournamentTitleOf(t);
     const dateLabel = tournamentDateLabel(t);
     const bannerUrl = tournamentBannerUrlOf(t);
@@ -445,24 +525,51 @@ export default function HomePage() {
               大会
             </div>
 
-            <div className="absolute inset-0 p-3 flex flex-col justify-end">
-              <div className="text-[11px] sm:text-xs text-gray-200/90 flex items-center gap-1">
-                <FaCalendar className="opacity-80" />
-                <span>{dateLabel || '近日'}</span>
-                {t.venue && (
-                  <>
-                    <span className="opacity-60">・</span>
-                    <span className="truncate max-w-[12rem]">{t.venue}</span>
-                  </>
-                )}
+            <div className="absolute inset-0 p-3 flex flex-col">
+              <div className="flex-1 relative">
+                {winner?.winner_id ? (
+                  <div className="absolute inset-0">
+                    <div className="absolute left-[30%] top-1/2 -translate-x-1/2 -translate-y-1/2">
+                      <AvatarImg
+                        src={winner.avatar_url}
+                        alt={winner.handle_name ?? 'winner'}
+                        size={40}
+                        className="w-[40px] h-[40px] rounded-full border-2 border-amber-400/70 object-cover shadow"
+                      />
+                    </div>
+
+                    <div className="absolute left-[45%] top-1/2 -translate-y-1/2 text-left">
+                      <div className="relative inline-block">
+                        <FaCrown className="absolute -top-3 -left-3 text-amber-300 drop-shadow" />
+                        <div className="text-yellow-100 font-extrabold leading-tight text-[15px] sm:text-[16px] drop-shadow">
+                          {(winner.handle_name ?? '—').slice(0, 10)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              <div className="text-sm sm:text-base font-bold text-yellow-100 truncate">{title}</div>
+
+              <div>
+                <div className="text-[11px] sm:text-xs text-gray-200/90 flex items-center gap-1">
+                  <FaCalendar className="opacity-80" />
+                  <span>{dateLabel || '近日'}</span>
+                  {t.venue ? (
+                    <>
+                      <span className="opacity-60">・</span>
+                      <span className="truncate max-w-[12rem]">{t.venue}</span>
+                    </>
+                  ) : null}
+                </div>
+                <div className="text-sm sm:text-base font-bold text-yellow-100 truncate">{title}</div>
+              </div>
             </div>
           </div>
         </div>
       </Link>
     );
   };
+
   // ───────────────────────────────────────────────────────────────────────────────
 
   return (
@@ -528,27 +635,30 @@ export default function HomePage() {
                 <span>お知らせ</span>
               </h3>
               <div className="space-y-2">
-                {notices.map((notice) => (
-                  <Link
-                    key={notice.id}
-                    href={`/notices/${notice.id}`}
-                    className="block glass-card rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 hover:bg-purple-900/20 transition-all group"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0">
-                        <span className="text-xs sm:text-sm text-gray-400 flex-shrink-0">
-                          {new Date(notice.date).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}
-                        </span>
-                        <span className="text-sm sm:text-base text-yellow-100 group-hover:text-yellow-300 transition-colors truncate">
-                          {notice.title}
+                {notices.map((notice) => {
+                  const d = safeJaMD(notice?.date);
+                  return (
+                    <Link
+                      key={notice.id}
+                      href={`/notices/${notice.id}`}
+                      className="block glass-card rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 hover:bg-purple-900/20 transition-all group"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0">
+                          <span className="text-xs sm:text-sm text-gray-400 flex-shrink-0">
+                            {d || '—'}
+                          </span>
+                          <span className="text-sm sm:text-base text-yellow-100 group-hover:text-yellow-300 transition-colors truncate">
+                            {notice.title}
+                          </span>
+                        </div>
+                        <span className="text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-sm">
+                          →
                         </span>
                       </div>
-                      <span className="text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-sm">
-                        →
-                      </span>
-                    </div>
-                  </Link>
-                ))}
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -810,7 +920,7 @@ export default function HomePage() {
             <div className="text-center mb-4">
               <h2 className="text-lg sm:text-xl font-bold text-yellow-100 inline-flex items-center gap-2">
                 <FaTrophy className="text-amber-300" />
-                直近の大会
+                直近大会の結果
               </h2>
               <div className="mt-2 flex items-center justify-center gap-1">
                 <div className="w-10 h-px bg-gradient-to-r from-transparent to-amber-400/50" />
@@ -821,7 +931,7 @@ export default function HomePage() {
 
             <div className="flex flex-col sm:flex-row flex-wrap items-center justify-center gap-3 sm:gap-4">
               {recentTournaments.slice(0, 3).map((t) => (
-                <TournamentBannerCard key={t.id} t={t} />
+                <TournamentBannerCard key={t.id} t={t} winner={tournamentWinnersById[t.id] ?? null} />
               ))}
             </div>
           </div>
@@ -877,7 +987,6 @@ export default function HomePage() {
                     upset ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10' : 'border-purple-500/30'
                   }`}
                 >
-                  {/* ヘッダー行 */}
                   <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm mb-3">
                     <span className="text-gray-400">
                       <FaCalendar className="inline mr-1" />
@@ -907,9 +1016,7 @@ export default function HomePage() {
                     )}
                   </div>
 
-                  {/* 本文（勝者 / VS / 敗者） */}
                   <div className="grid sm:grid-cols-3 items-center gap-3 sm:gap-4">
-                    {/* 勝者 */}
                     <MaybeLink href={winnerHref}>
                       <div className="flex items-start gap-3 p-2.5 rounded-lg bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/30 hover:border-green-400/50 transition">
                         {!team && (
@@ -930,7 +1037,6 @@ export default function HomePage() {
                       </div>
                     </MaybeLink>
 
-                    {/* VS */}
                     <div className="text-center">
                       <div
                         className={`inline-flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 rounded-full shadow-lg ${
@@ -946,7 +1052,6 @@ export default function HomePage() {
                       </div>
                     </div>
 
-                    {/* 敗者 */}
                     <MaybeLink href={loserHref}>
                       <div className="flex items-start gap-3 p-2.5 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 hover:border-red-400/50 transition">
                         <div className="flex-1 min-w-0 order-2 sm:order-1 text-right">
@@ -968,7 +1073,6 @@ export default function HomePage() {
                     </MaybeLink>
                   </div>
 
-                  {/* 備考 */}
                   {m.notes && (
                     <div className="mt-3 p-2 bg-gray-800/40 rounded-lg border-l-4 border-purple-500/50 text-xs text-gray-300">
                       {m.notes}

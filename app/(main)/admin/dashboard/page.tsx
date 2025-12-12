@@ -35,7 +35,8 @@ type Notice = {
   id: string;
   title: string;
   content: string;
-  date: string; // YYYY-MM-DD
+  // 🔧 DB 側が NULL を許容するので null も許容
+  date: string | null; // YYYY-MM-DD or null
   is_published: boolean;
   created_at?: string | null;
   updated_at?: string | null;
@@ -184,7 +185,10 @@ export default function AdminDashboard() {
 
       // 「今日の試合」は created_at / match_date / played_at のどれかがあればカウント。無ければ 0
       const todayMatches = matches.filter((m) => {
-        const d = (m.created_at ?? (m as any).match_date ?? (m as any).played_at) as string | null | undefined;
+        const d = (m.created_at ?? (m as any).match_date ?? (m as any).played_at) as
+          | string
+          | null
+          | undefined;
         return typeof d === 'string' ? d.startsWith(todayISO) : false;
       }).length;
 
@@ -194,36 +198,23 @@ export default function AdminDashboard() {
     }
   };
 
-  /** お知らせ取得（created_at 列が無い環境でも落とさない） */
+  /** お知らせ取得（created_at 無しでも落とさない） */
   const fetchNotices = async () => {
     setNLoading(true);
     try {
-      // まずは created_at あり想定
-      const r1 = await (supabase.from('notices') as any)
+      // 🔧 created_at を一切使わず、date のみで取得
+      const { data, error } = await (supabase.from('notices') as any)
         .select('*')
         .order('date', { ascending: false })
-        .order('created_at', { ascending: false })
         .limit(3);
 
-      if (!r1.error) {
-        setNotices((r1.data ?? []) as Notice[]);
-        return;
-      }
-
-      // created_at が無い環境 → order(created_at) を外して再試行
-      if (isMissingColumnError(r1.error)) {
-        const r2 = await (supabase.from('notices') as any).select('*').order('date', { ascending: false }).limit(3);
-        if (!r2.error) {
-          setNotices((r2.data ?? []) as Notice[]);
-          return;
-        }
-        console.error('[admin/dashboard] notices fetch error (fallback):', r2.error);
+      if (error) {
+        console.error('[admin/dashboard] notices fetch error:', error);
         setNotices([]);
         return;
       }
 
-      console.error('[admin/dashboard] notices fetch error:', r1.error);
-      setNotices([]);
+      setNotices((data ?? []) as Notice[]);
     } catch (e) {
       console.error('[admin/dashboard] notices fetch fatal:', e);
       setNotices([]);
@@ -305,7 +296,9 @@ export default function AdminDashboard() {
     const next = !target.is_published;
     setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
     try {
-      const { error } = await (supabase.from('notices') as any).update({ is_published: next } as any).eq('id', target.id);
+      const { error } = await (supabase.from('notices') as any)
+        .update({ is_published: next } as any)
+        .eq('id', target.id);
       if (error) throw error;
     } catch (e) {
       console.error('[admin/dashboard] toggle publish error:', e);
@@ -329,7 +322,8 @@ export default function AdminDashboard() {
       }
 
       if (r.ok && j?.ok && j.config) {
-        const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, Number(v)));
+        const clamp = (v: number, min: number, max: number) =>
+          Math.min(max, Math.max(min, Number(v)));
         const cfg = j.config as RankingConfig;
         const normalized: RankingConfig = {
           k_factor: clamp(cfg.k_factor, 10, 64),
@@ -397,11 +391,19 @@ export default function AdminDashboard() {
   };
 
   if (authz === 'checking') {
-    return <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">認証を確認しています...</div>;
+    return (
+      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
+        認証を確認しています...
+      </div>
+    );
   }
 
   if (authz === 'no') {
-    return <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">アクセス権限がありません</div>;
+    return (
+      <div className="min-h-screen bg-[#2a2a3e] flex justify-center items-center text-white">
+        アクセス権限がありません
+      </div>
+    );
   }
 
   return (
@@ -431,7 +433,9 @@ export default function AdminDashboard() {
           <button
             onClick={() => setActiveTab('overview')}
             className={`pb-3 px-6 flex items-center gap-2 transition-all ${
-              activeTab === 'overview' ? 'border-b-2 border-purple-400 text-purple-400' : 'text-gray-400 hover:text-gray-300'
+              activeTab === 'overview'
+                ? 'border-b-2 border-purple-400 text-purple-400'
+                : 'text-gray-400 hover:text-gray-300'
             }`}
           >
             <FaChartLine />
@@ -440,7 +444,9 @@ export default function AdminDashboard() {
           <button
             onClick={() => setActiveTab('settings')}
             className={`pb-3 px-6 flex items-center gap-2 transition-all ${
-              activeTab === 'settings' ? 'border-b-2 border-purple-400 text-purple-400' : 'text-gray-400 hover:text-gray-300'
+              activeTab === 'settings'
+                ? 'border-b-2 border-purple-400 text-purple-400'
+                : 'text-gray-400 hover:text-gray-300'
             }`}
           >
             <FaCog />
@@ -452,6 +458,7 @@ export default function AdminDashboard() {
           <div>
             {/* 統計カード */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              {/* totalPlayers */}
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-6 transform hover:scale-105 transition-all">
                 <div className="flex items-center justify-between mb-4">
                   <div className="p-3 bg-blue-500/20 rounded-lg">
@@ -467,6 +474,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
+              {/* activePlayers */}
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-6 transform hover:scale-105 transition-all">
                 <div className="flex items-center justify-between mb-4">
                   <div className="p-3 bg-green-500/20 rounded-lg">
@@ -485,6 +493,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
+              {/* totalMatches */}
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-6 transform hover:scale-105 transition-all">
                 <div className="flex items-center justify-between mb-4">
                   <div className="p-3 bg-yellow-500/20 rounded-lg">
@@ -500,6 +509,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
+              {/* todayMatches */}
               <div className="bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-6 transform hover:scale-105 transition-all">
                 <div className="flex items-center justify-between mb-4">
                   <div className="p-3 bg-purple-500/20 rounded-lg">
@@ -534,10 +544,15 @@ export default function AdminDashboard() {
                   大会インデックスへ
                 </Link>
               </div>
-              <p className="text-xs text-gray-400 mb-4">ここから「大会一覧 → ブロック管理 → 試合登録 → 公開確認」まで迷わず移動できます。</p>
+              <p className="text-xs text-gray-400 mb-4">
+                ここから「大会一覧 → ブロック管理 → 試合登録 → 公開確認」まで迷わず移動できます。
+              </p>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Link href="/admin/tournaments" className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all">
+                <Link
+                  href="/admin/tournaments"
+                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
+                >
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl group-hover:shadow-lg group-hover:shadow-emerald-500/20 transition-all">
                       <FaListUl className="text-xl text-white" />
@@ -549,7 +564,10 @@ export default function AdminDashboard() {
                   </div>
                 </Link>
 
-                <Link href="/matches" className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all">
+                <Link
+                  href="/matches"
+                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
+                >
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl group-hover:shadow-lg group-hover:shadow-yellow-500/20 transition-all">
                       <FaGamepad className="text-xl text-white" />
@@ -561,7 +579,12 @@ export default function AdminDashboard() {
                   </div>
                 </Link>
 
-                <Link href="/tournaments" className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all" target="_blank" rel="noreferrer">
+                <Link
+                  href="/tournaments"
+                  className="group bg-gray-800/50 rounded-xl p-4 border border-purple-500/20 hover:border-purple-400/40 transition-all"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl group-hover:shadow-lg group-hover:shadow-pink-500/20 transition-all">
                       <FaEye className="text-xl text-white" />
@@ -577,7 +600,10 @@ export default function AdminDashboard() {
 
             {/* 管理リンク */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <Link href="/admin/players" className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105">
+              <Link
+                href="/admin/players"
+                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
+              >
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-4 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-xl group-hover:shadow-lg group-hover:shadow-blue-500/30 transition-all">
                     <FaUsers className="text-3xl text-white" />
@@ -587,7 +613,10 @@ export default function AdminDashboard() {
                 <p className="text-gray-400">プレイヤーの情報を編集・管理できます</p>
               </Link>
 
-              <Link href="/matches" className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105">
+              <Link
+                href="/matches"
+                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
+              >
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-4 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl group-hover:shadow-lg group-hover:shadow-yellow-500/30 transition-all">
                     <FaGamepad className="text-3xl text-white" />
@@ -597,7 +626,10 @@ export default function AdminDashboard() {
                 <p className="text-gray-400">試合結果の編集・削除を行えます</p>
               </Link>
 
-              <Link href="/admin/notices" className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105">
+              <Link
+                href="/admin/notices"
+                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
+              >
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl group-hover:shadow-lg group-hover:shadow-pink-500/30 transition-all">
                     <FaBullhorn className="text-3xl text-white" />
@@ -607,14 +639,19 @@ export default function AdminDashboard() {
                 <p className="text-gray-400">お知らせの作成・公開設定・編集・削除</p>
               </Link>
 
-              <Link href="/admin/tournaments" className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105">
+              <Link
+                href="/admin/tournaments"
+                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105"
+              >
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-4 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl group-hover:shadow-lg group-hover:shadow-emerald-500/30 transition-all">
                     <FaListUl className="text-3xl text-white" />
                   </div>
                   <h3 className="text-2xl font-bold">大会管理</h3>
                 </div>
-                <p className="text-gray-400">大会インデックスからリーグブロックの作成・確認ができます</p>
+                <p className="text-gray-400">
+                  大会インデックスからリーグブロックの作成・確認ができます
+                </p>
               </Link>
             </div>
 
@@ -633,7 +670,9 @@ export default function AdminDashboard() {
                   大会インデックスへ
                 </Link>
               </div>
-              <p className="text-xs text-gray-400 mb-3">「ブロック管理」→リーグブロック作成・集計、「試合登録」→大会を紐付けて結果追加、「公開リーグ」→一般公開ページ確認。</p>
+              <p className="text-xs text-gray-400 mb-3">
+                「ブロック管理」→リーグブロック作成・集計、「試合登録」→大会を紐付けて結果追加、「公開リーグ」→一般公開ページ確認。
+              </p>
 
               {tLoading ? (
                 <div className="text-sm text-gray-400">読み込み中...</div>
@@ -657,7 +696,11 @@ export default function AdminDashboard() {
                     <tbody>
                       {tournaments.map((t) => {
                         const dateLabel = t.tournament_date
-                          ? new Date(t.tournament_date).toLocaleDateString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric' })
+                          ? new Date(t.tournament_date).toLocaleDateString('ja-JP', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                            })
                           : '-';
 
                         const modeLabel =
@@ -674,13 +717,19 @@ export default function AdminDashboard() {
                             <td className="border border-gray-700 px-2 py-1">{modeLabel}</td>
 
                             <td className="border border-gray-700 px-2 py-1">
-                              <Link href={`/admin/tournaments/${t.id}/league`} className="text-xs text-blue-300 underline hover:text-blue-200">
+                              <Link
+                                href={`/admin/tournaments/${t.id}/league`}
+                                className="text-xs text-blue-300 underline hover:text-blue-200"
+                              >
                                 ブロック管理
                               </Link>
                             </td>
 
                             <td className="border border-gray-700 px-2 py-1">
-                              <Link href={`/matches?tournament_id=${encodeURIComponent(t.id)}`} className="text-xs text-yellow-300 underline hover:text-yellow-200">
+                              <Link
+                                href={`/matches?tournament_id=${encodeURIComponent(t.id)}`}
+                                className="text-xs text-yellow-300 underline hover:text-yellow-200"
+                              >
                                 この大会で登録
                               </Link>
                             </td>
@@ -718,7 +767,10 @@ export default function AdminDashboard() {
                   >
                     <FaPlus /> 新規作成
                   </Link>
-                  <Link href="/admin/notices" className="px-4 py-2 border border-purple-500/40 rounded-lg hover:bg-purple-900/20 transition-colors">
+                  <Link
+                    href="/admin/notices"
+                    className="px-4 py-2 border border-purple-500/40 rounded-lg hover:bg-purple-900/20 transition-colors"
+                  >
                     一覧へ
                   </Link>
                 </div>
@@ -731,22 +783,40 @@ export default function AdminDashboard() {
               ) : (
                 <div className="space-y-3">
                   {notices.map((n) => (
-                    <div key={n.id} className="flex items-start justify-between gap-4 p-4 rounded-xl border border-purple-500/20 bg-gray-900/40">
+                    <div
+                      key={n.id}
+                      className="flex items-start justify-between gap-4 p-4 rounded-xl border border-purple-500/20 bg-gray-900/40"
+                    >
                       <div className="min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
-                          <h3 className="text-lg font-semibold text-yellow-100 break-all">{n.title || '無題'}</h3>
-                          <span className={`px-2 py-0.5 rounded-full text-xs ${n.is_published ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-300'}`}>
+                          <h3 className="text-lg font-semibold text-yellow-100 break-all">
+                            {n.title || '無題'}
+                          </h3>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-xs ${
+                              n.is_published ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-300'
+                            }`}
+                          >
                             {n.is_published ? '公開中' : '非公開'}
                           </span>
                           <span className="text-sm text-gray-400">
                             {n.date
-                              ? new Date(n.date).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })
+                              ? new Date(n.date).toLocaleDateString('ja-JP', {
+                                  year: 'numeric',
+                                  month: 'long',
+                                  day: 'numeric',
+                                })
                               : ''}
                           </span>
                         </div>
                         <p
                           className="text-gray-300 mt-1 overflow-hidden text-ellipsis"
-                          style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', whiteSpace: 'normal' }}
+                          style={{
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            whiteSpace: 'normal',
+                          }}
                           title={n.content}
                         >
                           {n.content}
@@ -759,7 +829,11 @@ export default function AdminDashboard() {
                           className="p-2 rounded-lg hover:bg-purple-900/30 transition-colors"
                           title={n.is_published ? '非公開にする' : '公開する'}
                         >
-                          {n.is_published ? <FaEyeSlash className="text-gray-300" /> : <FaEye className="text-purple-300" />}
+                          {n.is_published ? (
+                            <FaEyeSlash className="text-gray-300" />
+                          ) : (
+                            <FaEye className="text-purple-300" />
+                          )}
                         </button>
                         <Link
                           href={`/admin/notices/${n.id}/edit`}
@@ -788,26 +862,36 @@ export default function AdminDashboard() {
               <div className="space-y-8">
                 {/* K係数 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">K係数（ELOレーティング）</label>
-                  <p className="text-sm text-gray-400 mb-4">レーティング変動の大きさ。通常は16〜64。</p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    K係数（ELOレーティング）
+                  </label>
+                  <p className="text-sm text-gray-400 mb-4">
+                    レーティング変動の大きさ。通常は16〜64。
+                  </p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
                       min={16}
                       max={64}
                       value={config.k_factor}
-                      onChange={(e) => setConfig({ ...config, k_factor: parseInt(e.target.value, 10) })}
+                      onChange={(e) =>
+                        setConfig({ ...config, k_factor: parseInt(e.target.value, 10) })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.k_factor}</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.k_factor}
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 {/* スコア差倍率 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">スコア差倍率</label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    スコア差倍率
+                  </label>
                   <p className="text-sm text-gray-400 mb-4">0.01〜0.10 推奨。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -816,18 +900,27 @@ export default function AdminDashboard() {
                       max={0.1}
                       step={0.01}
                       value={Number(config.score_diff_multiplier)}
-                      onChange={(e) => setConfig({ ...config, score_diff_multiplier: parseFloat(e.target.value) })}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          score_diff_multiplier: parseFloat(e.target.value),
+                        })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.score_diff_multiplier}</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.score_diff_multiplier}
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ差倍率 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ差倍率</label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    ハンディキャップ差倍率
+                  </label>
                   <p className="text-sm text-gray-400 mb-4">0.01〜0.05 推奨。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -836,37 +929,57 @@ export default function AdminDashboard() {
                       max={0.05}
                       step={0.01}
                       value={Number(config.handicap_diff_multiplier)}
-                      onChange={(e) => setConfig({ ...config, handicap_diff_multiplier: parseFloat(e.target.value) })}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          handicap_diff_multiplier: parseFloat(e.target.value),
+                        })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.handicap_diff_multiplier}</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.handicap_diff_multiplier}
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ変更閾値 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ変更閾値（点差）</label>
-                  <p className="text-sm text-gray-400 mb-4">この点差以上で勝利した場合にハンディを調整。</p>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    ハンディキャップ変更閾値（点差）
+                  </label>
+                  <p className="text-sm text-gray-400 mb-4">
+                    この点差以上で勝利した場合にハンディを調整。
+                  </p>
                   <div className="flex items-center gap-6">
                     <input
                       type="range"
                       min={5}
                       max={15}
                       value={config.win_threshold_handicap_change}
-                      onChange={(e) => setConfig({ ...config, win_threshold_handicap_change: parseInt(e.target.value, 10) })}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          win_threshold_handicap_change: parseInt(e.target.value, 10),
+                        })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.win_threshold_handicap_change}点</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.win_threshold_handicap_change}点
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 {/* ハンディ変更量 */}
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-purple-500/20">
-                  <label className="block text-lg font-medium text-purple-300 mb-2">ハンディキャップ変更量</label>
+                  <label className="block text-lg font-medium text-purple-300 mb-2">
+                    ハンディキャップ変更量
+                  </label>
                   <p className="text-sm text-gray-400 mb-4">閾値を超えた場合の変更量。</p>
                   <div className="flex items-center gap-6">
                     <input
@@ -874,11 +987,18 @@ export default function AdminDashboard() {
                       min={1}
                       max={5}
                       value={config.handicap_change_amount}
-                      onChange={(e) => setConfig({ ...config, handicap_change_amount: parseInt(e.target.value, 10) })}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          handicap_change_amount: parseInt(e.target.value, 10),
+                        })
+                      }
                       className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                     />
                     <div className="w-20 text-center">
-                      <span className="text-2xl font-bold text-purple-400">{config.handicap_change_amount}</span>
+                      <span className="text-2xl font-bold text-purple-400">
+                        {config.handicap_change_amount}
+                      </span>
                     </div>
                   </div>
                 </div>

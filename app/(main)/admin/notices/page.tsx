@@ -1,13 +1,11 @@
 // app/(main)/admin/notices/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FaPlus, FaEdit, FaTrash, FaEye, FaEyeSlash } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
-
-const supabase = createClient();
 
 // ---- 型（ローカルで厳格化） ----
 type PlayerFlagRow = { is_admin: boolean | null };
@@ -16,7 +14,7 @@ type Notice = {
   id: string;
   title: string;
   content: string;
-  date: string | null;          // YYYY-MM-DD or null
+  date: string | null; // YYYY-MM-DD or null
   is_published: boolean;
   created_by?: string | null;
   created_at?: string | null;
@@ -31,48 +29,12 @@ function asTime(v?: string | null) {
 
 export default function AdminNoticesPage() {
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
 
   const [notices, setNotices] = useState<Notice[]>([]);
   const [loading, setLoading] = useState(true);
   const [booting, setBooting] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        // 認証
-        const {
-          data: { user },
-          error: userErr,
-        } = await supabase.auth.getUser();
-        if (userErr) throw userErr;
-        if (!user) {
-          router.replace('/');
-          return;
-        }
-        // 管理者判定（from の型は緩め、結果をローカル型で受ける）
-        const { data: pRow, error: plErr } = await (supabase.from('players') as any)
-          .select('is_admin')
-          .eq('id', user.id)
-          .maybeSingle();
-        if (plErr) throw plErr;
-        const player = (pRow ?? null) as PlayerFlagRow | null;
-        if (!player?.is_admin) {
-          router.replace('/');
-          return;
-        }
-        setIsAdmin(true);
-        await fetchNotices();
-      } catch (e) {
-        console.error('[admin/notices] admin bootstrap error:', e);
-        router.replace('/');
-      } finally {
-        setBooting(false);
-        setLoading(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const fetchNotices = async () => {
     setLoading(true);
@@ -140,6 +102,44 @@ export default function AdminNoticesPage() {
       alert(`お知らせの削除に失敗しました。\n詳細: ${msg}${hint}`);
     }
   };
+
+  // 認証 & 管理者チェック → OK なら fetchNotices
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    (async () => {
+      try {
+        const {
+          data: { user },
+          error: userErr,
+        } = await supabase.auth.getUser();
+        if (userErr) throw userErr;
+        if (!user) {
+          router.replace('/');
+          return;
+        }
+
+        const { data: pRow, error: plErr } = await (supabase.from('players') as any)
+          .select('is_admin')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (plErr) throw plErr;
+        const player = (pRow ?? null) as PlayerFlagRow | null;
+        if (!player?.is_admin) {
+          router.replace('/');
+          return;
+        }
+
+        setIsAdmin(true);
+        await fetchNotices();
+      } catch (e) {
+        console.error('[admin/notices] admin bootstrap error:', e);
+        router.replace('/');
+      } finally {
+        setBooting(false);
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   if (booting) {
     return (
@@ -232,7 +232,7 @@ export default function AdminNoticesPage() {
 
                     <Link
                       href={`/admin/notices/${notice.id}/edit`}
-                      className="p-2 rounded-lg hover:bg紫-900/20 transition-colors"
+                      className="p-2 rounded-lg hover:bg-purple-900/20 transition-colors"
                       title="編集"
                     >
                       <FaEdit className="text-purple-400" />
