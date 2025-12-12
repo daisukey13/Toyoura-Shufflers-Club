@@ -1,39 +1,41 @@
 // components/GlobalNavigation.tsx
-
-// components/GlobalNavigation.tsx の先頭部分を以下に修正
-
 'use client';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';  // ← ここを修正
-import { 
-  FaHome, 
-  FaUsers, 
-  FaTrophy, 
-  FaGamepad, 
-  FaShieldAlt, 
-  FaUser, 
-  FaBars, 
+import { supabase } from '@/lib/supabase';
+import {
+  FaHome,
+  FaUsers,
+  FaTrophy,
+  FaGamepad,
+  FaShieldAlt,
+  FaUser,
+  FaBars,
   FaTimes,
   FaSignInAlt,
   FaSignOutAlt,
   FaChartLine,
   FaPlus,
-  FaIdCard
+  FaIdCard,
 } from 'react-icons/fa';
 
-
-
+// ★ ログインに必要なカラムだけ型定義（型エラー対策）
+type PlayerRowForLogin = {
+  id: string;
+  handle_name: string | null;
+  email: string | null;
+  is_admin: boolean | null;
+};
 
 export default function GlobalNavigation() {
   const { user, player, isAdmin, signOut, refreshAuth, loading } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  
+
   // ログインモーダル関連
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [handleName, setHandleName] = useState('');
@@ -43,8 +45,8 @@ export default function GlobalNavigation() {
 
   // 初回マウント時に認証状態を更新
   useEffect(() => {
-   void refreshAuth();
-}, [refreshAuth]);
+    void refreshAuth();
+  }, [refreshAuth]);
 
   // デバッグ用
   useEffect(() => {
@@ -62,21 +64,30 @@ export default function GlobalNavigation() {
 
     try {
       // プレーヤー情報を取得
-      const { data: playerData, error } = await supabase
+      const {
+        data: playerData,
+        error,
+      } = await supabase
         .from('players')
-        .select('*')
+        .select('id, handle_name, email, is_admin')
         .eq('handle_name', handleName)
-        .single();
+        // ★ 戻り値の型を明示することで playerData が never にならないようにする
+        .single<PlayerRowForLogin>();
 
       if (error || !playerData) {
         throw new Error('ハンドルネームが見つかりません');
       }
 
+      if (!playerData.email) {
+        throw new Error('このプレイヤーにはメールアドレスが設定されていません');
+      }
+
       // メールアドレスとパスワードでログイン
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: playerData.email,
-        password: password,
-      });
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: playerData.email,
+          password: password,
+        });
 
       if (authError) {
         if (authError.message.includes('Invalid login credentials')) {
@@ -87,12 +98,12 @@ export default function GlobalNavigation() {
 
       // AuthContextを更新
       await refreshAuth();
-      
+
       // モーダルを閉じる
       setShowLoginModal(false);
       setHandleName('');
       setPassword('');
-      
+
       // リダイレクト処理
       setTimeout(() => {
         if (playerData.is_admin === true) {
@@ -101,7 +112,6 @@ export default function GlobalNavigation() {
           router.push(`/players/${playerData.id}`);
         }
       }, 100);
-
     } catch (error: any) {
       console.error('ログインエラー:', error);
       setLoginError(error.message || 'ログインに失敗しました');
@@ -141,7 +151,7 @@ export default function GlobalNavigation() {
     } else {
       document.body.style.overflow = 'unset';
     }
-    
+
     return () => {
       document.body.style.overflow = 'unset';
     };
@@ -278,7 +288,11 @@ export default function GlobalNavigation() {
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
                 className="p-2 text-white hover:bg-purple-600/20 rounded-lg transition-colors"
               >
-                {isMobileMenuOpen ? <FaTimes className="text-2xl" /> : <FaBars className="text-2xl" />}
+                {isMobileMenuOpen ? (
+                  <FaTimes className="text-2xl" />
+                ) : (
+                  <FaBars className="text-2xl" />
+                )}
               </button>
             </div>
           </div>
@@ -311,7 +325,8 @@ export default function GlobalNavigation() {
                   {isAdmin && (
                     <Link
                       href="/admin/dashboard"
-                      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                      className={`flex items
+                      -center gap-3 px-4 py-3 rounded-lg transition-all ${
                         pathname.startsWith('/admin')
                           ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50'
                           : 'text-gray-300 hover:text-white hover:bg-purple-600/10'
@@ -374,7 +389,10 @@ export default function GlobalNavigation() {
       {/* ログインモーダル */}
       {showLoginModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowLoginModal(false)} />
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowLoginModal(false)}
+          />
           <div className="relative bg-gray-900 rounded-2xl p-8 max-w-md w-full border border-purple-500/30">
             <button
               onClick={() => setShowLoginModal(false)}
@@ -382,18 +400,23 @@ export default function GlobalNavigation() {
             >
               <FaTimes />
             </button>
-            
-            <h2 className="text-2xl font-bold text-yellow-100 mb-6 text-center">ログイン</h2>
-            
+
+            <h2 className="text-2xl font-bold text-yellow-100 mb-6 text-center">
+              ログイン
+            </h2>
+
             <form onSubmit={handleLogin} className="space-y-4">
               {loginError && (
                 <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
                   <p className="text-sm text-red-400">{loginError}</p>
                 </div>
               )}
-              
+
               <div>
-                <label htmlFor="handle-name" className="block text-sm font-medium text-gray-300 mb-2">
+                <label
+                  htmlFor="handle-name"
+                  className="block text-sm font-medium text-gray-300 mb-2"
+                >
                   ハンドルネーム
                 </label>
                 <input
@@ -408,9 +431,12 @@ export default function GlobalNavigation() {
                   onChange={(e) => setHandleName(e.target.value)}
                 />
               </div>
-              
+
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium text-gray-300 mb-2"
+                >
                   パスワード
                 </label>
                 <input
@@ -425,7 +451,7 @@ export default function GlobalNavigation() {
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
-              
+
               <button
                 type="submit"
                 disabled={isLoggingIn}
@@ -434,11 +460,14 @@ export default function GlobalNavigation() {
                 {isLoggingIn ? 'ログイン中...' : 'ログイン'}
               </button>
             </form>
-            
+
             <div className="mt-6 text-center">
               <p className="text-sm text-gray-400">
                 アカウントをお持ちでない方は
-                <Link href="/register" className="text-purple-400 hover:text-purple-300 ml-1">
+                <Link
+                  href="/register"
+                  className="text-purple-400 hover:text-purple-300 ml-1"
+                >
                   新規登録
                 </Link>
               </p>
