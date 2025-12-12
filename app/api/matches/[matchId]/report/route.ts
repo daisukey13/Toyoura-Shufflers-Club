@@ -36,7 +36,7 @@ function normalizeEndReason(v: unknown): EndReason {
   return 'normal';
 }
 
-// ★要件：通常以外は RP/HC 変化なし
+// 通常以外は RP/HC 変化なし
 function shouldAffectRating(end_reason: EndReason) {
   return end_reason === 'normal';
 }
@@ -72,7 +72,7 @@ function calcDelta(
   };
 }
 
-// auth.user.id から players の is_admin を判定（user_id / auth_user_id 両対応）
+// auth.user.id から players の is_admin を判定
 async function isAdminUser(authUserId: string): Promise<boolean> {
   if (!authUserId) return false;
 
@@ -83,7 +83,7 @@ async function isAdminUser(authUserId: string): Promise<boolean> {
     .eq('user_id', authUserId)
     .maybeSingle();
 
-  // 2) auth_user_id カラム（環境によってはこちらの可能性）
+  // 2) auth_user_id カラム（環境によってはこちら）
   if (r.error && (r.error as any).code === '42703') {
     r = await supabaseAdmin
       .from('players')
@@ -100,7 +100,7 @@ function uniq(xs: (string | null | undefined)[]) {
   return Array.from(new Set(xs.filter(Boolean))) as string[];
 }
 
-// ★列名が delta / change どっちでも動くように「存在しない列は落として再試行」
+// 列名が delta / change どちらでも動くように、存在しない列は削って再試行
 function isMissingColumnErrorMessage(msg: string, col: string) {
   const m = String(msg || '').toLowerCase();
   const c = col.toLowerCase();
@@ -151,12 +151,21 @@ async function safeUpdateMatches(matchId: string, patch: AnyBody) {
 }
 
 // ─────────────────────────────────────────────
-//  /api/matches/:matchId/report
+//  POST /api/matches/:matchId/report
 // ─────────────────────────────────────────────
 export async function POST(
   req: NextRequest,
   ctx: { params: { matchId: string } }
 ) {
+  const matchId = ctx.params.matchId;
+
+  if (!matchId) {
+    return NextResponse.json(
+      { ok: false, message: 'matchId が指定されていません。' },
+      { status: 400 }
+    );
+  }
+
   try {
     if (
       !process.env.NEXT_PUBLIC_SUPABASE_URL ||
@@ -165,14 +174,6 @@ export async function POST(
       return NextResponse.json(
         { ok: false, message: 'Supabase 環境変数が未設定です。' },
         { status: 500 }
-      );
-    }
-
-    const matchId = String(ctx?.params?.matchId ?? '').trim();
-    if (!matchId) {
-      return NextResponse.json(
-        { ok: false, message: 'matchId が不正です。' },
-        { status: 400 }
       );
     }
 
@@ -188,14 +189,10 @@ export async function POST(
             return cookieStore.get(name)?.value;
           },
           set(name: string, value: string, options?: any) {
-            cookieStore.set(
-              { name, value, ...(options || {}) } as any
-            );
+            cookieStore.set({ name, value, ...(options || {}) } as any);
           },
           remove(name: string, options?: any) {
-            cookieStore.set(
-              { name, value: '', ...(options || {}) } as any
-            );
+            cookieStore.set({ name, value: '', ...(options || {}) } as any);
           },
         },
       } as any
@@ -210,7 +207,7 @@ export async function POST(
     }
     const reporterId = userData.user.id;
 
-    // 管理画面なので admin 限定（auth.user.id で判定）
+    // 管理画面なので admin 限定
     const isAdmin = await isAdminUser(reporterId);
     if (!isAdmin) {
       return NextResponse.json(
@@ -337,7 +334,6 @@ export async function POST(
     if (hasOld) {
       const oldAffects = Boolean((m0 as any).affects_rating);
 
-      // delta と change の両対応（どちらか入っていれば巻き戻す）
       const oldWpd = toInt(
         (m0 as any).winner_points_delta ??
           (m0 as any).winner_points_change,
@@ -561,7 +557,8 @@ export async function POST(
   }
 }
 
-// 動作確認用: GET /api/matches/test/report → 200
+// 動作確認用 GET
+// 例: GET /api/matches/TEST_ID/report
 export async function GET(
   _req: NextRequest,
   ctx: { params: { matchId: string } }
@@ -569,6 +566,6 @@ export async function GET(
   return NextResponse.json({
     ok: true,
     matchId: ctx.params.matchId,
-    note: 'matches report API route is alive',
+    note: 'matches report route is alive',
   });
 }
