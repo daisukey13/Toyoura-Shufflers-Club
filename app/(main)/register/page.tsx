@@ -118,9 +118,9 @@ export default function RegisterPage() {
         const user = data.user;
         if (!user) return;
 
-        // ★ ここを安全にアクセスするように修正（row が null の可能性を考慮）
-        const { data: row, error } = await supabase
-          .from('players')
+        // ✅ 型エラー回避のため any 扱いにする（スキーマ差異吸収）
+        const { data: row, error }: { data: any; error: any } = await (supabase
+          .from('players') as any)
           .select('id, is_admin')
           .eq('id', user.id)
           .maybeSingle();
@@ -130,7 +130,7 @@ export default function RegisterPage() {
           setUnlocked(true);
         }
       } catch {
-        // 管理者チェック失敗時は何もしない（通常フローで進む）
+        // 失敗しても一般ユーザー扱いで続行
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,7 +353,7 @@ export default function RegisterPage() {
     <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-8">
       <div className="container mx-auto px-4 py-4 sm:py-8">
         <div className="mb-6 sm:mb-8 text-center">
-          <div className="flex items-center justify-center gap-3 mb-3 sm:mb-4">
+          <div className="flex items-center justifycenter gap-3 mb-3 sm:mb-4">
             <div className="p-2.5 sm:p-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full">
               <FaUserPlus className="text-2xl sm:text-3xl text-white" />
             </div>
@@ -446,7 +446,7 @@ export default function RegisterPage() {
 
               {/* アカウント */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
                   <FaLock className="text-purple-400" />
                   アカウント情報
                 </h2>
@@ -493,7 +493,7 @@ export default function RegisterPage() {
                     required
                     value={formData.passwordConfirm}
                     onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
-                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
                       passwordError && formData.passwordConfirm ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                     }`}
                     placeholder="パスワードを再入力"
@@ -504,7 +504,7 @@ export default function RegisterPage() {
 
               {/* 連絡先 + アバター */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-4 sm:space-y-6">
-                <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2">
                   <FaPhone className="text-purple-400" />
                   連絡先情報 / アバター
                 </h2>
@@ -519,7 +519,7 @@ export default function RegisterPage() {
                     required
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
+                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
                     placeholder="例: 090-1234-5678"
                   />
                 </div>
@@ -533,11 +533,15 @@ export default function RegisterPage() {
                     required
                     value={formData.address}
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
+                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text白 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
                   >
-                    <option value="" className="bg-gray-800">選択してください</option>
+                    <option value="" className="bg-gray-800">
+                      選択してください
+                    </option>
                     {addressOptions.map((a) => (
-                      <option key={a} value={a} className="bg-gray-800">{a}</option>
+                      <option key={a} value={a} className="bg-gray-800">
+                        {a}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -557,7 +561,7 @@ export default function RegisterPage() {
                 </div>
               </div>
 
-              {/* 同意（UI維持：管理者は未チェックでも通る） */}
+              {/* 同意 */}
               <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 space-y-3">
                 <label className="flex items-start cursor-pointer group">
                   <input
@@ -602,7 +606,7 @@ export default function RegisterPage() {
                     !!passwordError ||
                     (!isAdmin && (!formData.isHighSchoolOrAbove || !formData.agreeToTerms))
                   }
-                  className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text白 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {loading ? (
                     <>
