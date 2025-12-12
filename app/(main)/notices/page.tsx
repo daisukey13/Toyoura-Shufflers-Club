@@ -1,3 +1,4 @@
+// app/(main)/notices/page.tsx
 'use client';
 
 import { useState } from 'react';
@@ -5,14 +6,35 @@ import Link from 'next/link';
 import { FaBullhorn, FaSearch, FaCalendarAlt } from 'react-icons/fa';
 import { useNotices } from '@/lib/hooks/useNotices';
 
+// 必要最小限の型（実際の useNotices 側の型がよりリッチでも問題なし）
+type Notice = {
+  id: string;
+  title?: string | null;
+  content?: string | null;
+  date: string;
+};
+
 export default function NoticesListPage() {
   const [kw, setKw] = useState('');
-  const { notices, loading, error, refetch } = useNotices({
+
+  // ✅ useNotices の戻り値を一旦まとめて受けてから安全に取り出す
+  const noticesResult = useNotices({
     enabled: true,
     includeUnpublished: false,
     limit: 100,
     search: kw,
-  });
+  }) as any;
+
+  const notices: Notice[] = (noticesResult?.notices ?? []) as Notice[];
+  const loading: boolean = !!noticesResult?.loading;
+  const error: unknown = noticesResult?.error ?? null;
+
+  // ✅ refetch が存在する環境では使い、無ければ何もしない（型エラー回避）
+  const handleRefetch = () => {
+    if (typeof noticesResult?.refetch === 'function') {
+      noticesResult.refetch();
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
@@ -45,10 +67,11 @@ export default function NoticesListPage() {
             読み込み中…
           </div>
         )}
+
         {error && (
           <div className="max-w-3xl mx-auto glass-card rounded-xl p-6 border border-red-500/30 bg-red-500/10">
             <p className="text-red-300">お知らせの取得に失敗しました。</p>
-            <button onClick={refetch} className="mt-3 underline text-purple-300">
+            <button onClick={handleRefetch} className="mt-3 underline text-purple-300">
               再読み込み
             </button>
           </div>
@@ -82,7 +105,7 @@ export default function NoticesListPage() {
                             WebkitBoxOrient: 'vertical',
                             whiteSpace: 'normal',
                           }}
-                          title={n.content}
+                          title={n.content ?? undefined}
                         >
                           {n.content}
                         </p>
@@ -90,11 +113,13 @@ export default function NoticesListPage() {
                       <div className="flex items-center gap-2 text-sm text-gray-400 shrink-0">
                         <FaCalendarAlt />
                         <span>
-                          {new Date(n.date).toLocaleDateString('ja-JP', {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                          })}
+                          {n.date
+                            ? new Date(n.date).toLocaleDateString('ja-JP', {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                              })
+                            : ''}
                         </span>
                       </div>
                     </div>
