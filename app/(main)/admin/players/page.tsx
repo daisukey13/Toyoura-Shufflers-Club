@@ -102,14 +102,14 @@ export default function AdminPlayersPage() {
     setBusy(true);
     setError('');
     try {
-      const { data, error } = await supabase
-        .from('players')
+      // ★ 型エラー回避のため any キャスト（挙動は変更なし）
+      const { data, error } = await (supabase.from('players') as any)
         .select('*')
         .order('created_at', { ascending: false })
         .limit(500);
 
       if (error) throw error;
-      setRows((data ?? []) as any);
+      setRows((data ?? []) as PlayerRow[]);
     } catch (e: any) {
       setError(e?.message || '読み込みに失敗しました（RLS/権限/キー設定をご確認ください）');
     } finally {
@@ -151,7 +151,11 @@ export default function AdminPlayersPage() {
   const toggleActive = async (id: string, next: boolean) => {
     setError('');
     try {
-      const { error } = await supabase.from('players').update({ is_active: next }).eq('id', id);
+      // ★ ここも any キャストで TS の never エラーだけ潰す
+      const { error } = await (supabase.from('players') as any)
+        .update({ is_active: next } as any)
+        .eq('id', id as any);
+
       if (error) throw error;
       setRows((prev) => prev.map((p) => (p.id === id ? { ...p, is_active: next } : p)));
     } catch (e: any) {
