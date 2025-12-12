@@ -395,7 +395,10 @@ export default function AdminPlayerEditPage() {
         memo: memoText.trim() || null,
       };
 
-      const { error } = await supabase.from('players').update(payload).eq('id', row.id);
+      const { error } = await (supabase.from('players') as any)
+      .update(payload as any)
+      .eq('id', row.id as any);
+
       if (error) throw error;
 
       setSavedMsg('保存しました');
