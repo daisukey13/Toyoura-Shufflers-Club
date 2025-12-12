@@ -2,7 +2,6 @@
 'use client';
 
 import { createClient } from '@/lib/supabase/client';
-import type { Notice } from './useNotices';
 
 export type NoticeInput = {
   title: string;
@@ -24,8 +23,13 @@ type NoticeRow = {
   updated_at: string | null;
 };
 
+// ★ ここで Notice 型をこのファイル内で定義（= これまで useNotices 側で想定していた形に相当）
+export type Notice = NoticeRow;
+
 type NoticeInsert = Omit<NoticeRow, 'id' | 'created_at' | 'updated_at'>;
-type NoticeUpdate = Partial<Pick<NoticeRow, 'title' | 'content' | 'date' | 'is_published'>> & {
+type NoticeUpdate = Partial<
+  Pick<NoticeRow, 'title' | 'content' | 'date' | 'is_published'>
+> & {
   updated_at?: string | null;
 };
 
@@ -61,7 +65,10 @@ export function useUpsertNotice() {
   };
 
   /** お知らせ更新 */
-  const updateNotice = async (id: string, input: Partial<NoticeInput>): Promise<Notice> => {
+  const updateNotice = async (
+    id: string,
+    input: Partial<NoticeInput>
+  ): Promise<Notice> => {
     await requireSession();
 
     const updatePayload: NoticeUpdate = {
@@ -83,7 +90,9 @@ export function useUpsertNotice() {
   const deleteNotice = async (id: string): Promise<void> => {
     await requireSession();
 
-    const { error } = await (supabase.from('notices') as any).delete().eq('id', id);
+    const { error } = await (supabase.from('notices') as any)
+      .delete()
+      .eq('id', id);
     if (error) throw new Error(error.message);
   };
 
