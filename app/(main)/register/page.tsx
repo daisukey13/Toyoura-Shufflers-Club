@@ -118,17 +118,20 @@ export default function RegisterPage() {
         const user = data.user;
         if (!user) return;
 
+        // ★ ここを安全にアクセスするように修正（row が null の可能性を考慮）
         const { data: row, error } = await supabase
           .from('players')
           .select('id, is_admin')
           .eq('id', user.id)
           .maybeSingle();
 
-        if (!error && row?.is_admin) {
+        if (!error && row && row.is_admin) {
           setIsAdmin(true);
           setUnlocked(true);
         }
-      } catch {}
+      } catch {
+        // 管理者チェック失敗時は何もしない（通常フローで進む）
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -303,7 +306,7 @@ export default function RegisterPage() {
       // DB作成（Service Role）
       await provisionProfile(userId);
 
-      // ★ここが重要：session が無い環境でも「直後に signIn を試す」＝ログアウトっぽさ解消
+      // 直後に signIn を試す
       let session = authData.session ?? null;
       if (!session) {
         const { data: si, error: siErr } = await supabase.auth.signInWithPassword({
@@ -364,7 +367,7 @@ export default function RegisterPage() {
         <div className="max-w-3xl mx-auto">
           {!unlocked && (
             <div className="bg-gray-900/60 border border-purple-500/30 rounded-2xl p-4 sm:p-6 mb-4 sm:mb-6">
-              <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2 mb-3">
+              <h2 className="text-lg sm:text-xl font-semibold text白 flex items-center gap-2 mb-3">
                 <FaLock className="text-purple-400" />
                 招待コードの入力
               </h2>
