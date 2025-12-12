@@ -1,4 +1,4 @@
-// app/api/matches/[matchId]/report/route.ts
+// app/api/matches/[...slug]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
@@ -151,11 +151,12 @@ async function safeUpdateMatches(matchId: string, patch: AnyBody) {
 }
 
 // ─────────────────────────────────────────────
-//  /api/matches/:matchId/report
+//  ルーティング本体
+//  /api/matches/[matchId]/report のみ受け付ける
 // ─────────────────────────────────────────────
 export async function POST(
   req: NextRequest,
-  ctx: { params: { matchId: string } }
+  ctx: { params: { slug: string[] } }
 ) {
   try {
     if (
@@ -168,7 +169,16 @@ export async function POST(
       );
     }
 
-    const matchId = String(ctx?.params?.matchId ?? '').trim();
+    const segments = ctx?.params?.slug ?? [];
+    // 期待する形: /api/matches/:matchId/report
+    if (segments.length < 2 || segments[1] !== 'report') {
+      return NextResponse.json(
+        { ok: false, message: '不正なエンドポイントです。' },
+        { status: 404 }
+      );
+    }
+
+    const matchId = String(segments[0] ?? '').trim();
     if (!matchId) {
       return NextResponse.json(
         { ok: false, message: 'matchId が不正です。' },
@@ -550,7 +560,7 @@ export async function POST(
       { status: 200 }
     );
   } catch (e: any) {
-    console.error('[api/matches/[matchId]/report] fatal:', e);
+    console.error('[api/matches/[...slug]] fatal:', e);
     return NextResponse.json(
       {
         ok: false,
@@ -564,11 +574,12 @@ export async function POST(
 // 動作確認用: GET /api/matches/test/report → 200
 export async function GET(
   _req: NextRequest,
-  ctx: { params: { matchId: string } }
+  ctx: { params: { slug: string[] } }
 ) {
+  const segments = ctx?.params?.slug ?? [];
   return NextResponse.json({
     ok: true,
-    matchId: ctx.params.matchId,
-    note: 'matches report API route is alive',
+    slug: segments,
+    note: 'matches API route is alive',
   });
 }
