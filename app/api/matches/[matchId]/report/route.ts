@@ -65,9 +65,28 @@ function calcDelta(
   };
 }
 
-async function isAdminPlayer(playerId: string): Promise<boolean> {
-  const { data } = await supabaseAdmin.from('players').select('is_admin').eq('id', playerId).maybeSingle();
-  return Boolean(data?.is_admin);
+// ★ auth の user.id から players の is_admin を見る（user_id / auth_user_id 両対応）
+async function isAdminUser(authUserId: string): Promise<boolean> {
+  if (!authUserId) return false;
+
+  // 1) user_id
+  let r = await supabaseAdmin
+    .from('players')
+    .select('is_admin')
+    .eq('user_id', authUserId)
+    .maybeSingle();
+
+  // 2) auth_user_id（列名が違う環境向け）
+  if (r.error && (r.error as any).code === '42703') {
+    r = await supabaseAdmin
+      .from('players')
+      .select('is_admin')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+  }
+
+  if (r.error || !r.data) return false;
+  return !!r.data.is_admin;
 }
 
 function uniq(xs: (string | null | undefined)[]) {
@@ -154,9 +173,9 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     }
     const reporter_id = userData.user.id;
 
-    // ここは「管理画面」なので admin 限定でOK（要件に合わせて）
-    const admin = await isAdminPlayer(reporter_id);
-    if (!admin) {
+    // ★ 管理画面なので admin 限定（auth user.id ベースで判定）
+    const isAdmin = await isAdminUser(reporter_id);
+    if (!isAdmin) {
       return NextResponse.json({ ok: false, message: '管理者のみ実行できます。' }, { status: 403 });
     }
 
@@ -208,10 +227,16 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     const aId = (m0 as any).player_a_id as string | null;
     const bId = (m0 as any).player_b_id as string | null;
     if (!aId || !bId) {
-      return NextResponse.json({ ok: false, message: 'match の player_a_id / player_b_id が未設定です。' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, message: 'match の player_a_id / player_b_id が未設定です。' },
+        { status: 400 }
+      );
     }
     if (winner_id !== aId && winner_id !== bId) {
-      return NextResponse.json({ ok: false, message: '勝者がこの試合の対戦者に含まれていません。' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, message: '勝者がこの試合の対戦者に含まれていません。' },
+        { status: 400 }
+      );
     }
     const loser_id = winner_id === aId ? bId : aId;
 
@@ -224,7 +249,12 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       .select('id, ranking_points, handicap, matches_played, wins, losses')
       .in('id', ids);
 
-    if (pErr) return NextResponse.json({ ok: false, message: `プレイヤー取得に失敗しました: ${pErr.message}` }, { status: 500 });
+    if (pErr) {
+      return NextResponse.json(
+        { ok: false, message: `プレイヤー取得に失敗しました: ${pErr.message}` },
+        { status: 500 }
+      );
+    }
 
     const pMap = new Map<string, any>();
     (pRows ?? []).forEach((p: any) => pMap.set(p.id, p));
@@ -235,10 +265,22 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       const oldAffects = Boolean((m0 as any).affects_rating);
 
       // delta と change の両対応（どちらか入っていれば巻き戻す）
-      const oldWpd = toInt((m0 as any).winner_points_delta ?? (m0 as any).winner_points_change, 0);
-      const oldLpd = toInt((m0 as any).loser_points_delta ?? (m0 as any).loser_points_change, 0);
-      const oldWhd = toInt((m0 as any).winner_handicap_delta ?? (m0 as any).winner_handicap_change, 0);
-      const oldLhd = toInt((m0 as any).loser_handicap_delta ?? (m0 as any).loser_handicap_change, 0);
+      const oldWpd = toInt(
+        (m0 as any).winner_points_delta ?? (m0 as any).winner_points_change,
+        0
+      );
+      const oldLpd = toInt(
+        (m0 as any).loser_points_delta ?? (m0 as any).loser_points_change,
+        0
+      );
+      const oldWhd = toInt(
+        (m0 as any).winner_handicap_delta ?? (m0 as any).winner_handicap_change,
+        0
+      );
+      const oldLhd = toInt(
+        (m0 as any).loser_handicap_delta ?? (m0 as any).loser_handicap_change,
+        0
+      );
 
       const ow = pMap.get(oldWinnerId!);
       const ol = pMap.get(oldLoserId!);
@@ -286,7 +328,9 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     // ---------- 今回分を計算 ----------
     const w = pMap.get(winner_id);
     const l = pMap.get(loser_id);
-    if (!w || !l) return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
+    if (!w || !l) {
+      return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
+    }
 
     const scoreDiff = Math.max(1, winner_score - loser_score);
 
@@ -298,9 +342,14 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
           toInt(l.handicap, 0),
           scoreDiff
         )
-      : { winnerPointsChange: 0, loserPointsChange: 0, winnerHandicapChange: 0, loserHandicapChange: 0 };
+      : {
+          winnerPointsChange: 0,
+          loserPointsChange: 0,
+          winnerHandicapChange: 0,
+          loserHandicapChange: 0,
+        };
 
-    // RP/HC は affects_rating の時だけ変化、ただし勝敗/試合数は更新する（要件は RP/HCのみ無変化）
+    // RP/HC は affects_rating の時だけ変化、ただし勝敗/試合数は更新する
     const nextWRP = affects_rating
       ? clamp(toInt(w.ranking_points, 0) + delta.winnerPointsChange, 0, 99999)
       : toInt(w.ranking_points, 0);
@@ -343,7 +392,7 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       winner_score,
       loser_score,
 
-      // ★両方書く：delta 系 / change 系 どちらに統一してても動く
+      // delta 系 / change 系 両対応
       winner_points_delta: delta.winnerPointsChange,
       loser_points_delta: delta.loserPointsChange,
       winner_handicap_delta: delta.winnerHandicapChange,
@@ -363,7 +412,10 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
 
     const up = await safeUpdateMatches(matchId, patch);
     if (!up.ok) {
-      return NextResponse.json({ ok: false, message: `試合更新に失敗しました: ${up.message}` }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, message: `試合更新に失敗しました: ${up.message}` },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json(
@@ -380,7 +432,10 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       { status: 200 }
     );
   } catch (e: any) {
-    console.error('[api/matches/[id]/report] fatal:', e);
-    return NextResponse.json({ ok: false, message: e?.message || 'サーバエラーが発生しました。' }, { status: 500 });
+    console.error('[api/matches/[matchId]/report] fatal:', e);
+    return NextResponse.json(
+      { ok: false, message: e?.message || 'サーバエラーが発生しました。' },
+      { status: 500 }
+    );
   }
 }
