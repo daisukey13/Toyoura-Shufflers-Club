@@ -10,11 +10,14 @@ export const dynamic = 'force-dynamic';
 type AnyBody = Record<string, any>;
 type EndReason = 'normal' | 'time_limit' | 'walkover' | 'forfeit';
 
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const clamp = (n: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, n));
+
 const toInt = (v: unknown, fallback = 0) => {
   const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
   return Number.isFinite(n) ? n : fallback;
 };
+
 const toBool = (v: unknown): boolean | null => {
   if (typeof v === 'boolean') return v;
   if (typeof v === 'string') {
@@ -27,7 +30,9 @@ const toBool = (v: unknown): boolean | null => {
 
 function normalizeEndReason(v: unknown): EndReason {
   const s = String(v ?? '').trim().toLowerCase();
-  if (s === 'time_limit' || s === 'walkover' || s === 'forfeit') return s as EndReason;
+  if (s === 'time_limit' || s === 'walkover' || s === 'forfeit') {
+    return s as EndReason;
+  }
   return 'normal';
 }
 
@@ -45,13 +50,15 @@ function calcDelta(
   scoreDifference: number
 ) {
   const K = 32;
-  const expectedWinner = 1 / (1 + Math.pow(10, (loserPoints - winnerPoints) / 400));
+  const expectedWinner =
+    1 / (1 + Math.pow(10, (loserPoints - winnerPoints) / 400));
   const scoreDiffMultiplier = 1 + scoreDifference / 30;
 
   const handicapDiff = winnerHandicap - loserHandicap;
   const handicapMultiplier = 1 + handicapDiff / 50;
 
-  const baseWinnerChange = K * (1 - expectedWinner) * scoreDiffMultiplier * handicapMultiplier;
+  const baseWinnerChange =
+    K * (1 - expectedWinner) * scoreDiffMultiplier * handicapMultiplier;
   const baseLoserChange = -K * expectedWinner * scoreDiffMultiplier;
 
   const winnerHandicapChange = scoreDifference >= 10 ? -1 : 0;
@@ -65,18 +72,18 @@ function calcDelta(
   };
 }
 
-// ★ auth の user.id から players の is_admin を見る（user_id / auth_user_id 両対応）
+// auth.user.id から players の is_admin を判定（user_id / auth_user_id 両対応）
 async function isAdminUser(authUserId: string): Promise<boolean> {
   if (!authUserId) return false;
 
-  // 1) user_id
+  // 1) user_id カラム
   let r = await supabaseAdmin
     .from('players')
     .select('is_admin')
     .eq('user_id', authUserId)
     .maybeSingle();
 
-  // 2) auth_user_id（列名が違う環境向け）
+  // 2) auth_user_id カラム（環境によってこちらの可能性）
   if (r.error && (r.error as any).code === '42703') {
     r = await supabaseAdmin
       .from('players')
@@ -107,7 +114,11 @@ async function safeUpdateMatches(matchId: string, patch: AnyBody) {
   let current = { ...patch };
 
   for (let i = 0; i < 12; i++) {
-    const { error } = await supabaseAdmin.from('matches').update(current).eq('id', matchId);
+    const { error } = await supabaseAdmin
+      .from('matches')
+      .update(current)
+      .eq('id', matchId);
+
     if (!error) return { ok: true as const };
 
     const msg = String(error.message || '');
@@ -127,7 +138,9 @@ async function safeUpdateMatches(matchId: string, patch: AnyBody) {
       'time_limit_seconds',
     ];
 
-    const missing = candidates.find((c) => c in current && isMissingColumnErrorMessage(msg, c));
+    const missing = candidates.find(
+      (c) => c in current && isMissingColumnErrorMessage(msg, c)
+    );
     if (!missing) return { ok: false as const, message: msg };
 
     const { [missing]: _, ...rest } = current;
@@ -137,14 +150,28 @@ async function safeUpdateMatches(matchId: string, patch: AnyBody) {
   return { ok: false as const, message: 'update retry exceeded' };
 }
 
-export async function POST(req: NextRequest, ctx: { params: { matchId: string } }) {
+export async function POST(
+  req: NextRequest,
+  ctx: { params: { matchId: string } }
+) {
   try {
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
+    if (
+      !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    ) {
+      return NextResponse.json(
+        { ok: false, message: 'Supabase 環境変数が未設定です。' },
+        { status: 500 }
+      );
     }
 
     const matchId = String(ctx?.params?.matchId ?? '').trim();
-    if (!matchId) return NextResponse.json({ ok: false, message: 'matchId が不正です。' }, { status: 400 });
+    if (!matchId) {
+      return NextResponse.json(
+        { ok: false, message: 'matchId が不正です。' },
+        { status: 400 }
+      );
+    }
 
     // ✅ Next.js 15+: cookies() は await が必要
     const cookieStore = await cookies();
@@ -158,10 +185,14 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
             return cookieStore.get(name)?.value;
           },
           set(name: string, value: string, options?: any) {
-            cookieStore.set({ name, value, ...(options || {}) } as any);
+            cookieStore.set(
+              { name, value, ...(options || {}) } as any
+            );
           },
           remove(name: string, options?: any) {
-            cookieStore.set({ name, value: '', ...(options || {}) } as any);
+            cookieStore.set(
+              { name, value: '', ...(options || {}) } as any
+            );
           },
         },
       } as any
@@ -169,29 +200,51 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
 
     const { data: userData, error: userErr } = await supa.auth.getUser();
     if (userErr || !userData?.user) {
-      return NextResponse.json({ ok: false, message: '認証が必要です。' }, { status: 401 });
+      return NextResponse.json(
+        { ok: false, message: '認証が必要です。' },
+        { status: 401 }
+      );
     }
-    const reporter_id = userData.user.id;
+    const reporterId = userData.user.id;
 
-    // ★ 管理画面なので admin 限定（auth user.id ベースで判定）
-    const isAdmin = await isAdminUser(reporter_id);
+    // 管理画面なので admin 限定（auth.user.id で判定）
+    const isAdmin = await isAdminUser(reporterId);
     if (!isAdmin) {
-      return NextResponse.json({ ok: false, message: '管理者のみ実行できます。' }, { status: 403 });
+      return NextResponse.json(
+        { ok: false, message: '管理者のみ実行できます。' },
+        { status: 403 }
+      );
     }
 
     const body = (await req.json().catch(() => null)) as AnyBody | null;
-    if (!body) return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
+    if (!body) {
+      return NextResponse.json(
+        { ok: false, message: '不正なリクエストです。' },
+        { status: 400 }
+      );
+    }
 
     const winner_id = String(body.winner_id ?? '').trim();
-    if (!winner_id) return NextResponse.json({ ok: false, message: '勝者を選択してください。' }, { status: 400 });
+    if (!winner_id) {
+      return NextResponse.json(
+        { ok: false, message: '勝者を選択してください。' },
+        { status: 400 }
+      );
+    }
 
     const winner_score = clamp(toInt(body.winner_score, 15), 0, 99);
     const loser_score = clamp(toInt(body.loser_score, 0), 0, 99);
     if (winner_score <= loser_score) {
-      return NextResponse.json({ ok: false, message: 'スコアが不正です（勝者 > 敗者）。' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, message: 'スコアが不正です（勝者 > 敗者）。' },
+        { status: 400 }
+      );
     }
 
-    const end_reason = normalizeEndReason(body.end_reason ?? body.finish_reason ?? 'normal');
+    const end_reason = normalizeEndReason(
+      body.end_reason ?? body.finish_reason ?? 'normal'
+    );
+
     const affects_rating = (() => {
       const direct = toBool(body.apply_rating ?? body.affects_rating);
       if (direct != null) return direct;
@@ -222,19 +275,31 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       .eq('id', matchId)
       .maybeSingle();
 
-    if (mErr || !m0) return NextResponse.json({ ok: false, message: '試合が見つかりません。' }, { status: 404 });
+    if (mErr || !m0) {
+      return NextResponse.json(
+        { ok: false, message: '試合が見つかりません。' },
+        { status: 404 }
+      );
+    }
 
     const aId = (m0 as any).player_a_id as string | null;
     const bId = (m0 as any).player_b_id as string | null;
     if (!aId || !bId) {
       return NextResponse.json(
-        { ok: false, message: 'match の player_a_id / player_b_id が未設定です。' },
+        {
+          ok: false,
+          message:
+            'match の player_a_id / player_b_id が未設定です。',
+        },
         { status: 400 }
       );
     }
     if (winner_id !== aId && winner_id !== bId) {
       return NextResponse.json(
-        { ok: false, message: '勝者がこの試合の対戦者に含まれていません。' },
+        {
+          ok: false,
+          message: '勝者がこの試合の対戦者に含まれていません。',
+        },
         { status: 400 }
       );
     }
@@ -246,12 +311,17 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     const ids = uniq([winner_id, loser_id, oldWinnerId, oldLoserId]);
     const { data: pRows, error: pErr } = await supabaseAdmin
       .from('players')
-      .select('id, ranking_points, handicap, matches_played, wins, losses')
+      .select(
+        'id, ranking_points, handicap, matches_played, wins, losses'
+      )
       .in('id', ids);
 
     if (pErr) {
       return NextResponse.json(
-        { ok: false, message: `プレイヤー取得に失敗しました: ${pErr.message}` },
+        {
+          ok: false,
+          message: `プレイヤー取得に失敗しました: ${pErr.message}`,
+        },
         { status: 500 }
       );
     }
@@ -266,19 +336,23 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
 
       // delta と change の両対応（どちらか入っていれば巻き戻す）
       const oldWpd = toInt(
-        (m0 as any).winner_points_delta ?? (m0 as any).winner_points_change,
+        (m0 as any).winner_points_delta ??
+          (m0 as any).winner_points_change,
         0
       );
       const oldLpd = toInt(
-        (m0 as any).loser_points_delta ?? (m0 as any).loser_points_change,
+        (m0 as any).loser_points_delta ??
+          (m0 as any).loser_points_change,
         0
       );
       const oldWhd = toInt(
-        (m0 as any).winner_handicap_delta ?? (m0 as any).winner_handicap_change,
+        (m0 as any).winner_handicap_delta ??
+          (m0 as any).winner_handicap_change,
         0
       );
       const oldLhd = toInt(
-        (m0 as any).loser_handicap_delta ?? (m0 as any).loser_handicap_change,
+        (m0 as any).loser_handicap_delta ??
+          (m0 as any).loser_handicap_change,
         0
       );
 
@@ -289,13 +363,24 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
         await supabaseAdmin
           .from('players')
           .update({
-            matches_played: Math.max(0, toInt(ow.matches_played, 0) - 1),
+            matches_played: Math.max(
+              0,
+              toInt(ow.matches_played, 0) - 1
+            ),
             wins: Math.max(0, toInt(ow.wins, 0) - 1),
             ranking_points: oldAffects
-              ? clamp(toInt(ow.ranking_points, 0) - oldWpd, 0, 99999)
+              ? clamp(
+                  toInt(ow.ranking_points, 0) - oldWpd,
+                  0,
+                  99999
+                )
               : toInt(ow.ranking_points, 0),
             handicap: oldAffects
-              ? clamp(toInt(ow.handicap, 0) - oldWhd, 0, 50)
+              ? clamp(
+                  toInt(ow.handicap, 0) - oldWhd,
+                  0,
+                  50
+                )
               : toInt(ow.handicap, 0),
           })
           .eq('id', oldWinnerId);
@@ -304,13 +389,24 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
         await supabaseAdmin
           .from('players')
           .update({
-            matches_played: Math.max(0, toInt(ol.matches_played, 0) - 1),
+            matches_played: Math.max(
+              0,
+              toInt(ol.matches_played, 0) - 1
+            ),
             losses: Math.max(0, toInt(ol.losses, 0) - 1),
             ranking_points: oldAffects
-              ? clamp(toInt(ol.ranking_points, 0) - oldLpd, 0, 99999)
+              ? clamp(
+                  toInt(ol.ranking_points, 0) - oldLpd,
+                  0,
+                  99999
+                )
               : toInt(ol.ranking_points, 0),
             handicap: oldAffects
-              ? clamp(toInt(ol.handicap, 0) - oldLhd, 0, 50)
+              ? clamp(
+                  toInt(ol.handicap, 0) - oldLhd,
+                  0,
+                  50
+                )
               : toInt(ol.handicap, 0),
           })
           .eq('id', oldLoserId);
@@ -319,7 +415,9 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       // 取り直し
       const { data: pRows2 } = await supabaseAdmin
         .from('players')
-        .select('id, ranking_points, handicap, matches_played, wins, losses')
+        .select(
+          'id, ranking_points, handicap, matches_played, wins, losses'
+        )
         .in('id', ids);
       pMap.clear();
       (pRows2 ?? []).forEach((p: any) => pMap.set(p.id, p));
@@ -329,7 +427,10 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     const w = pMap.get(winner_id);
     const l = pMap.get(loser_id);
     if (!w || !l) {
-      return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, message: 'プレイヤーが見つかりません。' },
+        { status: 400 }
+      );
     }
 
     const scoreDiff = Math.max(1, winner_score - loser_score);
@@ -349,18 +450,34 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
           loserHandicapChange: 0,
         };
 
-    // RP/HC は affects_rating の時だけ変化、ただし勝敗/試合数は更新する
+    // RP/HC は affects_rating の時だけ変化、勝敗・試合数は常に更新
     const nextWRP = affects_rating
-      ? clamp(toInt(w.ranking_points, 0) + delta.winnerPointsChange, 0, 99999)
+      ? clamp(
+          toInt(w.ranking_points, 0) + delta.winnerPointsChange,
+          0,
+          99999
+        )
       : toInt(w.ranking_points, 0);
     const nextLRP = affects_rating
-      ? clamp(toInt(l.ranking_points, 0) + delta.loserPointsChange, 0, 99999)
+      ? clamp(
+          toInt(l.ranking_points, 0) + delta.loserPointsChange,
+          0,
+          99999
+        )
       : toInt(l.ranking_points, 0);
     const nextWHC = affects_rating
-      ? clamp(toInt(w.handicap, 0) + delta.winnerHandicapChange, 0, 50)
+      ? clamp(
+          toInt(w.handicap, 0) + delta.winnerHandicapChange,
+          0,
+          50
+        )
       : toInt(w.handicap, 0);
     const nextLHC = affects_rating
-      ? clamp(toInt(l.handicap, 0) + delta.loserHandicapChange, 0, 50)
+      ? clamp(
+          toInt(l.handicap, 0) + delta.loserHandicapChange,
+          0,
+          50
+        )
       : toInt(l.handicap, 0);
 
     await Promise.all([
@@ -384,7 +501,7 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
         .eq('id', loser_id),
     ]);
 
-    // ---------- matches に「変化量」を保存（表示はここを読む） ----------
+    // ---------- matches に「変化量」を保存 ----------
     const patch: AnyBody = {
       status: 'finalized',
       winner_id,
@@ -392,7 +509,6 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
       winner_score,
       loser_score,
 
-      // delta 系 / change 系 両対応
       winner_points_delta: delta.winnerPointsChange,
       loser_points_delta: delta.loserPointsChange,
       winner_handicap_delta: delta.winnerHandicapChange,
@@ -405,7 +521,6 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
 
       affects_rating,
 
-      // end_reason / finish_reason も両対応
       end_reason,
       finish_reason: end_reason,
     };
@@ -434,7 +549,10 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
   } catch (e: any) {
     console.error('[api/matches/[matchId]/report] fatal:', e);
     return NextResponse.json(
-      { ok: false, message: e?.message || 'サーバエラーが発生しました。' },
+      {
+        ok: false,
+        message: e?.message || 'サーバエラーが発生しました。',
+      },
       { status: 500 }
     );
   }
