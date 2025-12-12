@@ -1,40 +1,38 @@
 // app/(main)/notices/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { FaBullhorn, FaSearch, FaCalendarAlt } from 'react-icons/fa';
 import { useNotices } from '@/lib/hooks/useNotices';
 
-// 必要最小限の型（実際の useNotices 側の型がよりリッチでも問題なし）
-type Notice = {
-  id: string;
-  title?: string | null;
-  content?: string | null;
-  date: string;
-};
-
 export default function NoticesListPage() {
   const [kw, setKw] = useState('');
 
-  // ✅ useNotices の戻り値を一旦まとめて受けてから安全に取り出す
+  // ✅ useNotices は型どおりの引数だけ渡す
+  //   { limit?: number; onlyPublished?: boolean } 想定
   const noticesResult = useNotices({
-    enabled: true,
-    includeUnpublished: false,
     limit: 100,
-    search: kw,
-  }) as any;
+    onlyPublished: true, // 公開済みのみ
+  });
 
-  const notices: Notice[] = (noticesResult?.notices ?? []) as Notice[];
-  const loading: boolean = !!noticesResult?.loading;
-  const error: unknown = noticesResult?.error ?? null;
+  // ✅ 型に存在するものだけ安全に取り出す
+  const notices = noticesResult.notices ?? [];
+  const loading = noticesResult.loading ?? false;
+  const error = noticesResult.error ?? null;
+  const refetch = 'refetch' in noticesResult ? (noticesResult as any).refetch : undefined;
 
-  // ✅ refetch が存在する環境では使い、無ければ何もしない（型エラー回避）
-  const handleRefetch = () => {
-    if (typeof noticesResult?.refetch === 'function') {
-      noticesResult.refetch();
-    }
-  };
+  // ✅ タイトル・本文のフロント側検索
+  const filtered = useMemo(() => {
+    const key = kw.trim().toLowerCase();
+    if (!key) return notices;
+
+    return notices.filter((n: any) => {
+      const title = String(n.title ?? '').toLowerCase();
+      const content = String(n.content ?? '').toLowerCase();
+      return title.includes(key) || content.includes(key);
+    });
+  }, [kw, notices]);
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
@@ -71,22 +69,24 @@ export default function NoticesListPage() {
         {error && (
           <div className="max-w-3xl mx-auto glass-card rounded-xl p-6 border border-red-500/30 bg-red-500/10">
             <p className="text-red-300">お知らせの取得に失敗しました。</p>
-            <button onClick={handleRefetch} className="mt-3 underline text-purple-300">
-              再読み込み
-            </button>
+            {typeof refetch === 'function' && (
+              <button onClick={() => refetch()} className="mt-3 underline text-purple-300">
+                再読み込み
+              </button>
+            )}
           </div>
         )}
 
         {/* 一覧 */}
         {!loading && !error && (
           <>
-            {notices.length === 0 ? (
+            {filtered.length === 0 ? (
               <div className="max-w-3xl mx-auto glass-card rounded-xl p-8 text-center text-gray-400">
                 お知らせはまだありません
               </div>
             ) : (
               <div className="max-w-3xl mx-auto space-y-4">
-                {notices.map((n) => (
+                {filtered.map((n: any) => (
                   <Link
                     key={n.id}
                     href={`/notices/${n.id}`}
@@ -105,7 +105,7 @@ export default function NoticesListPage() {
                             WebkitBoxOrient: 'vertical',
                             whiteSpace: 'normal',
                           }}
-                          title={n.content ?? undefined}
+                          title={n.content}
                         >
                           {n.content}
                         </p>
@@ -113,13 +113,11 @@ export default function NoticesListPage() {
                       <div className="flex items-center gap-2 text-sm text-gray-400 shrink-0">
                         <FaCalendarAlt />
                         <span>
-                          {n.date
-                            ? new Date(n.date).toLocaleDateString('ja-JP', {
-                                year: 'numeric',
-                                month: 'long',
-                                day: 'numeric',
-                              })
-                            : ''}
+                          {new Date(n.date).toLocaleDateString('ja-JP', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          })}
                         </span>
                       </div>
                     </div>
