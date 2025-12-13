@@ -5,12 +5,23 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 /** 既にセットされた Cookie を別レスポンスにも引き継ぐ */
 function carryCookies(from: NextResponse, to: NextResponse) {
+  // NextResponse.cookies.getAll() がある前提（Next 13+）
   for (const c of from.cookies.getAll()) to.cookies.set(c);
   return to;
 }
 
 export async function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
+
+  // matcher を将来広げた時の事故防止：API / _next は絶対触らない
+  // （現状 matcher では /api はそもそも来ないが、保険として入れておく）
+  if (
+    pathname.startsWith("/api") ||
+    pathname.startsWith("/_next") ||
+    pathname === "/favicon.ico"
+  ) {
+    return NextResponse.next();
+  }
 
   // ここで1度だけレスポンスを作り、この res に Cookie を蓄積
   const res = NextResponse.next({
@@ -31,11 +42,12 @@ export async function middleware(req: NextRequest) {
           get(name: string) {
             return req.cookies.get(name)?.value;
           },
-          set(name: string, value: string, options: CookieOptions) {
+          // CookieOptions が必須扱いの型揺れを避けるため optional に寄せる
+          set(name: string, value: string, options?: CookieOptions) {
             res.cookies.set(name, value, options);
           },
-          remove(name: string, options: CookieOptions) {
-            res.cookies.set(name, "", { ...options, maxAge: 0 });
+          remove(name: string, options?: CookieOptions) {
+            res.cookies.set(name, "", { ...(options ?? {}), maxAge: 0 });
           },
         },
       });
@@ -109,5 +121,10 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   // `/login` は対象外（意図しないリダイレクトを防止）
-  matcher: ["/admin/:path*", "/matches/register", "/matches/register/:path*", "/mypage"],
+  matcher: [
+    "/admin/:path*",
+    "/matches/register",
+    "/matches/register/:path*",
+    "/mypage",
+  ],
 };
