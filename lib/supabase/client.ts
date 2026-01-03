@@ -1,20 +1,17 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
- * ✅ ここが今回の肝：
- * createBrowserClient のジェネリクス未指定だと環境によって `never` 系の型推論になり、
- * .from('players').update(...) が `update(values: never)` になってビルド落ちします。
- *
- * Database 型が既にあるなら any の代わりに差し替えてください。
+ * ✅ ここが肝：
+ * Database 型があるなら any を差し替えてください。
+ * 例) import type { Database } from '@/types/supabase'
  */
-// import type { Database as DB } from '@/types/supabase';
-// type Database = DB;
 type Database = any;
 
 // HMR / チャンク跨ぎでもインスタンスを 1 つに固定
-type SB = ReturnType<(typeof createBrowserClient)<Database>>;
+type SB = SupabaseClient<Database>;
 
 declare global {
   // eslint-disable-next-line no-var
