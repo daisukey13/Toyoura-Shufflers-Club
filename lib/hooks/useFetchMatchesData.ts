@@ -132,15 +132,15 @@ function normalizeMode(raw: string | null): 'singles' | 'teams' | string | null 
   return raw;
 }
 
-/** ✅ 最小修正：matches の戻りが any / エラー配列混在でも落ちないように MatchRow だけ通す */
+/** ✅ エラー配列などが混ざっても MatchRow だけ通す */
 function isMatchRow(v: unknown): v is MatchRow {
   if (!v || typeof v !== 'object') return false;
   const o = v as any;
   return (
     typeof o.id === 'string' &&
-    ('match_date' in o) &&
-    ('mode' in o) &&
-    ('status' in o)
+    'match_date' in o &&
+    'mode' in o &&
+    'status' in o
   );
 }
 
@@ -195,9 +195,10 @@ export function useFetchMatchesData() {
       return;
     }
 
-    // ✅ ここが今回の本命：危険な as MatchRow[] をやめて型ガードで絞る
-    const allRows = (Array.isArray(mRows) ? mRows : []).filter(isMatchRow);
-    const rows = allRows.filter(isFinalized);
+    // ✅ 最小修正：mRows を unknown[] に “広げてから” 型ガードする（GenericStringError[] 問題を回避）
+    const raw = Array.isArray(mRows) ? (mRows as unknown[]) : [];
+    const allRows = raw.filter(isMatchRow);     // MatchRow[]
+    const rows = allRows.filter(isFinalized);   // MatchRow[]
 
     // tournaments
     const tournamentIds = Array.from(
