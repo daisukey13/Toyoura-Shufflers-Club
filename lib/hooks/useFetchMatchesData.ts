@@ -98,7 +98,7 @@ export interface MatchDetails {
   loser_score?: number | null;
 
   // delta（統一）
-  winner_points_delta?: number | null; // ✅ 修正: nulll -> null
+  winner_points_delta?: number | null;
   loser_points_delta?: number | null;
   winner_handicap_delta?: number | null;
   loser_handicap_delta?: number | null;
@@ -130,6 +130,18 @@ function normalizeMode(raw: string | null): 'singles' | 'teams' | string | null 
   if (!raw) return null;
   if (raw === 'player') return 'singles';
   return raw;
+}
+
+/** ✅ 最小修正：matches の戻りが any / エラー配列混在でも落ちないように MatchRow だけ通す */
+function isMatchRow(v: unknown): v is MatchRow {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as any;
+  return (
+    typeof o.id === 'string' &&
+    ('match_date' in o) &&
+    ('mode' in o) &&
+    ('status' in o)
+  );
 }
 
 function isFinalized(row: MatchRow): boolean {
@@ -183,14 +195,21 @@ export function useFetchMatchesData() {
       return;
     }
 
-    const allRows = (mRows ?? []) as MatchRow[];
+    // ✅ ここが今回の本命：危険な as MatchRow[] をやめて型ガードで絞る
+    const allRows = (Array.isArray(mRows) ? mRows : []).filter(isMatchRow);
     const rows = allRows.filter(isFinalized);
 
     // tournaments
-    const tournamentIds = Array.from(new Set(rows.map((r) => r.tournament_id).filter((v): v is string => !!v)));
+    const tournamentIds = Array.from(
+      new Set(rows.map((r) => r.tournament_id).filter((v): v is string => !!v)),
+    );
     const tournamentMap = new Map<string, TournamentRow>();
     if (tournamentIds.length > 0) {
-      const { data: tRows } = await supabase.from('tournaments').select('id,name').in('id', tournamentIds);
+      const { data: tRows } = await supabase
+        .from('tournaments')
+        .select('id,name')
+        .in('id', tournamentIds);
+
       (tRows ?? []).forEach((t: any) => tournamentMap.set(String(t.id), t));
     }
 
@@ -248,7 +267,11 @@ export function useFetchMatchesData() {
     // teams
     const matchTeams: MatchTeamRow[] = [];
     if (matchIds.length > 0) {
-      const { data: mtRows } = await supabase.from('match_teams').select('match_id,team_id,team_no').in('match_id', matchIds);
+      const { data: mtRows } = await supabase
+        .from('match_teams')
+        .select('match_id,team_id,team_no')
+        .in('match_id', matchIds);
+
       (mtRows ?? []).forEach((x: any) =>
         matchTeams.push({
           match_id: String(x.match_id),
@@ -275,7 +298,8 @@ export function useFetchMatchesData() {
       const mode = normalizeMode(r.mode);
       const t = r.tournament_id ? tournamentMap.get(r.tournament_id) : undefined;
 
-      const isTournament = typeof r.is_tournament === 'boolean' ? r.is_tournament : !!r.tournament_id;
+      const isTournament =
+        typeof r.is_tournament === 'boolean' ? r.is_tournament : !!r.tournament_id;
 
       const u = unifiedMap.get(r.id);
 
@@ -288,8 +312,10 @@ export function useFetchMatchesData() {
 
       // teams
       const map = mtMap.get(r.id);
-      const wTeamId = map && r.winner_team_no != null ? map.get(r.winner_team_no) ?? null : null;
-      const lTeamId = map && r.loser_team_no != null ? map.get(r.loser_team_no) ?? null : null;
+      const wTeamId =
+        map && r.winner_team_no != null ? map.get(r.winner_team_no) ?? null : null;
+      const lTeamId =
+        map && r.loser_team_no != null ? map.get(r.loser_team_no) ?? null : null;
       const wTeam = wTeamId ? teamMap.get(wTeamId) : undefined;
       const lTeam = lTeamId ? teamMap.get(lTeamId) : undefined;
 
