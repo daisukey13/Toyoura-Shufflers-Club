@@ -1,10 +1,20 @@
-// lib/supabase/client.ts
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
 
+/**
+ * ✅ ここが今回の肝：
+ * createBrowserClient のジェネリクス未指定だと環境によって `never` 系の型推論になり、
+ * .from('players').update(...) が `update(values: never)` になってビルド落ちします。
+ *
+ * Database 型が既にあるなら any の代わりに差し替えてください。
+ */
+// import type { Database as DB } from '@/types/supabase';
+// type Database = DB;
+type Database = any;
+
 // HMR / チャンク跨ぎでもインスタンスを 1 つに固定
-type SB = ReturnType<typeof createBrowserClient>;
+type SB = ReturnType<(typeof createBrowserClient)<Database>>;
 
 declare global {
   // eslint-disable-next-line no-var
@@ -39,6 +49,13 @@ function isInvalidRefreshToken(err: any) {
   return /Invalid Refresh Token/i.test(msg) || /Already Used/i.test(msg);
 }
 
+/** 未ログイン（セッション無し）判定：コンソールを汚さないために握る */
+function isAuthSessionMissing(err: any) {
+  const name = String(err?.name ?? '');
+  const msg = String(err?.message ?? err ?? '');
+  return name === 'AuthSessionMissingError' || /Auth session missing/i.test(msg);
+}
+
 /** 競合/残骸からの復旧（= いったんログアウト扱いにして正常系へ戻す） */
 async function recoverAuth(client: any) {
   try {
@@ -60,7 +77,7 @@ async function recoverAuth(client: any) {
 
 const _client: SB =
   globalThis.__supabase__ ??
-  createBrowserClient(url!, anon!, {
+  createBrowserClient<Database>(url!, anon!, {
     auth: {
       storageKey: STORAGE_KEY, // ✅ このアプリで統一
       persistSession: true,
@@ -88,12 +105,23 @@ if (typeof window !== 'undefined') {
     auth.getSession = async (...args: any[]) => {
       try {
         const res = await origGetSession(...args);
+
+        // ✅ 未ログインは正常扱い
+        if (res?.error && isAuthSessionMissing(res.error)) {
+          return { data: { session: null }, error: null };
+        }
+
         if (res?.error && isInvalidRefreshToken(res.error)) {
           await recoverAuth(_client as any);
           return { data: { session: null }, error: null };
         }
         return res;
       } catch (e: any) {
+        // ✅ 未ログインは正常扱い
+        if (isAuthSessionMissing(e)) {
+          return { data: { session: null }, error: null };
+        }
+
         if (isInvalidRefreshToken(e)) {
           await recoverAuth(_client as any);
           return { data: { session: null }, error: null };
@@ -107,12 +135,23 @@ if (typeof window !== 'undefined') {
     auth.getUser = async (...args: any[]) => {
       try {
         const res = await origGetUser(...args);
+
+        // ✅ 未ログインは正常扱い
+        if (res?.error && isAuthSessionMissing(res.error)) {
+          return { data: { user: null }, error: null };
+        }
+
         if (res?.error && isInvalidRefreshToken(res.error)) {
           await recoverAuth(_client as any);
           return { data: { user: null }, error: null };
         }
         return res;
       } catch (e: any) {
+        // ✅ 未ログインは正常扱い
+        if (isAuthSessionMissing(e)) {
+          return { data: { user: null }, error: null };
+        }
+
         if (isInvalidRefreshToken(e)) {
           await recoverAuth(_client as any);
           return { data: { user: null }, error: null };
