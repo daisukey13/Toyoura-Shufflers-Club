@@ -1366,7 +1366,7 @@ export default function AdminTournamentFinalsPage() {
 
             {!hasDef && (
               <div className="mb-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-[12px] text-amber-200">
-                ※ players に <b>handle_name = "def"</b> または <b>is_dummy = true</b> が見つかりません。人数が 2/4/8... にならない場合の
+                ※ players に <b>handle_name =&quot;def&quot;</b> または <b>is_dummy = true</b> が見つかりません。人数が 2/4/8... にならない場合の
                 <b>自動補完(def)</b> が失敗する可能性があります。
               </div>
             )}
