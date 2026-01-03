@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { clerkMiddleware } from "@clerk/nextjs/server";
 
 /** 既にセットされた Cookie を別レスポンスにも引き継ぐ */
 function carryCookies(from: NextResponse, to: NextResponse) {
@@ -9,7 +10,7 @@ function carryCookies(from: NextResponse, to: NextResponse) {
   return to;
 }
 
-export async function middleware(req: NextRequest) {
+export default clerkMiddleware(async (auth, req: NextRequest) => {
   const { pathname, searchParams } = req.nextUrl;
 
   // ここで1度だけレスポンスを作り、この res に Cookie を蓄積
@@ -17,38 +18,65 @@ export async function middleware(req: NextRequest) {
     request: { headers: new Headers(req.headers) },
   });
 
-  // env が無ければ認証判定できないので、ここでは何もしない（開発中の事故防止）
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  // ─────────────────────────────────────────────────────────────
+  // 1) Clerk でログイン判定（最優先）
+  // ─────────────────────────────────────────────────────────────
+  let clerkUserId: string | null = null;
+  try {
+    // ★重要: 環境によって Promise なので await
+    const a: any = await auth();
+    clerkUserId = (a?.userId as string) ?? null;
+  } catch {
+    clerkUserId = null;
+  }
+  const clerkAuthed = !!clerkUserId;
 
-  let user: any = null;
+  // ─────────────────────────────────────────────────────────────
+  // 2) Supabase でログイン判定（フォールバック）
+  //    ※ refresh_token_already_used を増やさないために「必要なときだけ」見る
+  // ─────────────────────────────────────────────────────────────
+  const needsAuthCheck =
+    pathname.startsWith("/admin") || pathname.startsWith("/matches/register");
 
-  if (supabaseUrl && supabaseAnon) {
-    try {
-      // Supabase SSR クライアント（Middleware 用）— 認証の有無だけ判定する
-      const supabase = createServerClient(supabaseUrl, supabaseAnon, {
-        cookies: {
-          get(name: string) {
-            return req.cookies.get(name)?.value;
-          },
-          set(name: string, value: string, options: CookieOptions) {
-            res.cookies.set(name, value, options);
-          },
-          remove(name: string, options: CookieOptions) {
-            res.cookies.set(name, "", { ...options, maxAge: 0 });
-          },
-        },
-      });
+  let supabaseUser: any = null;
 
-      // 現在のユーザーを Cookie ベースで確認（DB は触らない）
-      const {
-        data: { user: u },
-      } = await supabase.auth.getUser();
-      user = u ?? null;
-    } catch {
-      user = null;
+  if (!clerkAuthed && needsAuthCheck) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (supabaseUrl && supabaseAnon) {
+      try {
+        const supabase = createServerClient(supabaseUrl, supabaseAnon, {
+          cookies: {
+            get(name: string) {
+              return req.cookies.get(name)?.value;
+            },
+            set(name: string, value: string, options: CookieOptions) {
+              res.cookies.set(name, value, options);
+            },
+            remove(name: string, options: CookieOptions) {
+              res.cookies.set(name, "", { ...options, maxAge: 0 });
+            },
+          },
+        });
+
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        supabaseUser = user ?? null;
+      } catch {
+        supabaseUser = null;
+      }
     }
   }
+
+  // 最終的なログイン判定（Clerk 優先 + Supabase フォールバック）
+  const authed = clerkAuthed || !!supabaseUser;
+
+  // ─────────────────────────────────────────────────────────────
+  // ルーティング規約（既存の挙動維持）
+  // ─────────────────────────────────────────────────────────────
 
   // /admin → /admin/dashboard に正規化
   if (pathname === "/admin" || pathname === "/admin/") {
@@ -58,8 +86,8 @@ export async function middleware(req: NextRequest) {
     );
   }
 
-  // ✅ 旧：/admin/league/<...> を公開 URL /league/<...> にリダイレクト（ログイン不要で閲覧させる）
-  // ★重要："/admin/league-blocks" を誤爆させないために、"/admin/league/" のみ対象にする
+  // ✅ /admin/league/<...> を公開 URL /league/<...> にリダイレクト（ログイン不要で閲覧させる）
+  //    ※ "/admin/league-blocks" を誤爆させないために "/admin/league/" のみ対象
   if (pathname === "/admin/league" || pathname === "/admin/league/") {
     return carryCookies(res, NextResponse.redirect(new URL("/league", req.url)));
   }
@@ -71,7 +99,7 @@ export async function middleware(req: NextRequest) {
 
   // /admin/* はログイン必須（管理者判定はページ側で実施）
   if (pathname.startsWith("/admin")) {
-    if (!user) {
+    if (!authed) {
       const dest =
         "/login?redirect=" +
         encodeURIComponent(req.nextUrl.pathname + req.nextUrl.search);
@@ -97,7 +125,7 @@ export async function middleware(req: NextRequest) {
 
   // ✅ 試合登録ページはログイン必須（新URLも含めてチェック）
   if (pathname.startsWith("/matches/register")) {
-    if (!user) {
+    if (!authed) {
       const dest =
         "/login?redirect=" + encodeURIComponent("/matches/register/singles");
       return carryCookies(res, NextResponse.redirect(new URL(dest, req.url)));
@@ -105,9 +133,12 @@ export async function middleware(req: NextRequest) {
   }
 
   return res;
-}
+});
 
 export const config = {
-  // `/login` は対象外（意図しないリダイレクトを防止）
-  matcher: ["/admin/:path*", "/matches/register", "/matches/register/:path*", "/mypage"],
+  matcher: [
+    "/((?!.*\\..*|_next).*)",
+    "/",
+    "/(api|trpc)(.*)",
+  ],
 };

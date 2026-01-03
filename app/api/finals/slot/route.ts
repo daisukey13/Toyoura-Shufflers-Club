@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

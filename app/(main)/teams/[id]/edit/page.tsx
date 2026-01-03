@@ -15,8 +15,8 @@ import {
 } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
-const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 type Team = {
   id: string;
@@ -45,6 +45,10 @@ type TeamMemberRow = {
 type MemberWithPlayer = TeamMemberRow & { player?: Player };
 
 async function restGet<T = any>(path: string, token?: string) {
+  if (!BASE || !ANON) {
+    throw new Error('Supabase 環境変数が未設定です（NEXT_PUBLIC_SUPABASE_URL / ANON_KEY）');
+  }
+
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       apikey: ANON,
@@ -59,8 +63,15 @@ async function restGet<T = any>(path: string, token?: string) {
 
 export default function TeamEditPage() {
   const router = useRouter();
-  const params = useParams<{ id: string }>();
-  const teamId = params?.id!;
+  const params = useParams();
+
+  // ✅ Nextの都合で string[] になっても壊れないように正規化
+  const teamId = useMemo(() => {
+    const raw = (params as any)?.id as string | string[] | undefined;
+    if (!raw) return '';
+    return Array.isArray(raw) ? raw[0] : raw;
+  }, [params]);
+
   const supabase = useMemo(() => createClient(), []);
 
   // ログイン確認（サーバCookie基準）
@@ -125,12 +136,16 @@ export default function TeamEditPage() {
     setMError(null);
 
     try {
-      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      const {
+        data: { session },
+        error: sessErr,
+      } = await supabase.auth.getSession();
       if (sessErr) throw sessErr;
-      const token = session?.access_token;
+      if (!session) throw new Error('ログインが必要です');
+      const token = session.access_token;
 
       // チーム本体
-      const teamRows = await restGet<Team[]>(`/rest/v1/teams?id=eq.${teamId}&select=*`, token);
+      const teamRows = await restGet<Team[]>(`/rest/v1/teams?id=eq.${encodeURIComponent(teamId)}&select=*`, token);
       const t = teamRows?.[0] ?? null;
       setTeam(t);
       setName(t?.name ?? '');
@@ -138,27 +153,34 @@ export default function TeamEditPage() {
 
       // メンバー行
       const tm = await restGet<TeamMemberRow[]>(
-        `/rest/v1/team_members?team_id=eq.${teamId}&select=team_id,player_id,role,joined_at&order=joined_at.asc`,
+        `/rest/v1/team_members?team_id=eq.${encodeURIComponent(
+          teamId
+        )}&select=team_id,player_id,role,joined_at&order=joined_at.asc`,
         token
       );
 
       // 対象プレイヤー詳細
-      const ids = tm.map((x) => x.player_id);
+      const ids = (tm || []).map((x) => x.player_id);
       let pmap = new Map<string, Player>();
       if (ids.length) {
+        // ✅ in句は括弧/ダブルクォートが混ざるのでURLエンコード
         const inList = ids.map((id) => `"${id}"`).join(',');
+        const inEncoded = encodeURIComponent(`(${inList})`);
         const ps = await restGet<Player[]>(
-          `/rest/v1/players?id=in.(${inList})&select=id,handle_name,avatar_url,ranking_points,handicap,is_active`,
+          `/rest/v1/players?id=in.${inEncoded}&select=id,handle_name,avatar_url,ranking_points,handicap,is_active`,
           token
         );
-        pmap = new Map(ps.map((p) => [p.id, p]));
+        pmap = new Map((ps || []).map((p) => [p.id, p]));
       }
-      const enriched = tm.map((m) => ({ ...m, player: pmap.get(m.player_id) }));
+      const enriched = (tm || []).map((m) => ({ ...m, player: pmap.get(m.player_id) }));
       setMembers(enriched);
 
       // 役割ドラフト初期化
       const draftInit: Record<string, string> = {};
-      for (const m of enriched) draftInit[m.player_id] = m.role ?? '';
+      for (let i = 0; i < enriched.length; i++) {
+        const m = enriched[i];
+        draftInit[m.player_id] = m.role ?? '';
+      }
       setRoleDrafts(draftInit);
 
       // 追加候補のための全プレイヤー（アクティブのみ）
@@ -173,7 +195,7 @@ export default function TeamEditPage() {
         `/rest/v1/team_members?select=player_id,team_id`,
         token
       );
-      setOccupiedMap(new Map(occ.map((r) => [r.player_id, r.team_id])));
+      setOccupiedMap(new Map((occ || []).map((r) => [r.player_id, r.team_id])));
     } catch (e: any) {
       setError(e?.message || '読み込みに失敗しました');
     } finally {
@@ -189,19 +211,43 @@ export default function TeamEditPage() {
   // 🔧 Hook は早期 return より前で呼ぶ
   const eligiblePlayers = useMemo(() => {
     const kw = search.trim().toLowerCase();
-    return allPlayers
+    return (allPlayers || [])
       .filter((p) => {
-        // すでにこのチームのメンバーは除外
         if (members.find((m) => m.player_id === p.id)) return false;
-        // 他チーム所属は除外
         const tId = occupiedMap.get(p.id);
         if (tId && tId !== teamId) return false;
-        // 検索
         if (!kw) return true;
-        return p.handle_name.toLowerCase().includes(kw);
+        return (p.handle_name || '').toLowerCase().includes(kw);
       })
-      .slice(0, 30); // 表示上限
+      .slice(0, 30);
   }, [allPlayers, occupiedMap, members, teamId, search]);
+
+  // ✅ 環境変数チェック（No API key found の予防）
+  if (!BASE || !ANON) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8 text-white">
+        <div className="max-w-xl glass-card rounded-xl p-6 border border-red-500/40 bg-red-500/10">
+          <p className="text-red-300 font-semibold mb-2">Supabase 設定エラー</p>
+          <p className="text-sm text-red-200">
+            NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY が未設定です。
+            <br />
+            .env.local と Vercel の環境変数を確認してください。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // teamIdが取れない
+  if (!teamId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8 text-white">
+        <div className="max-w-xl glass-card rounded-xl p-6 border border-purple-500/30 bg-gray-900/50">
+          チームIDが取得できませんでした。
+        </div>
+      </div>
+    );
+  }
 
   // 未ログイン
   if (authed === false) {
@@ -239,12 +285,15 @@ export default function TeamEditPage() {
     setSavedMsg(null);
 
     try {
-      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      const {
+        data: { session },
+        error: sessErr,
+      } = await supabase.auth.getSession();
       if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
 
-      const res = await fetch(`${BASE}/rest/v1/teams?id=eq.${teamId}`, {
+      const res = await fetch(`${BASE}/rest/v1/teams?id=eq.${encodeURIComponent(teamId)}`, {
         method: 'PATCH',
         headers: {
           apikey: ANON,
@@ -286,7 +335,6 @@ export default function TeamEditPage() {
       setMError('このチームは最大4名までです');
       return;
     }
-    // 所属チェック
     const tId = occupiedMap.get(playerId);
     if (tId && tId !== teamId) {
       setMError('このプレイヤーは別のチームに所属しています');
@@ -296,7 +344,10 @@ export default function TeamEditPage() {
     setAdding(true);
     setMError(null);
     try {
-      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      const {
+        data: { session },
+        error: sessErr,
+      } = await supabase.auth.getSession();
       if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
@@ -322,20 +373,17 @@ export default function TeamEditPage() {
         throw new Error(t || '追加に失敗しました');
       }
 
-      // 画面反映
       const added = await res.json();
       const pid = added?.[0]?.player_id ?? playerId;
 
-      // プレイヤー詳細を取得
       const ps = await restGet<Player[]>(
-        `/rest/v1/players?id=eq.${pid}&select=id,handle_name,avatar_url,ranking_points,handicap,is_active`,
+        `/rest/v1/players?id=eq.${encodeURIComponent(pid)}&select=id,handle_name,avatar_url,ranking_points,handicap,is_active`,
         token
       );
       const player = ps?.[0];
 
       setMembers((cur) => [...cur, { team_id: teamId, player_id: pid, player }]);
 
-      // 所属マップ＆役割ドラフトを同期
       setOccupiedMap((m) => {
         const cp = new Map(m);
         cp.set(pid, teamId);
@@ -355,13 +403,18 @@ export default function TeamEditPage() {
     setSavingRoleId(playerId);
     setMError(null);
     try {
-      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      const {
+        data: { session },
+        error: sessErr,
+      } = await supabase.auth.getSession();
       if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
 
       const res = await fetch(
-        `${BASE}/rest/v1/team_members?team_id=eq.${teamId}&player_id=eq.${playerId}`,
+        `${BASE}/rest/v1/team_members?team_id=eq.${encodeURIComponent(teamId)}&player_id=eq.${encodeURIComponent(
+          playerId
+        )}`,
         {
           method: 'PATCH',
           headers: {
@@ -382,9 +435,7 @@ export default function TeamEditPage() {
         throw new Error(t || '更新に失敗しました');
       }
 
-      setMembers((cur) =>
-        cur.map((m) => (m.player_id === playerId ? { ...m, role: role || null } : m))
-      );
+      setMembers((cur) => cur.map((m) => (m.player_id === playerId ? { ...m, role: role || null } : m)));
     } catch (e: any) {
       setMError(e?.message || '更新に失敗しました');
     } finally {
@@ -401,13 +452,18 @@ export default function TeamEditPage() {
     setMError(null);
 
     try {
-      const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+      const {
+        data: { session },
+        error: sessErr,
+      } = await supabase.auth.getSession();
       if (sessErr) throw sessErr;
       if (!session) throw new Error('ログインが必要です');
       const token = session.access_token;
 
       const res = await fetch(
-        `${BASE}/rest/v1/team_members?team_id=eq.${teamId}&player_id=eq.${playerId}`,
+        `${BASE}/rest/v1/team_members?team_id=eq.${encodeURIComponent(teamId)}&player_id=eq.${encodeURIComponent(
+          playerId
+        )}`,
         {
           method: 'DELETE',
           headers: {
@@ -449,10 +505,7 @@ export default function TeamEditPage() {
       <div className="container mx-auto px-4 py-8">
         {/* 戻る */}
         <div className="mb-6">
-          <button
-            onClick={() => router.back()}
-            className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
-          >
+          <button onClick={() => router.back()} className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200">
             <FaChevronLeft /> 戻る
           </button>
         </div>
@@ -509,9 +562,7 @@ export default function TeamEditPage() {
             {tab === 'basic' && (
               <form onSubmit={onSaveBasic} className="space-y-6">
                 <div className="glass-card rounded-2xl p-6 border border-purple-500/30">
-                  <label className="block text-sm font-medium text-purple-300 mb-2">
-                    チーム名（必須）
-                  </label>
+                  <label className="block text-sm font-medium text-purple-300 mb-2">チーム名（必須）</label>
                   <input
                     type="text"
                     value={name}
@@ -522,9 +573,7 @@ export default function TeamEditPage() {
                 </div>
 
                 <div className="glass-card rounded-2xl p-6 border border-purple-500/30">
-                  <label className="block text-sm font-medium text-purple-300 mb-2">
-                    紹介文（任意）
-                  </label>
+                  <label className="block text-sm font-medium text-purple-300 mb-2">紹介文（任意）</label>
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
@@ -545,10 +594,7 @@ export default function TeamEditPage() {
                 )}
 
                 <div className="flex justify-center gap-3">
-                  <Link
-                    href={`/teams/${teamId}`}
-                    className="px-6 py-3 rounded-xl bg-gray-700 hover:bg-gray-600"
-                  >
+                  <Link href={`/teams/${teamId}`} className="px-6 py-3 rounded-xl bg-gray-700 hover:bg-gray-600">
                     プロフィールへ戻る
                   </Link>
                   <button
@@ -565,7 +611,6 @@ export default function TeamEditPage() {
 
             {tab === 'members' && (
               <div className="space-y-6">
-                {/* ルール説明 */}
                 <div className="glass-card rounded-2xl p-4 border border-blue-500/30 bg-blue-900/10 text-sm text-blue-300">
                   ・チームは <b>2人以上4人まで</b>。<br />
                   ・<b>プレーヤーは1つのチームのみに所属</b>できます（他チーム所属者は追加できません）。
@@ -574,9 +619,7 @@ export default function TeamEditPage() {
                 {/* メンバー一覧 */}
                 <div className="glass-card rounded-2xl p-6 border border-purple-500/30">
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-yellow-100">
-                      現在のメンバー（{members.length}人）
-                    </h2>
+                    <h2 className="text-lg font-semibold text-yellow-100">現在のメンバー（{members.length}人）</h2>
                     <span className="text-xs text-gray-400">最小2 / 最大4</span>
                   </div>
 
@@ -593,22 +636,17 @@ export default function TeamEditPage() {
                           className="w-10 h-10 rounded-full border-2 border-purple-500 object-cover"
                         />
                         <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-yellow-100 truncate">
-                            {m.player?.handle_name ?? '(不明)'}
-                          </p>
+                          <p className="font-semibold text-yellow-100 truncate">{m.player?.handle_name ?? '(不明)'}</p>
                           <p className="text-xs text-gray-500">
                             RP {m.player?.ranking_points ?? '-'} / HC {m.player?.handicap ?? '-'}
                           </p>
                         </div>
 
-                        {/* 役割編集（制御コンポーネント） */}
                         <div className="flex items-center gap-2">
                           <FaShieldAlt className="text-purple-300 hidden sm:block" />
                           <input
                             value={roleDrafts[m.player_id] ?? ''}
-                            onChange={(e) =>
-                              setRoleDrafts((d) => ({ ...d, [m.player_id]: e.target.value }))
-                            }
+                            onChange={(e) => setRoleDrafts((d) => ({ ...d, [m.player_id]: e.target.value }))}
                             maxLength={32}
                             placeholder="役割（任意: 主将 等）"
                             className="px-3 py-2 bg-gray-800/60 border border-purple-500/30 rounded-lg text-sm focus:outline-none focus:border-purple-400"
@@ -619,11 +657,7 @@ export default function TeamEditPage() {
                             className="px-3 py-2 rounded-lg bg-purple-700/60 hover:bg-purple-700 text-white text-sm inline-flex items-center gap-2 disabled:opacity-50"
                             title="役割を保存"
                           >
-                            {savingRoleId === m.player_id ? (
-                              <FaSpinner className="animate-spin" />
-                            ) : (
-                              <FaSave />
-                            )}
+                            {savingRoleId === m.player_id ? <FaSpinner className="animate-spin" /> : <FaSave />}
                             保存
                           </button>
                         </div>
@@ -634,11 +668,7 @@ export default function TeamEditPage() {
                           className="ml-2 px-3 py-2 rounded-lg bg-red-700/70 hover:bg-red-700 text-white inline-flex items-center gap-2 disabled:opacity-50"
                           title="このメンバーを外す"
                         >
-                          {removingId === m.player_id ? (
-                            <FaSpinner className="animate-spin" />
-                          ) : (
-                            <FaTrashAlt />
-                          )}
+                          {removingId === m.player_id ? <FaSpinner className="animate-spin" /> : <FaTrashAlt />}
                           削除
                         </button>
                       </div>
@@ -700,9 +730,7 @@ export default function TeamEditPage() {
                         </div>
                       ))
                     ) : (
-                      <div className="p-4 text-center text-gray-400">
-                        未所属で該当するプレーヤーが見つかりません
-                      </div>
+                      <div className="p-4 text-center text-gray-400">未所属で該当するプレーヤーが見つかりません</div>
                     )}
                   </div>
 
@@ -719,10 +747,7 @@ export default function TeamEditPage() {
                 )}
 
                 <div className="flex justify-center gap-3">
-                  <Link
-                    href={`/teams/${teamId}`}
-                    className="px-6 py-3 rounded-xl bg-gray-700 hover:bg-gray-600"
-                  >
+                  <Link href={`/teams/${teamId}`} className="px-6 py-3 rounded-xl bg-gray-700 hover:bg-gray-600">
                     プロフィールへ戻る
                   </Link>
                 </div>

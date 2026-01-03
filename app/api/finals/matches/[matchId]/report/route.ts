@@ -152,7 +152,7 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     }
 
     // ★ 認証（既存の流れを維持）
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

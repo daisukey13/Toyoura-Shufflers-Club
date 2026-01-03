@@ -8,8 +8,6 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type AnyBody = Record<string, any>;
-
-// ★walkover を追加（不戦勝）
 type FinishReason = 'normal' | 'time_limit' | 'walkover' | 'forfeit' | string;
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
@@ -39,7 +37,6 @@ function inferMode(body: AnyBody): 'singles' | 'teams' | null {
   return null;
 }
 
-// ★finish_reason / end_reason を受け、DBに両方入れても壊れないようにする
 function normalizeFinishReason(body: AnyBody): FinishReason {
   const r = String(body?.finish_reason ?? body?.end_reason ?? 'normal').trim().toLowerCase();
   return r || 'normal';
@@ -52,9 +49,7 @@ function normalizeApplyRating(body: AnyBody, finishReason: FinishReason): boolea
   const affects = toBool(body?.affects_rating);
   if (affects != null) return affects;
 
-  // 既存仕様：time_limit / walkover / forfeit はレート反映しない
   if (['time_limit', 'walkover', 'forfeit'].includes(String(finishReason).toLowerCase())) return false;
-
   return true;
 }
 
@@ -114,30 +109,62 @@ async function isAdminPlayer(playerId: string): Promise<boolean> {
 }
 
 async function isMemberOfTeam(playerId: string, teamId: string): Promise<boolean> {
+  // あなたの画面が team_members を使っているので、まずそこを優先（最短）
+  const { data, error } = await supabaseAdmin
+    .from('team_members')
+    .select('team_id')
+    .eq('player_id', playerId)
+    .eq('team_id', teamId)
+    .limit(1);
+  if (!error && data && data.length > 0) return true;
+
+  // 互換候補
   const candidates = [
-    { table: 'team_members', playerCol: 'player_id', teamCol: 'team_id' },
     { table: 'players_teams', playerCol: 'player_id', teamCol: 'team_id' },
     { table: 'team_players', playerCol: 'player_id', teamCol: 'team_id' },
     { table: 'memberships', playerCol: 'player_id', teamCol: 'team_id' },
   ] as const;
 
   for (const c of candidates) {
-    const { data, error } = await supabaseAdmin
+    const { data: d, error: e } = await supabaseAdmin
       .from(c.table)
-      .select('team_id')
+      .select(c.teamCol)
       .eq(c.playerCol, playerId)
       .eq(c.teamCol, teamId)
       .limit(1);
-    if (!error && data && data.length > 0) return true;
+    if (!e && d && d.length > 0) return true;
   }
   return false;
 }
 
-/**
- * ★end_reason / time_limit_seconds / tournament_id が無いスキーマでも落ちないようにする
- * - REST 側の典型エラー: "Could not find the 'xxx' column of 'matches' in the schema cache"
- * - Postgres 側の典型: "column \"xxx\" of relation \"matches\" does not exist"
- */
+/** ★チーム代表プレイヤーを自動選出（CHECK制約対策） */
+async function pickTeamRepresentativePlayerId(teamId: string, preferPlayerId?: string, avoidPlayerId?: string) {
+  // 1) prefer が所属していればそれ（ただし avoid と同じならダメ）
+  if (preferPlayerId && preferPlayerId !== avoidPlayerId) {
+    const { data } = await supabaseAdmin
+      .from('team_members')
+      .select('player_id')
+      .eq('team_id', teamId)
+      .eq('player_id', preferPlayerId)
+      .limit(1)
+      .maybeSingle();
+    if (data?.player_id) return String(data.player_id);
+  }
+
+  // 2) team_members の先頭（avoid と同じなら次を探す）
+  const { data: rows, error } = await supabaseAdmin
+    .from('team_members')
+    .select('player_id')
+    .eq('team_id', teamId)
+    .limit(5);
+
+  if (error) throw new Error(`チームメンバー取得に失敗しました: ${error.message}`);
+
+  const ids = (rows ?? []).map((r: any) => String(r.player_id)).filter(Boolean);
+  const picked = ids.find((id) => id !== avoidPlayerId) || null;
+  return picked;
+}
+
 function isMissingColumnErrorMessage(msg: string, col: string) {
   const m = msg.toLowerCase();
   const c = col.toLowerCase();
@@ -148,7 +175,6 @@ function isMissingColumnErrorMessage(msg: string, col: string) {
 }
 
 function omitField(row: AnyBody, key: string): AnyBody {
-  // eslint-disable-next-line no-unused-vars
   const next = { ...row };
   delete next[key];
   return next;
@@ -157,42 +183,35 @@ function omitField(row: AnyBody, key: string): AnyBody {
 async function insertMatchWithOptionalFields(row: AnyBody) {
   const tryInsert = async (r: AnyBody) => await supabaseAdmin.from('matches').insert(r).select('id').single();
 
-  // まずフルで試す
   let current: AnyBody = { ...row };
-  let first = await tryInsert(current);
-  if (!first.error) return first;
+  let res = await tryInsert(current);
+  if (!res.error) return res;
 
-  const msg1 = String(first.error.message || '');
+  const optionalCols = [
+    'tournament_id',
+    'end_reason',
+    'time_limit_seconds',
+    // （環境によっては無い可能性があるので保険）
+    'finish_reason',
+    'affects_rating',
+    'winner_points_delta',
+    'loser_points_delta',
+    'winner_handicap_delta',
+    'loser_handicap_delta',
+  ];
 
-  // tournament_id 無しでやり直し
-  if (isMissingColumnErrorMessage(msg1, 'tournament_id')) {
-    current = omitField(current, 'tournament_id');
-    first = await tryInsert(current);
-    if (!first.error) return first;
+  for (const col of optionalCols) {
+    const msg = String(res.error?.message || '');
+    if (isMissingColumnErrorMessage(msg, col)) {
+      current = omitField(current, col);
+      res = await tryInsert(current);
+      if (!res.error) return res;
+    }
   }
 
-  const msg2 = String(first.error?.message || '');
-
-  // end_reason 無しでやり直し
-  if (isMissingColumnErrorMessage(msg2, 'end_reason')) {
-    current = omitField(current, 'end_reason');
-    first = await tryInsert(current);
-    if (!first.error) return first;
-  }
-
-  const msg3 = String(first.error?.message || '');
-
-  // time_limit_seconds 無しでやり直し
-  if (isMissingColumnErrorMessage(msg3, 'time_limit_seconds')) {
-    current = omitField(current, 'time_limit_seconds');
-    first = await tryInsert(current);
-    if (!first.error) return first;
-  }
-
-  return first;
+  return res;
 }
 
-/** mode の CHECK 制約に当たった時だけ、別候補でリトライする */
 async function insertMatchWithModeFallback(baseRow: AnyBody, modeCandidates: string[]) {
   let last: any = null;
 
@@ -202,10 +221,58 @@ async function insertMatchWithModeFallback(baseRow: AnyBody, modeCandidates: str
 
     last = error;
     const msg = String(error.message || '');
-    if (msg.includes('matches_mode_check')) continue; // ここだけリトライ
+    if (msg.includes('matches_mode_check')) continue;
     break;
   }
   return { data: null, error: last, used_mode: null };
+}
+
+/** ★チーム戦: teams テーブルの勝敗/試合数を “存在する列だけ” 更新 */
+async function bumpTeamStatsSafe(winnerTeamId: string, loserTeamId: string) {
+  try {
+    const [wRes, lRes] = await Promise.all([
+      supabaseAdmin.from('teams').select('*').eq('id', winnerTeamId).maybeSingle(),
+      supabaseAdmin.from('teams').select('*').eq('id', loserTeamId).maybeSingle(),
+    ]);
+    const w = wRes.data as AnyBody | null;
+    const l = lRes.data as AnyBody | null;
+    if (!w || !l) return;
+
+    const buildPatch = (row: AnyBody, winInc: number, lossInc: number) => {
+      const patch: AnyBody = {};
+      if ('wins' in row) patch.wins = toInt(row.wins, 0) + winInc;
+      if ('losses' in row) patch.losses = toInt(row.losses, 0) + lossInc;
+      if ('played' in row) patch.played = toInt(row.played, 0) + 1;
+      if ('matches_played' in row) patch.matches_played = toInt(row.matches_played, 0) + 1;
+      if ('games_played' in row) patch.games_played = toInt(row.games_played, 0) + 1;
+
+      if ('win_pct' in row) {
+        const winsNow = 'wins' in patch ? toInt(patch.wins, 0) : ('wins' in row ? toInt(row.wins, 0) : null);
+        let playedNow: number | null = null;
+
+        if ('played' in patch) playedNow = toInt(patch.played, 0);
+        else if ('matches_played' in patch) playedNow = toInt(patch.matches_played, 0);
+        else if ('games_played' in patch) playedNow = toInt(patch.games_played, 0);
+        else if ('played' in row) playedNow = toInt(row.played, 0);
+        else if ('matches_played' in row) playedNow = toInt(row.matches_played, 0);
+        else if ('games_played' in row) playedNow = toInt(row.games_played, 0);
+
+        if (winsNow != null && playedNow != null && playedNow > 0) patch.win_pct = winsNow / playedNow;
+      }
+
+      return patch;
+    };
+
+    const wPatch = buildPatch(w, 1, 0);
+    const lPatch = buildPatch(l, 0, 1);
+
+    await Promise.all([
+      Object.keys(wPatch).length ? supabaseAdmin.from('teams').update(wPatch).eq('id', winnerTeamId) : Promise.resolve(),
+      Object.keys(lPatch).length ? supabaseAdmin.from('teams').update(lPatch).eq('id', loserTeamId) : Promise.resolve(),
+    ]);
+  } catch {
+    // stats更新は “できたらやる”。ここで 500 にしない。
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -214,24 +281,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
-    const cookieStore = cookies();
-    const supa = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
-          },
-          set(name: string, value: string, options?: any) {
-            cookieStore.set({ name, value, ...(options || {}) } as any);
-          },
-          remove(name: string, options?: any) {
-            cookieStore.set({ name, value: '', ...(options || {}) } as any);
-          },
+    // cookie adapter（500対策は継続）
+    const cookieStore = await cookies();
+    const supa = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
         },
-      } as any
-    );
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
+          } catch {}
+        },
+      },
+    });
 
     const { data: userData, error: userErr } = await supa.auth.getUser();
     if (userErr || !userData?.user) {
@@ -249,19 +312,13 @@ export async function POST(req: NextRequest) {
     const admin = await isAdminPlayer(reporter_id);
 
     const body = (await req.json().catch(() => null)) as AnyBody | null;
-    if (!body) {
-      return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
-    }
+    if (!body) return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
 
     const inferred = inferMode(body);
-    if (!inferred) {
-      return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
-    }
+    if (!inferred) return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
 
     const match_date = String(body.match_date || '').trim();
-    if (!match_date) {
-      return NextResponse.json({ ok: false, message: '試合日時が未指定です。' }, { status: 400 });
-    }
+    if (!match_date) return NextResponse.json({ ok: false, message: '試合日時が未指定です。' }, { status: 400 });
 
     const winner_score = clamp(toInt(body.winner_score, 15) || 15, 0, 99);
     const loser_score = clamp(toInt(body.loser_score, 0), 0, 99);
@@ -269,23 +326,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'スコアが不正です。' }, { status: 400 });
     }
 
-    // ★UI側が end_reason を送ってくる想定
     const finish_reason = normalizeFinishReason(body);
     const apply_rating = normalizeApplyRating(body, finish_reason);
     const tournament_id = body.tournament_id ? String(body.tournament_id) : null;
 
-    // ★time_limit_seconds が送られてきた場合だけ保持（列が無い環境でも insertMatchWithOptionalFields で安全に落とす）
     const time_limit_seconds =
       body.time_limit_seconds != null && String(finish_reason).toLowerCase() === 'time_limit'
         ? clamp(toInt(body.time_limit_seconds, 0), 0, 24 * 60 * 60)
         : null;
 
-    // ===================== Singles =====================
+    // ===================== Singles（ここは元のまま） =====================
     if (inferred === 'singles') {
       let winner_id = body.winner_id ? String(body.winner_id) : '';
       let loser_id = body.loser_id ? String(body.loser_id) : '';
 
-      // 旧payload対応：opponent_id + i_won から復元
       if ((!winner_id || !loser_id) && body.opponent_id != null && body.i_won != null) {
         const opp = String(body.opponent_id);
         const iWon = Boolean(body.i_won);
@@ -318,9 +372,7 @@ export async function POST(req: NextRequest) {
 
       const w = players?.find((p) => p.id === winner_id);
       const l = players?.find((p) => p.id === loser_id);
-      if (!w || !l) {
-        return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
-      }
+      if (!w || !l) return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
 
       const scoreDiff = Math.max(1, winner_score - loser_score);
       const delta = apply_rating
@@ -362,10 +414,7 @@ export async function POST(req: NextRequest) {
       const { data: ins, error: mErr, used_mode } = await insertMatchWithModeFallback(baseRow, modeCandidates);
 
       if (mErr || !ins?.id) {
-        return NextResponse.json(
-          { ok: false, message: `登録に失敗しました: ${mErr?.message || 'match_id 不明'}` },
-          { status: 500 }
-        );
+        return NextResponse.json({ ok: false, message: `登録に失敗しました: ${mErr?.message || 'match_id 不明'}` }, { status: 500 });
       }
 
       const wRP0 = toInt(w.ranking_points, 0);
@@ -381,21 +430,11 @@ export async function POST(req: NextRequest) {
       const [uw, ul] = await Promise.all([
         supabaseAdmin
           .from('players')
-          .update({
-            ranking_points: nextWRP,
-            handicap: nextWHC,
-            matches_played: toInt(w.matches_played, 0) + 1,
-            wins: toInt(w.wins, 0) + 1,
-          })
+          .update({ ranking_points: nextWRP, handicap: nextWHC, matches_played: toInt(w.matches_played, 0) + 1, wins: toInt(w.wins, 0) + 1 })
           .eq('id', winner_id),
         supabaseAdmin
           .from('players')
-          .update({
-            ranking_points: nextLRP,
-            handicap: nextLHC,
-            matches_played: toInt(l.matches_played, 0) + 1,
-            losses: toInt(l.losses, 0) + 1,
-          })
+          .update({ ranking_points: nextLRP, handicap: nextLHC, matches_played: toInt(l.matches_played, 0) + 1, losses: toInt(l.losses, 0) + 1 })
           .eq('id', loser_id),
       ]);
 
@@ -420,7 +459,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ===================== Teams =====================
+    // ===================== Teams（ここが修正本体） =====================
     {
       const winner_team_id = String(body.winner_team_id || '');
       const loser_team_id = String(body.loser_team_id || '');
@@ -442,20 +481,43 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // ★CHECK制約対策：teamsでも winner_id/loser_id を自動セット（代表プレイヤー）
+      const repWinner = await pickTeamRepresentativePlayerId(winner_team_id, reporter_id);
+      if (!repWinner) {
+        return NextResponse.json({ ok: false, message: '勝利チームにメンバーがいないため登録できません。' }, { status: 400 });
+      }
+      const repLoser = await pickTeamRepresentativePlayerId(loser_team_id, reporter_id, repWinner);
+      if (!repLoser) {
+        return NextResponse.json({ ok: false, message: '敗北チームにメンバーがいないため登録できません。' }, { status: 400 });
+      }
+      if (repWinner === repLoser) {
+        return NextResponse.json({ ok: false, message: 'チーム代表の選出に失敗しました。' }, { status: 400 });
+      }
+
+      // ★チーム戦は個人レートは更新しない（デルタ0）
       const baseRow: AnyBody = {
         status: 'finalized',
         match_date,
         reporter_id,
+
+        winner_id: repWinner,
+        loser_id: repLoser,
+
         winner_score,
         loser_score,
         winner_team_no: 1,
         loser_team_no: 2,
 
+        winner_points_delta: 0,
+        loser_points_delta: 0,
+        winner_handicap_delta: 0,
+        loser_handicap_delta: 0,
+
         finish_reason,
         end_reason: finish_reason,
         time_limit_seconds,
 
-        affects_rating: apply_rating,
+        affects_rating: false,
       };
       if (tournament_id) baseRow.tournament_id = tournament_id;
 
@@ -469,6 +531,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // match_teams に紐付け
       const { error: mtErr } = await supabaseAdmin.from('match_teams').insert([
         { match_id: ins.id, team_id: winner_team_id, team_no: 1 },
         { match_id: ins.id, team_id: loser_team_id, team_no: 2 },
@@ -476,8 +539,14 @@ export async function POST(req: NextRequest) {
 
       if (mtErr) {
         await supabaseAdmin.from('matches').delete().eq('id', ins.id);
-        return NextResponse.json({ ok: false, message: `チーム割当の登録に失敗しました: ${mtErr.message}` }, { status: 500 });
+        return NextResponse.json(
+          { ok: false, message: `チーム割当の登録に失敗しました: ${mtErr.message}` },
+          { status: 500 }
+        );
       }
+
+      // チーム成績を更新（列が無いならスキップ）
+      await bumpTeamStatsSafe(winner_team_id, loser_team_id);
 
       return NextResponse.json(
         { ok: true, match_id: ins.id, db_mode: used_mode, finish_reason, end_reason: finish_reason, time_limit_seconds },
@@ -486,13 +555,6 @@ export async function POST(req: NextRequest) {
     }
   } catch (e: any) {
     console.error('[api/matches] fatal:', e);
-    return NextResponse.json({ ok: false, message: 'サーバエラーが発生しました。' }, { status: 500 });
+    return NextResponse.json({ ok: false, message: e?.message || 'サーバエラーが発生しました。' }, { status: 500 });
   }
 }
-
-/**
- * NOTE:
- * あなたの「結果入力」画面は /api/matches/[id]/report に POST しています。
- * そこ（route.ts）側でも body.end_reason を受け、matches を update するときに
- * end_reason（と必要なら time_limit_seconds）を保存する必要があります。
- */

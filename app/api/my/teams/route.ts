@@ -1,15 +1,17 @@
 // app/api/my/teams/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type Team = { id: string; name: string };
 type TeamMemberRow = { team_id: string | null };
 
-// --- ES5互換で動くユーティリティ（Set/for-of/スプレッド不使用） ---
+type PendingCookie = { name: string; value: string; options: CookieOptions };
+
+// --- ES5互換（Set/for-of/スプレッド不使用） ---
 function uniqStrings(input: string[]): string[] {
   const seen: { [k: string]: 1 } = Object.create(null);
   const out: string[] = [];
@@ -23,24 +25,32 @@ function uniqStrings(input: string[]): string[] {
   return out;
 }
 
-function readCookie(name: string) {
-  const store = cookies();
-  const c = store.get(name);
-  return c ? c.value : undefined;
+function withMaxAgeZero(options: CookieOptions): CookieOptions {
+  // スプレッド禁止のため Object.assign
+  return Object.assign({}, options, { maxAge: 0 });
 }
 
 export async function GET(_req: NextRequest) {
-  // Supabase SSR クライアント（Cookie連携）
+  const cookieStore = await cookies();
+  const pending: PendingCookie[] = [];
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
   const supabase = createServerClient(supabaseUrl, supabaseAnon, {
     cookies: {
-      get: readCookie,
-      set: (name, value, options) => {
-        // App RouterのRoute内ではレスポンス側でSet-Cookieするのが推奨ですが、
-        // 今回は読み取り専用用途なので set/remove はno-opで問題ありません。
+      // ✅ 同期で返す（重要）
+      get(name: string) {
+        const c = cookieStore.get(name);
+        return c ? c.value : undefined;
       },
-      remove: () => {},
+      // ✅ Supabase が更新したい Cookie を溜めておく（最後にレスポンスへ反映）
+      set(name: string, value: string, options: CookieOptions) {
+        pending[pending.length] = { name, value, options };
+      },
+      remove(name: string, options: CookieOptions) {
+        pending[pending.length] = { name, value: "", options: withMaxAgeZero(options) };
+      },
     },
   });
 
@@ -48,71 +58,75 @@ export async function GET(_req: NextRequest) {
   const { data: userRes } = await supabase.auth.getUser();
   const user = userRes?.user;
   if (!user) {
-    return NextResponse.json(
-      { ok: false, message: 'Unauthorized' },
-      { status: 401 }
-    );
+    const res = NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+    for (let i = 0; i < pending.length; i++) {
+      const c = pending[i];
+      res.cookies.set(c.name, c.value, c.options);
+    }
+    return res;
   }
 
-  // 管理者フラグ（存在しない場合は false にフォールバック）
+  // 管理者フラグ（無ければ false）
   let admin = false;
   try {
     const { data: priv, error: privErr } = await supabase
-      .from('players_private')
-      .select('is_admin')
-      .eq('id', user.id)
+      .from("players_private")
+      .select("is_admin")
+      .eq("player_id", user.id)
       .maybeSingle();
+
     if (!privErr && priv) admin = !!(priv as any).is_admin;
   } catch {
     admin = false;
   }
 
-  // まずはユーザーの所属チームIDを取得
+  // 所属チームID取得
   let teamIds: string[] = [];
   try {
     const { data, error } = await supabase
-      .from('team_members')
-      .select('team_id')
-      .eq('player_id', user.id);
+      .from("team_members")
+      .select("team_id")
+      .eq("player_id", user.id);
 
     if (error) throw error;
 
     const rawIds: string[] = [];
     const rows = (data || []) as TeamMemberRow[];
     for (let i = 0; i < rows.length; i++) {
-      const id = rows[i].team_id ? String(rows[i].team_id) : '';
+      const id = rows[i].team_id ? String(rows[i].team_id) : "";
       if (id) rawIds[rawIds.length] = id;
     }
     teamIds = uniqStrings(rawIds);
-  } catch (e) {
-    // 所属取得に失敗した場合は空のまま続行
+  } catch {
     teamIds = [];
   }
 
-  // 返すチーム一覧
+  // チーム一覧
   let teams: Team[] = [];
 
-  // 管理者なら全チームを取得（失敗したら所属チームのみにフォールバック）
+  // 管理者なら全件（失敗したら所属だけにフォールバック）
   if (admin) {
     try {
       const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .order('name', { ascending: true });
+        .from("teams")
+        .select("id, name")
+        .order("name", { ascending: true });
+
       if (error) throw error;
       teams = (data || []) as Team[];
     } catch {
-      // fall back to membership
+      // fall back
     }
   }
 
-  // 非管理者 or 管理者の全件取得が失敗 → 所属チームのみ返す
+  // 非管理者 or 全件取得失敗 → 所属のみ
   if (teams.length === 0 && teamIds.length > 0) {
     try {
       const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .in('id', teamIds);
+        .from("teams")
+        .select("id, name")
+        .in("id", teamIds);
+
       if (error) throw error;
       teams = (data || []) as Team[];
     } catch {
@@ -120,5 +134,13 @@ export async function GET(_req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, admin, teams });
+  const res = NextResponse.json({ ok: true, admin, teams });
+
+  // Supabase が更新した Cookie をレスポンスへ反映
+  for (let i = 0; i < pending.length; i++) {
+    const c = pending[i];
+    res.cookies.set(c.name, c.value, c.options);
+  }
+
+  return res;
 }

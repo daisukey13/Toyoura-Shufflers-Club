@@ -1,59 +1,48 @@
-// app/AuthCookieSync.tsx
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useEffect, useRef } from 'react';
+import { createBrowserClient } from '@supabase/ssr';
 
 export default function AuthCookieSync() {
-  const supabase = useMemo(() => createClient(), []);
-  const lastAccessTokenRef = useRef<string | null>(null);
-  const inFlightRef = useRef(false);
-
-  const postSync = async (payload: { event: string; session: any }) => {
-    try {
-      if (inFlightRef.current) return;
-      inFlightRef.current = true;
-      await fetch('/auth/callback', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-    } finally {
-      inFlightRef.current = false;
-    }
-  };
+  const started = useRef(false);
 
   useEffect(() => {
-    let unsub: (() => void) | undefined;
+    if (started.current) return;
+    started.current = true;
 
-    // 初期同期
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      const token = session?.access_token ?? null;
-      if (token) {
-        lastAccessTokenRef.current = token;
-        void postSync({ event: 'TOKEN_REFRESHED', session });
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    const sync = async (event: string, session: any) => {
+      try {
+        await fetch('/auth/callback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          cache: 'no-store',
+          body: JSON.stringify({ event, session }),
+        });
+      } catch {
+        // ignore
       }
+    };
+
+    // 初回：localStorage 側の session をサーバ cookie に反映
+    supabase.auth.getSession().then(({ data }) => {
+      void sync('INITIAL_SESSION', data.session);
     });
 
-    // 認証イベント監視
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') {
-        lastAccessTokenRef.current = null;
-        void postSync({ event, session: null });
-        return;
-      }
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        const token = session?.access_token ?? null;
-        if (token && lastAccessTokenRef.current !== token) {
-          lastAccessTokenRef.current = token;
-          void postSync({ event, session });
-        }
-      }
+    // 以後：ログイン/ログアウト等の変化を反映
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      void sync(event, session);
     });
 
-    unsub = () => sub?.subscription?.unsubscribe?.();
-    return () => { if (unsub) unsub(); };
-  }, [supabase]);
+    return () => {
+      data.subscription.unsubscribe();
+    };
+  }, []);
 
   return null;
 }

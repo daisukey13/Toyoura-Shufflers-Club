@@ -169,6 +169,33 @@ export default function AdminDashboard() {
     }
   };
 
+  {/* ここから追加：試合登録ショートカット */}
+<div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
+  <h2 className="text-lg font-semibold text-purple-200 mb-3">試合登録</h2>
+
+  <div className="flex flex-col sm:flex-row gap-3">
+    <Link
+      href="/admin/matches/register/singles"
+      className="px-4 py-2 rounded-lg bg-purple-600/80 hover:bg-purple-700 inline-flex items-center gap-2 justify-center"
+    >
+      個人戦登録
+    </Link>
+
+    <Link
+      href="/admin/matches/register/teams"
+      className="px-4 py-2 rounded-lg bg-purple-600/30 hover:bg-purple-600/40 inline-flex items-center gap-2 justify-center"
+    >
+      チーム戦登録
+    </Link>
+  </div>
+
+  <p className="mt-2 text-xs text-gray-400">
+    ※ チーム戦登録では teams の勝敗/試合数も同時に更新します。
+  </p>
+</div>
+{/* ここまで追加 */}
+
+
   /** お知らせ取得（最新3件、公開/非公開問わず） */
   const fetchNotices = async () => {
     setNLoading(true);

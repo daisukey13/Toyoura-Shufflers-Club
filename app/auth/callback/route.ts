@@ -1,17 +1,20 @@
+// app/auth/callback/route.ts
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
-type Body = {
-  event: 'SIGNED_IN' | 'SIGNED_OUT' | 'TOKEN_REFRESHED';
-  session: any | null;
+export const runtime = 'nodejs';
+
+type Payload = {
+  event?: string;
+  session?: {
+    access_token?: string;
+    refresh_token?: string;
+  } | null;
 };
 
-export async function POST(req: Request) {
-  const { event, session } = (await req.json()) as Body;
-
-  const cookieStore = cookies();
-  const supabase = createServerClient(
+function createSupabaseFromCookies(cookieStore: Awaited<ReturnType<typeof cookies>>) {
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -19,26 +22,36 @@ export async function POST(req: Request) {
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
-        set(name: string, value: string, options: any) {
-          cookieStore.set(name, value, options);
+        set(name: string, value: string, options: CookieOptions) {
+          cookieStore.set({ name, value, ...options });
         },
-        remove(name: string, options: any) {
-          cookieStore.set(name, '', { ...options, maxAge: 0 });
+        remove(name: string, options: CookieOptions) {
+          cookieStore.set({ name, value: '', ...options, maxAge: 0 });
         },
       },
     }
   );
+}
+
+export async function POST(req: Request) {
+  const cookieStore = await cookies();
+  const supabase = createSupabaseFromCookies(cookieStore);
+
+  const body = (await req.json().catch(() => ({}))) as Payload;
+  const s = body.session ?? null;
 
   try {
-    if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-      if (session) {
-        await supabase.auth.setSession(session);
-      }
-    } else if (event === 'SIGNED_OUT') {
+    if (s?.access_token && s?.refresh_token) {
+      await supabase.auth.setSession({
+        access_token: s.access_token,
+        refresh_token: s.refresh_token,
+      });
+    } else {
       await supabase.auth.signOut();
     }
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, message: String(e?.message || e) }, { status: 500 });
+  } catch {
+    // ignore
   }
+
+  return NextResponse.json({ ok: true });
 }

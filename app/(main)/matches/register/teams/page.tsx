@@ -8,6 +8,12 @@ import { createClient } from '@/lib/supabase/client';
 
 type Team = { id: string; name: string };
 
+type PlayerMeRow = {
+  id: string;
+  is_admin: boolean | null;
+  is_active?: boolean | null;
+};
+
 async function parseRestError(res: Response) {
   let msg = `HTTP ${res.status}`;
   try {
@@ -21,6 +27,7 @@ async function parseRestError(res: Response) {
   } catch {}
   return msg;
 }
+
 const toInt = (v: string | number, fb = 0) => {
   const n = typeof v === 'number' ? v : parseInt(String(v), 10);
   return Number.isFinite(n) ? n : fb;
@@ -43,17 +50,27 @@ export default function TeamsRegisterPage() {
         if (alive) setAuthed(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const [meId, setMeId] = useState<string | null>(null);
   useEffect(() => {
     if (authed !== true) return;
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       setMeId(user?.id ?? null);
     })();
   }, [authed, supabase]);
+
+  // ★管理者判定（players.is_admin）
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // ★自分がアクティブか（非アクティブなら登録をブロック）
+  const [meActive, setMeActive] = useState<boolean | null>(null);
 
   // 所属チーム（team_members: player_id -> teams）
   const [myTeams, setMyTeams] = useState<Team[]>([]);
@@ -64,40 +81,66 @@ export default function TeamsRegisterPage() {
   useEffect(() => {
     if (authed !== true || !meId) return;
     let alive = true;
+
     (async () => {
       setLoadingTeams(true);
       setTeamsError(null);
+
       try {
-        // 所属チーム
-        const { data: myRows, error: myErr } = await supabase
-          .from('team_members')
-          .select('team_id, teams ( id, name )')
-          .eq('player_id', meId);
+        // 1) admin フラグ & active 取得
+        const { data: meRow, error: meErr } = await supabase
+          .from('players')
+          .select('id, is_admin, is_active')
+          .eq('id', meId)
+          .maybeSingle<PlayerMeRow>();
 
-        if (myErr) throw myErr;
-        const mine: Team[] = (myRows ?? [])
-          .map((r: any) => r.teams)
-          .filter(Boolean);
+        if (meErr) throw meErr;
 
-        // 全チーム（対戦相手用）
+        const admin = !!(meRow as any)?.is_admin;
+        if (alive) setIsAdmin(admin);
+
+        // ★非アクティブ判定（null/未定義は「アクティブ扱い」で既存互換）
+        const active = (meRow as any)?.is_active !== false;
+        if (alive) setMeActive(active);
+
+        // 2) 全チーム（対戦相手用 / 管理者は自チームにも使う）
         const { data: tdata, error: tErr } = await supabase
           .from('teams')
           .select('id,name')
           .order('name', { ascending: true });
-
         if (tErr) throw tErr;
 
-        if (alive) {
-          setMyTeams(mine);
-          setAllTeams((tdata ?? []) as Team[]);
+        const all = (tdata ?? []) as Team[];
+        if (alive) setAllTeams(all);
+
+        // 3) 自チーム候補
+        if (admin) {
+          // ★管理者は全チームを「自チーム」に選べる
+          if (alive) setMyTeams(all);
+        } else {
+          // 従来：所属チームのみ
+          const { data: myRows, error: myErr } = await supabase
+            .from('team_members')
+            .select('team_id, teams ( id, name )')
+            .eq('player_id', meId);
+
+          if (myErr) throw myErr;
+
+          const mine: Team[] = (myRows ?? []).map((r: any) => r.teams).filter(Boolean);
+
+          if (alive) setMyTeams(mine);
         }
       } catch (e: any) {
         if (alive) setTeamsError(e?.message || 'チームの取得に失敗しました');
+        if (alive) setMeActive(true); // 既存互換のため、ここで落ちても登録ブロックしない
       } finally {
         if (alive) setLoadingTeams(false);
       }
     })();
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+    };
   }, [authed, meId, supabase]);
 
   // UI 状態
@@ -112,28 +155,40 @@ export default function TeamsRegisterPage() {
   const submittingRef = useRef(false);
 
   useEffect(() => {
-    // 自分のチームが一つなら自動選択
+    // 自分のチームが一つなら自動選択（管理者も同様に動作）
     if (!myTeamId && myTeams.length === 1) setMyTeamId(myTeams[0].id);
   }, [myTeams, myTeamId]);
 
-  const opponentCandidates = allTeams.filter(t => t.id !== myTeamId);
+  const opponentCandidates = allTeams.filter((t) => t.id !== myTeamId);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submittingRef.current) return;
+
     submittingRef.current = true;
     setLoading(true);
     setError('');
     setSuccess(false);
+
     try {
       if (authed !== true) throw new Error('ログインが必要です');
+
+      // ★非アクティブは登録不可
+      if (meActive === false) throw new Error('非アクティブのため試合を登録できません（管理者に連絡してください）');
+
       if (!myTeamId) throw new Error('自チームを選択してください');
       if (!opponentTeamId) throw new Error('相手チームを選択してください');
       if (myTeamId === opponentTeamId) throw new Error('同一チームは選べません');
       if (loserScore < 0 || loserScore > 14) throw new Error('敗者スコアは 0〜14 点です');
 
+      // 非管理者は「自チーム＝所属チーム」以外を弾く（UIだけでなく一応ガード）
+      if (!isAdmin) {
+        const okMine = myTeams.some((t) => t.id === myTeamId);
+        if (!okMine) throw new Error('自チームは所属チームから選択してください');
+      }
+
       const winner_team_id = iWon ? myTeamId : opponentTeamId;
-      const loser_team_id  = iWon ? opponentTeamId : myTeamId;
+      const loser_team_id = iWon ? opponentTeamId : myTeamId;
 
       const payload = {
         mode: 'teams',
@@ -180,6 +235,7 @@ export default function TeamsRegisterPage() {
       </div>
     );
   }
+
   if (authed === false) {
     return (
       <div className="min-h-screen grid place-items-center p-8">
@@ -193,6 +249,28 @@ export default function TeamsRegisterPage() {
     );
   }
 
+  // ★非アクティブはUI上もブロック（デザインは既存のまま）
+  if (meActive === false) {
+    return (
+      <div className="min-h-screen grid place-items-center p-8">
+        <div className="glass-card rounded-xl p-8 w-full max-w-xl border border-yellow-500/30">
+          <h1 className="text-xl font-bold text-yellow-100 mb-2">非アクティブのため登録できません</h1>
+          <p className="text-sm text-gray-300">
+            このアカウントは現在「非アクティブ」扱いです。試合登録はできません。管理者に連絡してください。
+          </p>
+          <div className="mt-4 flex gap-3">
+            <Link href="/mypage" className="text-blue-300 underline text-sm">
+              マイページへ
+            </Link>
+            <Link href="/matches" className="text-blue-300 underline text-sm">
+              試合一覧へ
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-3xl">
       <div className="text-center mb-8">
@@ -200,10 +278,21 @@ export default function TeamsRegisterPage() {
           <FaUsers className="text-4xl text-emerald-300" />
         </div>
         <h1 className="text-3xl font-bold text-yellow-100">チーム試合を登録</h1>
-        <p className="text-gray-400 mt-1">所属チームでの試合のみ登録できます。</p>
-        <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 bg-green-500/20 rounded-full">
-          <FaLock className="text-green-400 text-sm" />
-          <span className="text-green-400 text-sm">ログイン済み</span>
+        <p className="text-gray-400 mt-1">
+          {isAdmin ? '管理者はすべてのチームの試合を登録できます。' : '所属チームでの試合のみ登録できます。'}
+        </p>
+
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-green-500/20 rounded-full">
+            <FaLock className="text-green-400 text-sm" />
+            <span className="text-green-400 text-sm">ログイン済み</span>
+          </div>
+          {isAdmin && (
+            <div className="inline-flex items-center gap-2 px-3 py-1 bg-yellow-500/15 rounded-full border border-yellow-500/30">
+              <FaTrophy className="text-yellow-300 text-sm" />
+              <span className="text-yellow-200 text-sm">管理者モード</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -213,11 +302,18 @@ export default function TeamsRegisterPage() {
         </div>
       )}
 
+      {!isAdmin && !loadingTeams && myTeams.length === 0 && (
+        <div className="glass-card rounded-md p-3 mb-4 border border-yellow-500/40 bg-yellow-500/10">
+          <p className="text-yellow-200 text-sm">所属チームがありません。チームに参加してから登録してください。</p>
+        </div>
+      )}
+
       {error && (
         <div className="glass-card rounded-md p-3 mb-4 border border-red-500/40 bg-red-500/10">
           <p className="text-red-300 text-sm">{error}</p>
         </div>
       )}
+
       {success && (
         <div className="glass-card rounded-md p-3 mb-4 border border-green-500/40 bg-green-500/10">
           <p className="text-green-300 text-sm">🎉 登録しました。まもなく一覧へ移動します…</p>
@@ -245,14 +341,16 @@ export default function TeamsRegisterPage() {
           <label className="block text-sm font-medium mb-2 text-gray-300">自チーム</label>
           <select
             required
-            disabled={loadingTeams}
+            disabled={loadingTeams || (!isAdmin && myTeams.length === 0)}
             value={myTeamId}
             onChange={(e) => setMyTeamId(e.target.value)}
             className="w-full px-4 py-3 bg-purple-900/30 border border-purple-500/30 rounded-lg text-yellow-100"
           >
             <option value="">{loadingTeams ? '読み込み中...' : '選択してください'}</option>
             {myTeams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
             ))}
           </select>
         </div>
@@ -269,7 +367,9 @@ export default function TeamsRegisterPage() {
           >
             <option value="">{loadingTeams ? '読み込み中...' : '選択してください'}</option>
             {opponentCandidates.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
             ))}
           </select>
         </div>
@@ -317,7 +417,7 @@ export default function TeamsRegisterPage() {
                 <button
                   type="button"
                   className="p-2 rounded-lg bg-purple-900/30 border border-purple-500/30"
-                  onClick={() => setLoserScore(s => Math.max(0, s - 1))}
+                  onClick={() => setLoserScore((s) => Math.max(0, s - 1))}
                 >
                   <FaMinus />
                 </button>
@@ -332,7 +432,7 @@ export default function TeamsRegisterPage() {
                 <button
                   type="button"
                   className="p-2 rounded-lg bg-purple-900/30 border border-purple-500/30"
-                  onClick={() => setLoserScore(s => Math.min(14, s + 1))}
+                  onClick={() => setLoserScore((s) => Math.min(14, s + 1))}
                 >
                   <FaPlus />
                 </button>
@@ -346,7 +446,14 @@ export default function TeamsRegisterPage() {
         <div className="flex justify-center">
           <button
             type="submit"
-            disabled={loading || loadingTeams || !myTeamId || !opponentTeamId || myTeamId === opponentTeamId}
+            disabled={
+              loading ||
+              loadingTeams ||
+              !myTeamId ||
+              !opponentTeamId ||
+              myTeamId === opponentTeamId ||
+              (!isAdmin && myTeams.length === 0)
+            }
             className="gradient-button px-10 py-3 rounded-full text-white font-medium text-lg disabled:opacity-50 flex items-center gap-2"
           >
             {loading ? (

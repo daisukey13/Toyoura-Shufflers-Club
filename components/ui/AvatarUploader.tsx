@@ -1,293 +1,215 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, type ComponentType } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { SupabaseAPI } from '@/lib/api/supabase-api';
-import type { Player } from '@/types/player';
-import { supabaseConfig, supabaseHeaders } from '@/lib/config/supabase';
-import AvatarUploaderRaw from '@/components/ui/AvatarUploader';
 
-// --- ここが重要（AvatarUploader の想定 Props を明示してキャスト） ---
-type AvatarUploaderProps = {
+type Props = {
   userId: string;
   initialUrl: string | null;
   onSelected: (publicUrl: string) => void;
   showGallery?: boolean;
+
+  // オプション（未指定でも動く）
+  galleryBucket?: string; // 例: "avatars"
+  galleryPrefix?: string; // 例: "preset" や userId
+  galleryLimit?: number;  // 例: 100
 };
-const AvatarUploader = AvatarUploaderRaw as unknown as ComponentType<AvatarUploaderProps>;
-// --------------------------------------------------------------------
 
-export default function EditPlayerPage({ params }: { params: { id: string } }) {
-  const router = useRouter();
+type GalleryItem = {
+  name: string;
+  path: string;
+  url: string;
+};
+
+export default function AvatarUploader({
+  userId,
+  initialUrl,
+  onSelected,
+  showGallery = false,
+  galleryBucket = 'avatars',
+  galleryPrefix = 'preset',
+  galleryLimit = 100,
+}: Props) {
   const supabase = useMemo(() => createClient(), []);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [currentUrl, setCurrentUrl] = useState<string>(initialUrl ?? '');
+  const [uploading, setUploading] = useState(false);
 
-  const [player, setPlayer] = useState<Player | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingGallery, setLoadingGallery] = useState(false);
+  const [gallery, setGallery] = useState<GalleryItem[]>([]);
+  const [galleryError, setGalleryError] = useState<string | null>(null);
 
-  const [formData, setFormData] = useState({
-    full_name: '',
-    handle_name: '',
-    email: '',
-    avatar_url: '',
-  });
-
-  // 認証ユーザーID取得
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!cancelled) setAuthUserId(data.user?.id ?? null);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
+    setCurrentUrl(initialUrl ?? '');
+  }, [initialUrl]);
 
-  const fetchPlayer = useCallback(async () => {
+  const toPublicUrl = useCallback(
+    (path: string) => {
+      const { data } = supabase.storage.from(galleryBucket).getPublicUrl(path);
+      return data.publicUrl;
+    },
+    [supabase, galleryBucket]
+  );
+
+  const refreshGallery = useCallback(async () => {
+    if (!showGallery) return;
+
+    setLoadingGallery(true);
+    setGalleryError(null);
+
     try {
-      setLoading(true);
-      setError(null);
-
-      const id = encodeURIComponent(params.id);
-      const response = await fetch(
-        `${supabaseConfig.url}/rest/v1/players?id=eq.${id}&select=*`,
-        { headers: supabaseHeaders, cache: 'no-store' }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch player data');
-      }
-
-      const data: Player[] = await response.json();
-      if (data && data.length > 0) {
-        const playerData = data[0];
-        setPlayer(playerData);
-        setFormData({
-          full_name: playerData.full_name || '',
-          handle_name: playerData.handle_name || '',
-          // players に email カラムが無い構成でも落ちないよう any 経由で取得
-          email: (playerData as any).email || '',
-          avatar_url: playerData.avatar_url || '',
+      const { data, error } = await supabase.storage
+        .from(galleryBucket)
+        .list(galleryPrefix, {
+          limit: galleryLimit,
+          offset: 0,
+          sortBy: { column: 'name', order: 'asc' },
         });
-      } else {
-        throw new Error('Player not found');
+
+      if (error) throw error;
+
+      const items: GalleryItem[] = [];
+      const list = data ?? [];
+
+      for (let i = 0; i < list.length; i++) {
+        const obj = list[i];
+        if (!obj?.name) continue;
+
+        // フォルダっぽいのは除外
+        if ((obj as any).id == null && (obj as any).metadata == null && obj.name.includes('/')) continue;
+
+        const path = `${galleryPrefix}/${obj.name}`;
+        const url = toPublicUrl(path);
+        items.push({ name: obj.name, path, url });
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+
+      setGallery(items);
+    } catch (e) {
+      setGallery([]);
+      setGalleryError(e instanceof Error ? e.message : 'Failed to load gallery');
     } finally {
-      setLoading(false);
+      setLoadingGallery(false);
     }
-  }, [params.id]);
+  }, [showGallery, supabase, galleryBucket, galleryPrefix, galleryLimit, toPublicUrl]);
 
   useEffect(() => {
-    fetchPlayer();
-  }, [fetchPlayer]);
+    refreshGallery();
+  }, [refreshGallery]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
+  const openPicker = () => {
+    inputRef.current?.click();
+  };
 
+  const onPickFile = async (file: File | null) => {
+    if (!file) return;
+
+    setUploading(true);
     try {
-      const updateData: Partial<Player> = {
-        full_name: formData.full_name,
-        handle_name: formData.handle_name,
-        // players に email カラムがなければ無視されます
-        ...(formData.email ? { email: formData.email } : {}),
-        avatar_url: formData.avatar_url || null,
-        updated_at: new Date().toISOString(),
-      } as any;
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const filename = `${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
+      const uploadPath = `${userId}/${filename}`;
 
-      const { error: updateError } = await SupabaseAPI.updatePlayer(params.id, updateData);
-      if (updateError) throw updateError;
+      const { error: upErr } = await supabase.storage
+        .from(galleryBucket)
+        .upload(uploadPath, file, {
+          upsert: false,
+          contentType: file.type || 'image/jpeg',
+        });
 
-      router.push(`/players/${params.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update player');
+      if (upErr) throw upErr;
+
+      const url = toPublicUrl(uploadPath);
+
+      setCurrentUrl(url);
+      onSelected(url);
+
+      // 自分フォルダのギャラリーも見たい場合は prefix を userId にして使ってください
+      // ここでは preset を壊さないため refresh は任意
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Upload failed');
     } finally {
-      setSaving(false);
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
     }
   };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-  };
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto" />
-          <p className="mt-4 text-gray-600">Loading player data...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-          <p className="font-bold">Error</p>
-          <p>{error}</p>
-        </div>
-        <button
-          onClick={() => router.back()}
-          className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-        >
-          Go Back
-        </button>
-      </div>
-    );
-  }
-
-  if (!player) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <p>Player not found</p>
-        <button
-          onClick={() => router.back()}
-          className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-        >
-          Go Back
-        </button>
-      </div>
-    );
-  }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8">Edit Player</h1>
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <div className="w-16 h-16 rounded-full overflow-hidden bg-gray-200 shrink-0">
+          {currentUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={currentUrl} alt="avatar" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full" />
+          )}
+        </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Full Name */}
-          <div>
-            <label htmlFor="full_name" className="block text-sm font-medium text-gray-700 mb-2">
-              Full Name
-            </label>
-            <input
-              type="text"
-              id="full_name"
-              name="full_name"
-              value={formData.full_name}
-              onChange={handleChange}
-              required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openPicker}
+            disabled={uploading}
+            className={`px-3 py-2 rounded-md text-white ${
+              uploading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+          >
+            {uploading ? 'Uploading...' : 'Upload / Camera'}
+          </button>
+
+          <button
+            type="button"
+            onClick={refreshGallery}
+            disabled={loadingGallery}
+            className="px-3 py-2 rounded-md bg-gray-200 text-gray-700 hover:bg-gray-300"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+      />
+
+      <p className="text-xs text-gray-500">ログイン中ユーザーのフォルダ（{userId}）に保存されます。</p>
+
+      {showGallery && (
+        <div className="space-y-2">
+          <div className="text-sm text-gray-600">
+            choose from gallery ({gallery.length})
+            {loadingGallery ? ' ...' : ''}
           </div>
 
-          {/* Handle Name */}
-          <div>
-            <label htmlFor="handle_name" className="block text-sm font-medium text-gray-700 mb-2">
-              Handle Name
-            </label>
-            <input
-              type="text"
-              id="handle_name"
-              name="handle_name"
-              value={formData.handle_name}
-              onChange={handleChange}
-              required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Email（players に無い場合は無視されます） */}
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-              Email
-            </label>
-            <input
-              type="email"
-              id="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Avatar：本人専用アップローダ + 自分のフォルダのみギャラリー表示 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Avatar</label>
-
-            {authUserId ? (
-              <AvatarUploader
-                userId={authUserId}
-                initialUrl={formData.avatar_url || null}
-                onSelected={(publicUrl) => {
-                  setFormData((prev) => ({ ...prev, avatar_url: publicUrl }));
-                }}
-                showGallery={true}
-              />
-            ) : (
-              <>
-                {/* 認証が取れない場合は URL 直入力のフォールバックを残す */}
-                <input
-                  type="url"
-                  id="avatar_url"
-                  name="avatar_url"
-                  value={formData.avatar_url}
-                  onChange={handleChange}
-                  placeholder="https://..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                {formData.avatar_url && (
-                  <div className="mt-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={formData.avatar_url}
-                      alt="Avatar preview"
-                      className="w-20 h-20 rounded-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  </div>
-                )}
-                <p className="text-xs text-gray-500 mt-1">
-                  ログイン状態ではカメラ撮影／本人用ギャラリーから選べます。
-                </p>
-              </>
-            )}
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-              <p>{error}</p>
-            </div>
+          {galleryError && (
+            <div className="text-sm text-red-600">{galleryError}</div>
           )}
 
-          <div className="flex gap-4">
-            <button
-              type="submit"
-              disabled={saving}
-              className={`px-6 py-2 text-white rounded-md ${
-                saving ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-              }`}
-            >
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="px-6 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
-            >
-              Cancel
-            </button>
+          <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+            {gallery.map((g) => (
+              <button
+                key={g.path}
+                type="button"
+                className="rounded-lg overflow-hidden border border-gray-300 hover:border-blue-500"
+                onClick={() => {
+                  setCurrentUrl(g.url);
+                  onSelected(g.url);
+                }}
+                title={g.name}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={g.url} alt={g.name} className="w-full aspect-square object-cover" />
+              </button>
+            ))}
           </div>
-        </form>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

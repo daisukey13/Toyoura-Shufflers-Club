@@ -11,21 +11,17 @@ import React, {
   useDeferredValue,
   useTransition,
   useEffect,
+  useRef,
 } from 'react';
-import {
-  FaTrophy,
-  FaMedal,
-  FaChartLine,
-  FaFire,
-  FaUsers,
-  FaPercent,
-} from 'react-icons/fa';
+import { FaTrophy, FaMedal, FaChartLine, FaFire, FaUsers, FaPercent } from 'react-icons/fa';
 import Link from 'next/link';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { useFetchPlayersData as usePlayersData } from '@/lib/hooks/useFetchSupabaseData';
+// ★PATCH: useFetchPlayersData だと is_active===true で落ちるため、生データ取得に差し替え
+import { useFetchSupabaseData } from '@/lib/hooks/useFetchSupabaseData';
 import { useTeamRankings, TeamRankItem } from '@/lib/hooks/useTeamRankings';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 import { calcWinRate } from '@/lib/stats';
+import { FaArrowUp, FaArrowDown, FaMinus } from 'react-icons/fa';
 
 /* ─────────────────────────── Fallback (for Suspense wrapper) ─────────────────────────── */
 function Fallback() {
@@ -111,9 +107,16 @@ type Player = {
   matches_played?: number | null;
   wins?: number | null;
   losses?: number | null;
+
+  // ★PATCH: フィルタ用に拾う（null を許容）
+  is_active?: boolean | null;
+  is_deleted?: boolean | null;
+  is_admin?: boolean | null;
 };
 
 type RankedPlayer = { player: Player; rank: number };
+
+type Trend = 'up' | 'down' | 'same';
 
 /* ─────────────────────────── utils ─────────────────────────── */
 function eq(a: any, b: any) {
@@ -148,7 +151,6 @@ function withCompetitionRank(sorted: Player[]): RankedPlayer[] {
       currentRank = 1;
       prevPoints = pts;
     } else if (pts !== prevPoints) {
-      // ★ここが「次の人が4位になる」ロジック
       currentRank = idx + 1;
       prevPoints = pts;
     }
@@ -157,9 +159,44 @@ function withCompetitionRank(sorted: Player[]): RankedPlayer[] {
   });
 }
 
+function computeTrend(prevRank: number | undefined, curRank: number): Trend {
+  if (typeof prevRank !== 'number') return 'same'; // 初登場は「—」
+  if (curRank < prevRank) return 'up';
+  if (curRank > prevRank) return 'down';
+  return 'same';
+}
+
+/* ─────────────────────────── Trend Mark ─────────────────────────── */
+const TrendMark = memo(function TrendMark({ trend }: { trend: Trend }) {
+  const cls =
+    trend === 'up'
+      ? 'text-green-400'
+      : trend === 'down'
+      ? 'text-red-400'
+      : 'text-gray-500';
+
+  return (
+    <div
+      className={`w-5 sm:w-6 flex items-center justify-center ${cls}`}
+      aria-label={trend === 'up' ? '順位上昇' : trend === 'down' ? '順位下降' : '順位変化なし'}
+      title={trend === 'up' ? '上がった' : trend === 'down' ? '下がった' : '変化なし'}
+    >
+      {trend === 'up' ? <FaArrowUp /> : trend === 'down' ? <FaArrowDown /> : <FaMinus />}
+    </div>
+  );
+});
+
 /* ─────────────────────────── Player Card ─────────────────────────── */
 const PlayerCard = memo(
-  function PlayerCard({ player, rank }: { player: Player; rank: number }) {
+  function PlayerCard({
+    player,
+    rank,
+    trend,
+  }: {
+    player: Player;
+    rank: number;
+    trend: Trend;
+  }) {
     const isTop3 = rank <= 3;
 
     const games = (player.wins ?? 0) + (player.losses ?? 0);
@@ -187,6 +224,9 @@ const PlayerCard = memo(
           } border-gradient bg-gradient-to-r ${frame} min-h-[180px]`}
         >
           <div className="flex items-center gap-3 sm:gap-4">
+            {/* ★順位の左側：矢印/横棒（前回訪問との差分） */}
+            <TrendMark trend={trend} />
+
             <RankBadge rank={rank} />
 
             <div className="relative">
@@ -260,6 +300,7 @@ const PlayerCard = memo(
     const b = next.player;
     return (
       prev.rank === next.rank &&
+      prev.trend === next.trend &&
       a.id === b.id &&
       a.handle_name === b.handle_name &&
       a.avatar_url === b.avatar_url &&
@@ -318,7 +359,11 @@ const TeamCard = memo(function TeamCard({
           </div>
 
           <div className="text-right flex-shrink-0">
-            <div className={`text-2xl sm:text-3xl font-bold ${isTop3 ? 'text-yellow-100' : 'text-purple-300'}`}>
+            <div
+              className={`text-2xl sm:text-3xl font-bold ${
+                isTop3 ? 'text-yellow-100' : 'text-purple-300'
+              }`}
+            >
               {Math.round(team.avg_rp ?? 0)}
             </div>
             <div className="text-xs sm:text-sm text-gray-400">平均RP</div>
@@ -327,7 +372,9 @@ const TeamCard = memo(function TeamCard({
 
         <div className="mt-3 sm:mt-4 grid grid-cols-4 gap-2 sm:gap-4 text-center">
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-            <div className="text-yellow-300 font-bold text-sm sm:text-base">{team.played ?? 0}</div>
+            <div className="text-yellow-300 font-bold text-sm sm:text-base">
+              {team.played ?? 0}
+            </div>
             <div className="text-xs text-gray-500">試合</div>
           </div>
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
@@ -361,19 +408,25 @@ const StatsCardsPlayers = memo(function StatsCardsPlayers({
       <div className="flex gap-4 min-w-max sm:min-w-0 sm:grid sm:grid-cols-3">
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-pink-500/20 min-w-[140px]">
           <FaChartLine className="text-3xl sm:text-4xl text-pink-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.activeCount}</div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
+            {stats.activeCount}
+          </div>
           <div className="text-gray-400 text-xs sm:text-base">アクティブプレーヤー</div>
         </div>
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20 min-w-[140px]">
           <FaFire className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.highestPoints}</div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
+            {stats.highestPoints}
+          </div>
           <div className="text-gray-400 text-xs sm:text-base">最高ポイント</div>
         </div>
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-purple-500/20 min-w-[140px]">
           <FaMedal className="text-3xl sm:text-4xl text-purple-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.averagePoints}</div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
+            {stats.averagePoints}
+          </div>
           <div className="text-gray-400 text-xs sm:text-base">平均ポイント</div>
         </div>
       </div>
@@ -391,19 +444,25 @@ const StatsCardsTeams = memo(function StatsCardsTeams({
       <div className="flex gap-4 min-w-max sm:min-w-0 sm:grid sm:grid-cols-3">
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-pink-500/20 min-w-[140px]">
           <FaUsers className="text-3xl sm:text-4xl text-pink-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.teamCount}</div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
+            {stats.teamCount}
+          </div>
           <div className="text-gray-400 text-xs sm:text-base">登録チーム</div>
         </div>
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20 min-w-[140px]">
           <FaTrophy className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.topAvgRp}</div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
+            {stats.topAvgRp}
+          </div>
           <div className="text-gray-400 text-xs sm:text-base">最高平均RP</div>
         </div>
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-purple-500/20 min-w-[140px]">
           <FaPercent className="text-3xl sm:text-4xl text-purple-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.avgOfAvgRp}</div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
+            {stats.avgOfAvgRp}
+          </div>
           <div className="text-gray-400 text-xs sm:text-base">平均RPの平均</div>
         </div>
       </div>
@@ -435,13 +494,26 @@ function RankingsInner() {
   }, [tab]);
 
   /* ── Players ── */
+  // ★PATCH: 生の players を取得（is_active が null の既存会員も取れる）
   const {
-    players,
+    data: rawPlayers,
     loading: pLoading,
     error: pError,
     retrying: pRetrying,
     refetch: pRefetch,
-  } = usePlayersData();
+  } = useFetchSupabaseData<Player>({
+    tableName: 'players',
+    // 必要カラム + フィルタ用の is_active/is_deleted/is_admin
+    select: 'id,handle_name,avatar_url,ranking_points,handicap,matches_played,wins,losses,is_active,is_deleted,is_admin',
+    orderBy: { columns: ['ranking_points', 'id'], ascending: false },
+    requireAuth: false,
+  });
+
+  // ★PATCH: null はアクティブ扱い（false のみ除外）
+  const players = useMemo(() => {
+    const arr = (rawPlayers ?? []) as Player[];
+    return arr.filter((p) => p?.is_admin !== true && p?.is_deleted !== true && p?.is_active !== false);
+  }, [rawPlayers]);
 
   const [sortByPlayers, setSortByPlayers] = useState<'points' | 'handicap'>('points');
   const [isPendingPlayers, startTransitionPlayers] = useTransition();
@@ -486,13 +558,84 @@ function RankingsInner() {
     startTransitionPlayers(() => setSortByPlayers(k));
   }, []);
 
+  /* ── ★前回訪問との差分（A方式） ── */
+  const snapshotKeyPlayers = useMemo(
+    () => `rankings_snapshot_players_${sortByPlayers}_v1`,
+    [sortByPlayers]
+  );
+
+  const prevSnapshotRef = useRef<Record<string, number> | null>(null);
+  const latestSnapshotRef = useRef<Record<string, number>>({});
+  const [trendById, setTrendById] = useState<Record<string, Trend>>({});
+
+  // 1) ページ滞在開始時に「前回訪問のスナップショット」を読む（keyが変わったら読み直す）
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(snapshotKeyPlayers);
+      prevSnapshotRef.current = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    } catch {
+      prevSnapshotRef.current = {};
+    }
+  }, [snapshotKeyPlayers]);
+
+  // 2) 今回の順位が確定したら、前回スナップショットと比較して矢印を作る（保存はしない）
+  useEffect(() => {
+    if (tab !== 'players') return;
+    if (!rankedPlayers || rankedPlayers.length === 0) {
+      setTrendById({});
+      latestSnapshotRef.current = {};
+      return;
+    }
+
+    const current: Record<string, number> = {};
+    for (const r of rankedPlayers) current[r.player.id] = r.rank;
+    latestSnapshotRef.current = current;
+
+    const prev = prevSnapshotRef.current ?? {};
+    const nextTrend: Record<string, Trend> = {};
+    for (const id of Object.keys(current)) {
+      nextTrend[id] = computeTrend(prev[id], current[id]);
+    }
+    setTrendById(nextTrend);
+  }, [tab, rankedPlayers]);
+
+  // 3) 「保存タイミング」：ページ離脱時（unmount / タブクローズ / 背景化）に今回スナップショットを保存
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (tab !== 'players') return;
+
+    const save = () => {
+      try {
+        const data = latestSnapshotRef.current;
+        if (data && Object.keys(data).length > 0) {
+          window.localStorage.setItem(snapshotKeyPlayers, JSON.stringify(data));
+        }
+      } catch {}
+    };
+
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') save();
+    };
+
+    window.addEventListener('beforeunload', save);
+    document.addEventListener('visibilitychange', onVis);
+
+    return () => {
+      save();
+      window.removeEventListener('beforeunload', save);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [snapshotKeyPlayers, tab]);
+
   const renderPlayerItem = useCallback(
     (index: number) => {
       const r = rankedPlayers[index];
       if (!r) return null;
-      return <PlayerCard key={r.player.id} player={r.player} rank={r.rank} />;
+      const trend = trendById[r.player.id] ?? 'same';
+      return <PlayerCard key={r.player.id} player={r.player} rank={r.rank} trend={trend} />;
     },
-    [rankedPlayers]
+    [rankedPlayers, trendById]
   );
 
   /* ── Teams ── */
@@ -545,7 +688,9 @@ function RankingsInner() {
         <div className="inline-block p-3 sm:p-4 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-yellow-400/20 to-orange-600/20">
           <FaTrophy className="text-4xl sm:text-5xl text-yellow-400" />
         </div>
-        <h1 className="text-3xl sm:text-4xl font-bold mb-2 sm:mb-3 text-yellow-100">🏆 ランキング</h1>
+        <h1 className="text-3xl sm:text-4xl font-bold mb-2 sm:mb-3 text-yellow-100">
+          🏆 ランキング
+        </h1>
         <p className="text-gray-400 text-sm sm:text-base">個人・チームのランキングをタブで切替</p>
       </div>
 
@@ -624,9 +769,10 @@ function RankingsInner() {
               {/* リスト */}
               {rankedPlayers.length <= 20 ? (
                 <div className="space-y-3 sm:space-y-4">
-                  {rankedPlayers.map((r) => (
-                    <PlayerCard key={r.player.id} player={r.player} rank={r.rank} />
-                  ))}
+                  {rankedPlayers.map((r) => {
+                    const trend = trendById[r.player.id] ?? 'same';
+                    return <PlayerCard key={r.player.id} player={r.player} rank={r.rank} trend={trend} />;
+                  })}
                 </div>
               ) : (
                 <Suspense fallback={<div className="text-center py-6">リストを読み込み中…</div>}>

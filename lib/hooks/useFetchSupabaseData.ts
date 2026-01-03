@@ -72,11 +72,12 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
   const inflightKeyRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastKeyRef = useRef<string | null>(null); // StrictMode の二重実行回避（キーが同じ場合のみ抑止）
+  const retryTimerRef = useRef<number | null>(null); // ★PATCH: unmount 後 setState 防止
 
   const { cols: orderCols, asc } = useMemo(() => toOrderColumns(orderBy), [orderBy]);
   const baseKey = useMemo(
     () => JSON.stringify({ tableName, select, orderCols, asc, limit, queryParams, requireAuth }),
-    [tableName, select, orderCols, asc, limit, queryParams, requireAuth]
+    [tableName, select, orderCols, asc, limit, queryParams, requireAuth],
   );
 
   const fetchOnce = useCallback(
@@ -91,7 +92,10 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
         params.set('select', select);
 
         if (queryParams) {
-          for (const [k, v] of Object.entries(queryParams)) params.set(k, v);
+          for (const [k, v] of Object.entries(queryParams)) {
+            // undefined などが混ざっても壊れないように
+            if (typeof v === 'string' && v.length > 0) params.set(k, v);
+          }
         }
 
         if (col !== '__NO_ORDER__') {
@@ -113,6 +117,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
             'Content-Type': 'application/json',
           },
           signal: abortRef.current.signal,
+          cache: 'no-store', // ★PATCH: 最新を取りたい（ランキング等）
         });
 
         if (!res.ok) {
@@ -128,7 +133,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
 
       return [];
     },
-    [tableName, select, orderCols, asc, limit, queryParams]
+    [tableName, select, orderCols, asc, limit, queryParams],
   );
 
   const fetchData = useCallback(
@@ -137,6 +142,12 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
 
       if (inflightKeyRef.current === baseKey) return; // 二重フェッチ抑止
       inflightKeyRef.current = baseKey;
+
+      // 進行中の retry タイマーがあれば止める
+      if (retryTimerRef.current != null) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
 
       setLoading(true);
       setError(null);
@@ -153,7 +164,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
       } catch (err: any) {
         if (attemptNumber < retryCount) {
           setRetrying(true);
-          setTimeout(() => {
+          retryTimerRef.current = window.setTimeout(() => {
             fetchData(attemptNumber + 1);
           }, retryDelay * attemptNumber);
         } else {
@@ -165,7 +176,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
         inflightKeyRef.current = null;
       }
     },
-    [enabled, baseKey, retryCount, retryDelay, fetchOnce, requireAuth]
+    [enabled, baseKey, retryCount, retryDelay, fetchOnce, requireAuth],
   );
 
   useEffect(() => {
@@ -178,8 +189,13 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
     }
 
     fetchData();
+
     return () => {
       abortRef.current?.abort();
+      if (retryTimerRef.current != null) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, baseKey]);
@@ -197,7 +213,13 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
  * 読み取り系ラッパ（既定で requireAuth: false）
  * =========================================================*/
 
-export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: boolean }) {
+export function useFetchPlayersData(opts?: {
+  enabled?: boolean;
+  requireAuth?: boolean;
+  includeInactive?: boolean; // 非アクティブも含める
+  includeDeleted?: boolean; // is_deleted も含める
+  includeAdmins?: boolean; // ★PATCH: 管理者も含める（既定 false）
+}) {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
     tableName: 'players',
     select: '*',
@@ -206,10 +228,25 @@ export function useFetchPlayersData(opts?: { enabled?: boolean; requireAuth?: bo
     requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
   });
 
-  const filtered = useMemo(
-    () => data.filter((p: any) => p.is_active === true && p.is_deleted !== true),
-    [data]
-  );
+  const includeInactive = opts?.includeInactive ?? false;
+  const includeDeleted = opts?.includeDeleted ?? false;
+  const includeAdmins = opts?.includeAdmins ?? false;
+
+  const filtered = useMemo(() => {
+    return (data ?? []).filter((p: any) => {
+      // ★PATCH: admin を既定で除外（ランキング等に混ざる事故防止）
+      if (!includeAdmins && p?.is_admin === true) return false;
+
+      // deleted を除外（列が無い/未設定でも動くように）
+      if (!includeDeleted && p?.is_deleted === true) return false;
+
+      // ★最重要: is_active === true ではなく「false だけ除外」
+      // これで null/未設定の既存データは “アクティブ扱い” のままになる
+      if (!includeInactive && p?.is_active === false) return false;
+
+      return true;
+    });
+  }, [data, includeInactive, includeDeleted, includeAdmins]);
 
   return { players: filtered, loading, error, retrying, refetch };
 }
@@ -239,7 +276,6 @@ async function fetchPlayersLite(playerIds: string[], requireAuth: boolean) {
   });
 
   if (!res.ok) {
-    // 補完に失敗しても一覧自体は出したいので、呼び元で握りつぶす想定
     const t = await res.text();
     throw new Error(`players fetch failed: ${t}`);
   }
@@ -252,7 +288,7 @@ async function fetchPlayersLite(playerIds: string[], requireAuth: boolean) {
 
 export function useFetchMatchesData(
   limit?: number,
-  opts?: { enabled?: boolean; requireAuth?: boolean }
+  opts?: { enabled?: boolean; requireAuth?: boolean },
 ) {
   const requireAuth = opts?.requireAuth ?? false;
 
@@ -326,18 +362,10 @@ export function useFetchMatchesData(
           // 既に入っている値は尊重し、null のときだけ埋める
           return {
             ...m,
-            winner_current_points: isNil(m?.winner_current_points)
-              ? (wp?.ranking_points ?? null)
-              : m.winner_current_points,
-            winner_current_handicap: isNil(m?.winner_current_handicap)
-              ? (wp?.handicap ?? null)
-              : m.winner_current_handicap,
-            loser_current_points: isNil(m?.loser_current_points)
-              ? (lp?.ranking_points ?? null)
-              : m.loser_current_points,
-            loser_current_handicap: isNil(m?.loser_current_handicap)
-              ? (lp?.handicap ?? null)
-              : m.loser_current_handicap,
+            winner_current_points: isNil(m?.winner_current_points) ? (wp?.ranking_points ?? null) : m.winner_current_points,
+            winner_current_handicap: isNil(m?.winner_current_handicap) ? (wp?.handicap ?? null) : m.winner_current_handicap,
+            loser_current_points: isNil(m?.loser_current_points) ? (lp?.ranking_points ?? null) : m.loser_current_points,
+            loser_current_handicap: isNil(m?.loser_current_handicap) ? (lp?.handicap ?? null) : m.loser_current_handicap,
           };
         });
 
@@ -422,7 +450,7 @@ export function useTeamsList(opts?: {
 
 export function useFetchPlayerDetail(
   playerId: string,
-  opts?: { enabled?: boolean; requireAuth?: boolean }
+  opts?: { enabled?: boolean; requireAuth?: boolean },
 ) {
   const [player, setPlayer] = useState<any>(null);
   const [matches, setMatches] = useState<any[]>([]);
@@ -452,7 +480,7 @@ export function useFetchPlayerDetail(
 
         if (requireAuth && !token) throw new Error('認証トークンが見つかりません');
 
-        // プレイヤー情報
+        // プレイヤー情報（inactiveでも取得OK）
         const playerUrl = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}&select=*`;
         const playerRes = await fetch(playerUrl, {
           headers: {
@@ -460,6 +488,7 @@ export function useFetchPlayerDetail(
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
+          cache: 'no-store',
         });
         if (!playerRes.ok) throw new Error(`Failed to fetch player: ${playerRes.status}`);
         const playerData = await playerRes.json();
@@ -476,6 +505,7 @@ export function useFetchPlayerDetail(
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
+          cache: 'no-store',
         });
         const matchesData = matchesRes.ok ? await matchesRes.json() : [];
         if (cancelled) return;
@@ -508,7 +538,9 @@ export function useFetchPlayerDetail(
 export async function updatePlayer(playerId: string, updates: any) {
   try {
     const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     if (!session) throw new Error('ログインが必要です');
     const token = session.access_token;
 
@@ -538,7 +570,9 @@ export async function updatePlayer(playerId: string, updates: any) {
 export async function createMatch(matchData: any) {
   try {
     const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     if (!session) throw new Error('ログインが必要です');
     const token = session.access_token;
 

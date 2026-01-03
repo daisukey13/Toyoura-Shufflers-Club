@@ -154,19 +154,24 @@ export default function HomePage() {
     }
   }, [user, player, loading, router]);
 
+  // ★アクティブ判定（null/未設定は「アクティブ扱い」）
+  const isActiveMemberRow = (p: any) => p?.is_active !== false && p?.is_deleted !== true;
+
   const fetchStats = async () => {
     try {
       const [matchesResult, playersResult] = await Promise.all([
         supabase.from('matches').select('id', { count: 'exact', head: true }),
-        supabase.from('players').select('id, ranking_points, is_active').eq('is_admin', false),
+        // ★ server側で is_active=true を固定しない（null を取りこぼさない）
+        supabase.from('players').select('id, ranking_points, is_active, is_deleted').eq('is_admin', false),
       ]);
 
       const players = playersResult.data ?? [];
-      const activePlayers = players.filter((p) => (p as any).is_active);
+      const activePlayers = players.filter(isActiveMemberRow);
+
       const avgPoints =
-        players.length > 0
+        activePlayers.length > 0
           ? Math.round(
-              players.reduce((sum: number, p: any) => sum + (p.ranking_points ?? 0), 0) / players.length,
+              activePlayers.reduce((sum: number, p: any) => sum + (p.ranking_points ?? 0), 0) / activePlayers.length,
             )
           : 1000;
 
@@ -182,15 +187,16 @@ export default function HomePage() {
 
   const fetchTopPlayers = async () => {
     try {
+      // ★ いったん多めに取ってから active 判定で絞る（null を取りこぼさない）
       const { data } = await supabase
         .from('players')
-        .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses')
-        .eq('is_active', true)
+        .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses, is_active, is_deleted')
         .eq('is_admin', false)
         .order('ranking_points', { ascending: false })
-        .limit(5);
+        .limit(20);
 
-      setTopPlayers(data ?? []);
+      const filtered = (data ?? []).filter(isActiveMemberRow) as TopPlayer[];
+      setTopPlayers(filtered.slice(0, 5));
     } catch (error) {
       console.error('Error fetching top players:', error);
     }
@@ -217,10 +223,13 @@ export default function HomePage() {
         const res = await supabase
           .from('match_details')
           .select('*')
-          .order('created_at', { ascending: false })
+          // ★ created_at が無いビューでも落ちないように match_date を使う
+          .order('match_date', { ascending: false })
           .limit(6);
-        if (!res.error)
-          data = (res.data ?? []).map((m: any) => ({ ...m, mode: 'singles' })) as RecentMatch[];
+
+        if (!res.error) {
+          data = (res.data ?? []).map((m: any) => ({ ...m, mode: m?.mode ?? 'singles' })) as RecentMatch[];
+        }
       }
 
       setRecentMatches(data ?? []);
@@ -370,11 +379,7 @@ export default function HomePage() {
 
   // メンバー列（アバター＋名前を横並び / 団体戦用）
   const TeamMembersInline = ({ teamId }: { teamId?: string | null }) => {
-    const members = useMemo(() => {
-      if (!teamId) return [] as MemberLite[];
-      return teamMembersMap[teamId] ?? [];
-    }, [teamId]);
-
+    const members: MemberLite[] = teamId ? teamMembersMap[teamId] ?? [] : [];
     if (!teamId || members.length === 0) return null;
 
     return (

@@ -59,7 +59,7 @@ async function getDefDummy(): Promise<DefDummy> {
 
   // players に def(is_dummy=true) がいる前提（ここは “関数内” にする：トップレベル await 禁止）
   const { data, error } = await db
-    .from('players')
+    .from('players').eq('is_active', true)
     .select('id, handle_name')
     .eq('handle_name', 'def')
     .eq('is_dummy', true)

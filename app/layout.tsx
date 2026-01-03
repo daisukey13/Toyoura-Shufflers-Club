@@ -3,16 +3,17 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import Link from 'next/link';
 import AuthCookieSync from './AuthCookieSync';
-import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import LoginStatusIcon from './LoginStatusIcon';
 import {
   FaHome,
   FaTrophy,
   FaUsers,
   FaFlagCheckered,
   FaIdBadge,
-  FaUserCircle,
 } from 'react-icons/fa';
+
+import InteractionRecovery from '@/components/system/InteractionRecovery';
+
 
 export const metadata: Metadata = {
   title: 'Toyoura Shufflers Club',
@@ -26,60 +27,15 @@ export const viewport: Viewport = {
   themeColor: '#111827',
 };
 
-// 最新のログイン状態を反映
+//（残してOK：ログイン状態をクライアントで即反映したい意図なら）
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // サーバで認証状態チェック（Server Component では cookie の set/remove が禁止のため try/catch で握り潰す）
-  let authed = false;
-  try {
-    const cookieStore = cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
-          },
-          // Server Component の render 中は cookie を変更できないため、ここは失敗しても無視
-          set(name: string, value: string, options: CookieOptions) {
-            try {
-              cookieStore.set({ name, value, ...options });
-            } catch {
-              /* no-op on server component render */
-            }
-          },
-          remove(name: string, options: CookieOptions) {
-            try {
-              cookieStore.set({ name, value: '', ...options });
-            } catch {
-              /* no-op on server component render */
-            }
-          },
-        },
-      }
-    );
-    const { data } = await supabase.auth.getUser();
-    authed = !!data.user;
-  } catch {
-    authed = false;
-  }
-
-  const statusRing = authed ? 'ring-2 ring-green-400/70' : 'ring-2 ring-purple-400/60';
-  const statusDotClass =
-    'absolute -right-0.5 -top-0.5 w-3.5 h-3.5 rounded-full ' +
-    (authed
-      ? 'bg-green-400 shadow-[0_0_12px_2px_rgba(74,222,128,0.6)]'
-      : 'bg-purple-400 shadow-[0_0_12px_2px_rgba(192,132,252,0.6)]');
-
-  const loginStatusHref = authed ? '/mypage' : '/login?redirect=/mypage';
-
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja" suppressHydrationWarning>
       <body className="min-h-screen bg-[#2a2a3e] text-gray-100 antialiased">
-        {/* クライアント側での Supabase セッション→Cookie 同期 */}
+        {/* クライアント側で Supabase セッション→Cookie 同期 */}
         <AuthCookieSync />
 
         {/* ヘッダー（アイコンのみ） */}
@@ -141,16 +97,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <FaIdBadge className="text-3xl sm:text-4xl" />
               </Link>
 
-              <Link
-                href={loginStatusHref}
-                prefetch={false}
-                className={`relative p-3 sm:p-4 rounded-2xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/30 ${statusRing}`}
-                aria-label={authed ? 'ログイン中' : '未ログイン'}
-                title={authed ? 'ログイン中' : '未ログイン'}
-              >
-                <FaUserCircle className="text-3xl sm:text-4xl" />
-                <span className={statusDotClass} />
-              </Link>
+              {/* ここだけクライアントで whoami 判定（UIは同じ） */}
+              <LoginStatusIcon />
             </div>
           </nav>
         </header>

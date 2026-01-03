@@ -1,4 +1,3 @@
-// app/(main)/matches/register/singles/page.tsx
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -24,6 +23,8 @@ type Player = {
   ranking_points: number;
   handicap: number;
   avatar_url?: string | null;
+  // ★追加：非表示制御に使う（hookが返していればここで絞れる）
+  is_active?: boolean | null;
 };
 
 type PlayerAdminRow = {
@@ -128,6 +129,15 @@ export default function SinglesRegisterPage() {
     error: playersError,
   } = useFetchPlayersData({ enabled: authed === true, requireAuth: true });
 
+  // ★非アクティブを候補から除外（試合登録で選べないようにする）
+  const activePlayers = useMemo(() => {
+    return (players as Player[]).filter((p: any) => p?.is_active !== false);
+  }, [players]);
+
+  const opponents = useMemo(() => {
+    return (activePlayers as Player[]).filter((p) => p.id !== me?.id);
+  }, [activePlayers, me?.id]);
+
   // ==== フォーム状態 ====
   const [matchDate, setMatchDate] = useState(new Date().toISOString().slice(0, 16));
   const [opponentId, setOpponentId] = useState('');
@@ -167,8 +177,6 @@ export default function SinglesRegisterPage() {
       setLoserScore((s) => clamp(s, 0, 14));
     }
   }, [endReason]);
-
-  const opponents = (players as Player[]).filter((p) => p.id !== me?.id);
 
   const getScoreLimits = () => {
     if (endReason === 'normal') {
@@ -373,7 +381,7 @@ export default function SinglesRegisterPage() {
                     className="w-full px-3 py-2 bg-purple-900/30 border border-amber-500/30 rounded-lg text-yellow-100"
                   >
                     <option value="">選択してください</option>
-                    {players.map((p: any) => (
+                    {(activePlayers as Player[]).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.handle_name}
                       </option>
@@ -388,7 +396,7 @@ export default function SinglesRegisterPage() {
                     className="w-full px-3 py-2 bg-purple-900/30 border border-amber-500/30 rounded-lg text-yellow-100"
                   >
                     <option value="">選択してください</option>
-                    {players.map((p: any) => (
+                    {(activePlayers as Player[]).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.handle_name}
                       </option>

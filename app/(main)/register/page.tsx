@@ -1,11 +1,10 @@
 // app/(main)/register/page.tsx
 'use client';
 
-import { restGet, restPost, restPatch } from '@/lib/supabase/rest';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import {
   FaUserPlus, FaUser, FaEnvelope, FaPhone, FaMapMarkerAlt,
   FaGamepad, FaCheckCircle, FaExclamationCircle,
@@ -24,6 +23,9 @@ type FormData = {
   avatar_url: string;
   agreeToTerms: boolean;
   isHighSchoolOrAbove: boolean;
+
+  // ★追加：管理者の対面登録モード
+  adminAssisted: boolean;
 };
 
 const addressOptions = [
@@ -38,8 +40,35 @@ const PASSCODE = process.env.NEXT_PUBLIC_SIGNUP_PASSCODE || '';
 const RATING_DEFAULT = Number(process.env.NEXT_PUBLIC_RATING_DEFAULT ?? 1000);
 const HANDICAP_DEFAULT = Number(process.env.NEXT_PUBLIC_HANDICAP_DEFAULT ?? 30);
 
+// ★簡易ランダム生成（外部依存なし）
+function randDigits(len = 6) {
+  let s = '';
+  for (let i = 0; i < len; i++) s += String(Math.floor(Math.random() * 10));
+  return s;
+}
+function genProxyEmail() {
+  // 例: 20251231123456-123456@toyoura.online
+  const stamp = new Date();
+  const y = stamp.getFullYear();
+  const mo = String(stamp.getMonth() + 1).padStart(2, '0');
+  const d = String(stamp.getDate()).padStart(2, '0');
+  const hh = String(stamp.getHours()).padStart(2, '0');
+  const mm = String(stamp.getMinutes()).padStart(2, '0');
+  const ss = String(stamp.getSeconds()).padStart(2, '0');
+  return `${y}${mo}${d}${hh}${mm}${ss}-${randDigits(6)}@toyoura.online`;
+}
+function genPassword(len = 14) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  let s = '';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
 export default function RegisterPage() {
   const router = useRouter();
+
+  // ★他ページと同じ Supabase client に統一（ここが重要）
+  const supabase = createClient();
 
   // 毎回ロックから始める（PASSCODE が空なら最初から解錠）
   const [unlocked, setUnlocked] = useState<boolean>(PASSCODE.length === 0);
@@ -65,12 +94,21 @@ export default function RegisterPage() {
     avatar_url: '',
     agreeToTerms: false,
     isHighSchoolOrAbove: false,
+    adminAssisted: false, // ★追加
   });
 
   const [loading, setLoading] = useState(false);
   const [handleNameError, setHandleNameError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [checkingHandleName, setCheckingHandleName] = useState(false);
+
+  // ★管理者判定
+  const [adminChecking, setAdminChecking] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminNote, setAdminNote] = useState<string | null>(null);
+
+  // ★対面登録で作ったログイン情報（表示用）
+  const [createdCreds, setCreatedCreds] = useState<{ email: string; password: string } | null>(null);
 
   // ---- helpers -------------------------------------------------------------
 
@@ -81,12 +119,76 @@ export default function RegisterPage() {
       .eq('handle_name', handle)
       .limit(1)
       .maybeSingle();
+
     if (error) {
       if (process.env.NODE_ENV !== 'production') console.warn('[ensureHandleUnique]', error.message);
       return true;
     }
     return !data;
   }
+
+  // ★管理者チェック：ログイン中ユーザー → players.is_admin or metadata を確認
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setAdminChecking(true);
+      setAdminNote(null);
+      try {
+        const { data: ures, error: uerr } = await supabase.auth.getUser();
+        if (uerr) throw uerr;
+
+        const u = ures.user;
+        if (!u) {
+          if (!alive) return;
+          setIsAdmin(false);
+          setAdminNote('管理者チェック: 未ログイン');
+          return;
+        }
+
+        // まず metadata 側を軽く見る（あれば即OK）
+        const metaIsAdmin =
+          Boolean((u.user_metadata as any)?.is_admin) ||
+          Boolean((u.app_metadata as any)?.is_admin) ||
+          (u.app_metadata as any)?.role === 'admin';
+
+        if (metaIsAdmin) {
+          if (!alive) return;
+          setIsAdmin(true);
+          setAdminNote('管理者ログイン中（metadata判定）');
+          return;
+        }
+
+        // players テーブルから is_admin を確認
+        const { data, error } = await supabase
+          .from('players')
+          .select('is_admin')
+          .eq('id', u.id)
+          .maybeSingle();
+
+        if (error) {
+          if (!alive) return;
+          setIsAdmin(false);
+          setAdminNote(`管理者チェック失敗: ${error.message}`);
+          return;
+        }
+
+        const ok = Boolean((data as any)?.is_admin);
+        if (!alive) return;
+        setIsAdmin(ok);
+        setAdminNote(ok ? '管理者ログイン中' : '管理者ではありません');
+      } catch (e: any) {
+        if (!alive) return;
+        setIsAdmin(false);
+        setAdminNote(e?.message ?? '管理者チェックに失敗しました');
+      } finally {
+        if (!alive) return;
+        setAdminChecking(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [supabase]);
 
   useEffect(() => {
     if (!formData.handle_name || formData.handle_name.length < 3) {
@@ -107,7 +209,12 @@ export default function RegisterPage() {
     };
   }, [formData.handle_name]);
 
+  // ★adminAssisted のときはパスワード検証をスキップ
   useEffect(() => {
+    if (formData.adminAssisted) {
+      setPasswordError('');
+      return;
+    }
     if (formData.password && formData.password.length < 6) {
       setPasswordError('パスワードは6文字以上で設定してください');
     } else if (formData.passwordConfirm && formData.password !== formData.passwordConfirm) {
@@ -115,7 +222,7 @@ export default function RegisterPage() {
     } else {
       setPasswordError('');
     }
-  }, [formData.password, formData.passwordConfirm]);
+  }, [formData.password, formData.passwordConfirm, formData.adminAssisted]);
 
   // パスコード送信
   const onSubmitPasscode = (e: React.FormEvent<HTMLFormElement>) => {
@@ -148,12 +255,24 @@ export default function RegisterPage() {
       alert('利用規約に同意してください。');
       return;
     }
-    if (handleNameError || passwordError) {
+    if (handleNameError) {
       alert('入力内容を確認してください。');
+      return;
+    }
+    // ★通常登録のみパスワードエラーをチェック
+    if (!formData.adminAssisted && passwordError) {
+      alert('入力内容を確認してください。');
+      return;
+    }
+    // ★対面登録は管理者必須
+    if (formData.adminAssisted && (adminChecking || !isAdmin)) {
+      alert('管理者ログインが確認できないため、対面登録モードは利用できません。');
       return;
     }
 
     setLoading(true);
+    setCreatedCreds(null);
+
     try {
       const uniqueNow = await ensureHandleUnique(formData.handle_name);
       if (!uniqueNow) {
@@ -162,10 +281,21 @@ export default function RegisterPage() {
         return;
       }
 
+      // ★対面登録時は email/password を自動生成
+      const email = formData.adminAssisted ? genProxyEmail() : formData.email.trim();
+      const password = formData.adminAssisted ? genPassword() : formData.password.trim();
+
+      // ★対面登録: もし signUp でセッションが新規ユーザーに切り替わっても戻せるように退避
+      const { data: s0 } = await supabase.auth.getSession();
+      const adminTokens =
+        formData.adminAssisted && s0.session
+          ? { access_token: s0.session.access_token, refresh_token: s0.session.refresh_token }
+          : null;
+
       // 1) Auth ユーザー作成
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: formData.email.trim(),
-        password: formData.password.trim(),
+        email,
+        password,
         options: { data: { handle_name: formData.handle_name, full_name: formData.full_name } },
       });
       if (authError || !authData?.user) throw authError ?? new Error('ユーザー作成に失敗しました');
@@ -197,7 +327,7 @@ export default function RegisterPage() {
         const base: Record<string, any> = {
           [key]: userId,
           full_name: formData.full_name,
-          email: formData.email.trim(),
+          email,
           phone: formData.phone.trim(),
         };
         const { error } = await supabase.from('players_private').upsert(base, { onConflict: key } as any);
@@ -208,6 +338,28 @@ export default function RegisterPage() {
         }
       }
       if (!saved && lastErr) throw lastErr;
+
+      // ★対面登録: 管理者セッションへ戻す（自動ログインが発生した場合の対策）
+      if (formData.adminAssisted && adminTokens) {
+        const { data: uNow } = await supabase.auth.getUser();
+        // “今のユーザー” が admin じゃない（＝新規ユーザーに切り替わってる）時だけ戻す
+        // ※ admin 判定は先に済んでるので、ここは単純比較でOK
+        if (uNow.user && !isAdmin) {
+          // ここには普通来ない想定
+        }
+        if (uNow.user && uNow.user.email === email) {
+          const { error: se } = await supabase.auth.setSession(adminTokens);
+          if (se) console.warn('[admin restore] failed:', se.message);
+        }
+      }
+
+      if (formData.adminAssisted) {
+        setCreatedCreds({ email, password });
+        alert('対面登録が完了しました（ログイン情報を画面下に表示しました）。');
+        // そのまま続けて登録したい場合が多いので、画面は残す（UI維持）
+        // 必要なら admin/dashboard へ飛ばす場合はここを router.replace('/admin/dashboard') に
+        return;
+      }
 
       alert('プレイヤー登録が完了しました！確認メールをご確認ください。');
       router.replace(`/players/${userId}`);
@@ -235,6 +387,8 @@ export default function RegisterPage() {
   };
 
   // ---- UI ------------------------------------------------------------------
+
+  const adminAssistDisabled = adminChecking || !isAdmin;
 
   return (
     <div className="min-h-screen bg-[#2a2a3e] pb-20 lg:pb-8">
@@ -341,6 +495,51 @@ export default function RegisterPage() {
                   アカウント情報
                 </h2>
 
+                {/* ★追加：管理者の対面登録 */}
+                <div className="p-3 rounded-xl border border-purple-500/20 bg-purple-900/20">
+                  <label className="flex items-start cursor-pointer gap-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.adminAssisted}
+                      disabled={adminAssistDisabled}
+                      onChange={(e) =>
+                        setFormData((v) => ({
+                          ...v,
+                          adminAssisted: e.target.checked,
+                          // 対面ONにしたら入力不要項目を一旦クリア（UIはそのまま）
+                          ...(e.target.checked
+                            ? { email: '', password: '', passwordConfirm: '' }
+                            : {}),
+                        }))
+                      }
+                      className="mt-1 w-5 h-5 bg-gray-800 border-purple-500 text-purple-600 rounded focus:ring-purple-500 disabled:opacity-50"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm sm:text-base text-gray-200">
+                        管理者が対面で登録する（メールアドレス無しプレーヤー）
+                      </div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        {adminChecking ? (
+                          <span className="inline-flex items-center gap-2">
+                            <FaSpinner className="animate-spin" /> 管理者ログイン状態を確認中…
+                          </span>
+                        ) : isAdmin ? (
+                          <span className="text-green-300">管理者ログイン中：チェック可能です</span>
+                        ) : (
+                          <span className="text-yellow-300">
+                            管理者ログインが確認できないため無効（{adminNote ?? '不明'}）
+                          </span>
+                        )}
+                      </div>
+                      {formData.adminAssisted && isAdmin && (
+                        <div className="mt-2 text-xs text-gray-300">
+                          メール/パスワードは自動生成されます（@toyoura.online）。
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-purple-300 mb-2">
                     <FaEnvelope className="inline mr-2" />
@@ -348,11 +547,12 @@ export default function RegisterPage() {
                   </label>
                   <input
                     type="email"
-                    required
+                    required={!formData.adminAssisted}
+                    disabled={formData.adminAssisted}
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
-                    placeholder="例: example@email.com"
+                    className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 disabled:opacity-50"
+                    placeholder={formData.adminAssisted ? '（対面登録モードでは自動生成されます）' : '例: example@email.com'}
                   />
                 </div>
 
@@ -363,13 +563,14 @@ export default function RegisterPage() {
                   </label>
                   <input
                     type="password"
-                    required
+                    required={!formData.adminAssisted}
+                    disabled={formData.adminAssisted}
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all disabled:opacity-50 ${
                       passwordError && formData.password ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                     }`}
-                    placeholder="パスワードを入力"
+                    placeholder={formData.adminAssisted ? '（自動生成）' : 'パスワードを入力'}
                   />
                 </div>
 
@@ -380,16 +581,26 @@ export default function RegisterPage() {
                   </label>
                   <input
                     type="password"
-                    required
+                    required={!formData.adminAssisted}
+                    disabled={formData.adminAssisted}
                     value={formData.passwordConfirm}
                     onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
-                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
+                    className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all disabled:opacity-50 ${
                       passwordError && formData.passwordConfirm ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
                     }`}
-                    placeholder="パスワードを再入力"
+                    placeholder={formData.adminAssisted ? '（自動生成）' : 'パスワードを再入力'}
                   />
-                  {passwordError && <p className="mt-1 text-sm text-red-400">{passwordError}</p>}
+                  {!formData.adminAssisted && passwordError && <p className="mt-1 text-sm text-red-400">{passwordError}</p>}
                 </div>
+
+                {/* ★対面登録で作った資格情報を表示 */}
+                {createdCreds && (
+                  <div className="p-3 rounded-xl border border-green-500/30 bg-green-500/10 text-sm text-gray-200">
+                    <div className="font-semibold text-green-200 mb-1">対面登録のログイン情報（記録用）</div>
+                    <div className="text-xs text-gray-300 break-all">Email: {createdCreds.email}</div>
+                    <div className="text-xs text-gray-300 break-all">Password: {createdCreds.password}</div>
+                  </div>
+                )}
               </div>
 
               {/* 連絡先 + アバター */}
@@ -487,9 +698,10 @@ export default function RegisterPage() {
                   disabled={
                     loading ||
                     !!handleNameError ||
-                    !!passwordError ||
+                    (!formData.adminAssisted && !!passwordError) ||
                     !formData.isHighSchoolOrAbove ||
-                    !formData.agreeToTerms
+                    !formData.agreeToTerms ||
+                    (formData.adminAssisted && (adminChecking || !isAdmin))
                   }
                   className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text白 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
                 >

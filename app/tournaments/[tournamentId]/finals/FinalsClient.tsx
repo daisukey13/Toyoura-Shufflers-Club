@@ -66,6 +66,13 @@ const reasonLabel = (r: string) => {
   return v;
 };
 
+// ✅ end_reason / finish_reason 列差異を吸収（最小）
+const isMissingColumnError = (err: any) => {
+  const code = String(err?.code ?? '');
+  const msg = String(err?.message ?? '');
+  return code === '42703' || msg.includes('does not exist') || msg.toLowerCase().includes('column');
+};
+
 function PlayerCardMini({ p }: { p?: Player }) {
   return (
     <div className="flex items-center gap-2 min-w-0">
@@ -319,6 +326,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     return { pidA, pidB };
   };
 
+  // ✅ end_reason / finish_reason のどちらでも動く upsert（最小）
   const upsertMatchSafe = async (row: {
     bracket_id: string;
     round_no: number;
@@ -329,6 +337,30 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     loser_score: number | null;
     end_reason?: string | null;
   }) => {
+    const reason = String(row.end_reason ?? 'normal');
+
+    const payloadEnd: any = {
+      bracket_id: row.bracket_id,
+      round_no: row.round_no,
+      match_no: row.match_no,
+      winner_id: row.winner_id,
+      loser_id: row.loser_id,
+      winner_score: row.winner_score,
+      loser_score: row.loser_score,
+      end_reason: reason,
+    };
+
+    const payloadFinish: any = {
+      bracket_id: row.bracket_id,
+      round_no: row.round_no,
+      match_no: row.match_no,
+      winner_id: row.winner_id,
+      loser_id: row.loser_id,
+      winner_score: row.winner_score,
+      loser_score: row.loser_score,
+      finish_reason: reason,
+    };
+
     const { data: found, error: fErr } = await db
       .from('final_matches')
       .select('id')
@@ -339,13 +371,36 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     if (fErr) throw fErr;
 
     if (found?.id) {
-      const { error: uErr } = await db.from('final_matches').update(row).eq('id', found.id);
-      if (uErr) throw uErr;
+      // update
+      const tryUpdate = async (payload: any) => {
+        const { error } = await db.from('final_matches').update(payload).eq('id', found.id);
+        if (error) throw error;
+      };
+
+      try {
+        await tryUpdate(payloadEnd);
+      } catch (e: any) {
+        if (isMissingColumnError(e)) {
+          await tryUpdate(payloadFinish);
+        } else {
+          throw e;
+        }
+      }
       return String(found.id);
     } else {
-      const { data: ins, error: iErr } = await db.from('final_matches').insert(row).select('id').single();
-      if (iErr) throw iErr;
-      return String(ins?.id);
+      // insert
+      const tryInsert = async (payload: any) => {
+        const { data: ins, error } = await db.from('final_matches').insert(payload).select('id').single();
+        if (error) throw error;
+        return String(ins?.id);
+      };
+
+      try {
+        return await tryInsert(payloadEnd);
+      } catch (e: any) {
+        if (isMissingColumnError(e)) return await tryInsert(payloadFinish);
+        throw e;
+      }
     }
   };
 

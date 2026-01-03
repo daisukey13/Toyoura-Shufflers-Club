@@ -127,7 +127,7 @@ export async function POST(req: NextRequest, ctx: { params: { matchId: string } 
     const matchId = String(ctx?.params?.matchId ?? '').trim();
     if (!matchId) return NextResponse.json({ ok: false, message: 'matchId が不正です。' }, { status: 400 });
 
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     const supa = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
