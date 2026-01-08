@@ -137,6 +137,25 @@ function pickString(m: any, keys: string[]): string | null {
   return null;
 }
 
+/**
+ * ✅ 日付降順のために「使える日付カラム」を優先順で拾う
+ * match_date が無い/壊れているデータが混ざっても並びが崩れないようにする（UIは維持）
+ */
+function getMatchDateValue(m: any): string | null {
+  return (
+    pickString(m, ['match_date', 'played_at', 'match_datetime', 'game_date', 'created_at', 'updated_at']) ?? null
+  );
+}
+function getMatchTimeMs(m: any): number {
+  const v = getMatchDateValue(m);
+  if (!v) return 0;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+function isSameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
 const ModeChip = ({ mode }: { mode?: MatchDetails['mode'] }) => {
   const isTeams = mode === 'teams';
   return (
@@ -169,7 +188,11 @@ const FinishReasonChip = ({ reason }: { reason?: string | null }) => {
 
 const ScoreDiffPill = ({ diff, highlight }: { diff: number; highlight?: 'upset' }) => {
   const color =
-    diff >= 10 ? 'from-red-500 to-red-600' : diff >= 5 ? 'from-orange-500 to-orange-600' : 'from-blue-500 to-blue-600';
+    diff >= 10
+      ? 'from-red-500 to-red-600'
+      : diff >= 5
+      ? 'from-orange-500 to-orange-600'
+      : 'from-blue-500 to-blue-600';
   return (
     <div
       className={`inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 rounded-full shadow-lg ${
@@ -186,12 +209,24 @@ const ScoreDiffPill = ({ diff, highlight }: { diff: number; highlight?: 'upset' 
 
 const MetaLine = ({ m }: { m: MatchDetails }) => {
   const d = useMemo(() => {
-    const date = new Date(m.match_date);
+    const ms = getMatchTimeMs(m);
+    if (!ms) return '—';
+    const date = new Date(ms);
     const today = new Date();
-    const sameDay = date.toDateString() === today.toDateString();
-    if (sameDay) return `今日 ${date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
+    if (isSameDay(date, today)) {
+      return `今日 ${date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
+    }
     return date.toLocaleString();
-  }, [m.match_date]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    // 代表的な候補を依存に含める（UI維持、無駄な再計算も抑える）
+    (m as any).match_date,
+    (m as any).played_at,
+    (m as any).match_datetime,
+    (m as any).game_date,
+    (m as any).created_at,
+    (m as any).updated_at,
+  ]);
 
   return (
     <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 sm:mb-4 text-xs sm:text-sm">
@@ -217,7 +252,13 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
   );
 };
 
-const SinglesCard = memo(function SinglesCard({ m, playersById }: { m: MatchDetails; playersById: Record<string, PlayerLite> }) {
+const SinglesCard = memo(function SinglesCard({
+  m,
+  playersById,
+}: {
+  m: MatchDetails;
+  playersById: Record<string, PlayerLite>;
+}) {
   const wid = m.winner_id ?? '';
   const lid = m.loser_id ?? '';
 
@@ -230,35 +271,53 @@ const SinglesCard = memo(function SinglesCard({ m, playersById }: { m: MatchDeta
     m.loser_name ?? pickString(m, ['loser_handle_name', 'loser_player_name']) ?? lProfile?.handle_name ?? '';
 
   const wAvatar =
-    m.winner_avatar ?? m.winner_avatar_url ?? pickString(m, ['winner_avatar_url', 'winner_avatar']) ?? wProfile?.avatar_url ?? null;
+    m.winner_avatar ??
+    m.winner_avatar_url ??
+    pickString(m, ['winner_avatar_url', 'winner_avatar']) ??
+    wProfile?.avatar_url ??
+    null;
 
   const lAvatar =
-    m.loser_avatar ?? m.loser_avatar_url ?? pickString(m, ['loser_avatar_url', 'loser_avatar']) ?? lProfile?.avatar_url ?? null;
+    m.loser_avatar ??
+    m.loser_avatar_url ??
+    pickString(m, ['loser_avatar_url', 'loser_avatar']) ??
+    lProfile?.avatar_url ??
+    null;
 
   const winnerScore = pickNumber(m, ['winner_score']) ?? 15;
   const loserScore = pickNumber(m, ['loser_score']) ?? 0;
   const scoreDiff = Math.max(0, winnerScore - loserScore);
 
-const wDelta =
-  pickNumber(m, ['winner_points_delta', 'winner_points_change']) ?? 0;
-
-const lDelta =
-  pickNumber(m, ['loser_points_delta', 'loser_points_change']) ?? 0;
-
+  const wDelta = pickNumber(m, ['winner_points_delta', 'winner_points_change']) ?? 0;
+  const lDelta = pickNumber(m, ['loser_points_delta', 'loser_points_change']) ?? 0;
 
   const affects = typeof m.affects_rating === 'boolean' ? m.affects_rating : true;
 
-  const wRP = pickNumber(m, ['winner_current_points', 'winner_ranking_points', 'winner_points', 'winner_rp']) ?? wProfile?.ranking_points ?? 0;
-  const wHC = pickNumber(m, ['winner_current_handicap', 'winner_handicap', 'winner_hc']) ?? wProfile?.handicap ?? 0;
-  const lRP = pickNumber(m, ['loser_current_points', 'loser_ranking_points', 'loser_points', 'loser_rp']) ?? lProfile?.ranking_points ?? 0;
-  const lHC = pickNumber(m, ['loser_current_handicap', 'loser_handicap', 'loser_hc']) ?? lProfile?.handicap ?? 0;
+  const wRP =
+    pickNumber(m, ['winner_current_points', 'winner_ranking_points', 'winner_points', 'winner_rp']) ??
+    wProfile?.ranking_points ??
+    0;
+  const wHC =
+    pickNumber(m, ['winner_current_handicap', 'winner_handicap', 'winner_hc']) ??
+    wProfile?.handicap ??
+    0;
+  const lRP =
+    pickNumber(m, ['loser_current_points', 'loser_ranking_points', 'loser_points', 'loser_rp']) ??
+    lProfile?.ranking_points ??
+    0;
+  const lHC =
+    pickNumber(m, ['loser_current_handicap', 'loser_handicap', 'loser_hc']) ??
+    lProfile?.handicap ??
+    0;
 
   const isUpset = useMemo(() => wRP < lRP - 100 || wHC > lHC + 5, [wRP, lRP, wHC, lHC]);
 
   return (
     <div
       className={`bg-gray-900/60 backdrop-blur-md rounded-xl p-4 sm:p-6 border transition-all relative ${
-        isUpset ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10' : 'border-purple-500/30 hover:border-purple-400/50'
+        isUpset
+          ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10'
+          : 'border-purple-500/30 hover:border-purple-400/50'
       }`}
     >
       {isUpset && (
@@ -285,7 +344,9 @@ const lDelta =
               <LazyImage
                 src={wAvatar}
                 alt={wName || ''}
-                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${isUpset ? 'border-yellow-500/50' : 'border-green-500/50'}`}
+                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${
+                  isUpset ? 'border-yellow-500/50' : 'border-green-500/50'
+                }`}
               />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{wName}</p>
@@ -394,7 +455,13 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
   );
 }
 
-const TeamsCard = memo(function TeamsCard({ m, membersByTeam }: { m: MatchDetails; membersByTeam: Record<string, MemberProfile[]> }) {
+const TeamsCard = memo(function TeamsCard({
+  m,
+  membersByTeam,
+}: {
+  m: MatchDetails;
+  membersByTeam: Record<string, MemberProfile[]>;
+}) {
   const winnerScore = pickNumber(m, ['winner_score']) ?? 15;
   const loserScore = pickNumber(m, ['loser_score']) ?? 0;
   const scoreDiff = Math.max(0, winnerScore - loserScore);
@@ -414,7 +481,9 @@ const TeamsCard = memo(function TeamsCard({ m, membersByTeam }: { m: MatchDetail
                 <FaUsers className="text-yellow-300" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.winner_team_name ?? '—'}</p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
+                  {m.winner_team_name ?? '—'}
+                </p>
                 <p className="text-xs sm:text-sm text-green-400">勝利</p>
                 <TeamMembersRow members={winnerMembers} />
               </div>
@@ -435,7 +504,9 @@ const TeamsCard = memo(function TeamsCard({ m, membersByTeam }: { m: MatchDetail
                 <FaUsers className="text-purple-200" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.loser_team_name ?? '—'}</p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
+                  {m.loser_team_name ?? '—'}
+                </p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
                 <TeamMembersRow members={loserMembers} />
               </div>
@@ -467,6 +538,7 @@ export default function MatchesPage() {
   const filteredSortedMatches = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const now = new Date();
+    const nowMs = now.getTime();
 
     const filtered = (matches as MatchDetails[]).filter((m) => {
       const searchHit =
@@ -478,18 +550,29 @@ export default function MatchesPage() {
         (m.venue ?? '').toLowerCase().includes(term) ||
         (m.tournament_name ?? '').toLowerCase().includes(term);
 
-      const typeHit = filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
+      const typeHit =
+        filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
 
-      const d = new Date(m.match_date);
+      // ✅ 日付フィルタも安全化（match_dateが壊れていても落ちない）
+      const ms = getMatchTimeMs(m);
       let dateHit = true;
-      if (dateFilter === 'today') dateHit = d.toDateString() === now.toDateString();
-      else if (dateFilter === 'week') dateHit = d >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      else if (dateFilter === 'month') dateHit = d >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      if (dateFilter !== 'all') {
+        if (!ms) {
+          dateHit = false;
+        } else if (dateFilter === 'today') {
+          dateHit = isSameDay(new Date(ms), now);
+        } else if (dateFilter === 'week') {
+          dateHit = ms >= nowMs - 7 * 24 * 60 * 60 * 1000;
+        } else if (dateFilter === 'month') {
+          dateHit = ms >= nowMs - 30 * 24 * 60 * 60 * 1000;
+        }
+      }
 
       return searchHit && typeHit && dateHit;
     });
 
-    filtered.sort((a, b) => +new Date(b.match_date) - +new Date(a.match_date));
+    // ✅ 要件：日付降順（新しい→古い）を「確実に」保証
+    filtered.sort((a, b) => getMatchTimeMs(b) - getMatchTimeMs(a));
     return filtered;
   }, [matches, searchTerm, filter, dateFilter]);
 
@@ -599,7 +682,13 @@ export default function MatchesPage() {
   const stats = useMemo(() => {
     const arr = matches as MatchDetails[];
     const totalMatches = arr.length;
-    const todayMatches = arr.filter((m) => new Date(m.match_date).toDateString() === new Date().toDateString()).length;
+
+    const today = new Date();
+    const todayMatches = arr.filter((m) => {
+      const ms = getMatchTimeMs(m);
+      return ms ? isSameDay(new Date(ms), today) : false;
+    }).length;
+
     const tournamentMatches = arr.filter((m) => !!m.is_tournament).length;
 
     const avgScoreDiff =
@@ -622,7 +711,11 @@ export default function MatchesPage() {
       const m = filteredSortedMatches[index];
       if (!m) return null;
       const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
-      return isTeams ? <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} /> : <SinglesCard key={m.id} m={m} playersById={playersById} />;
+      return isTeams ? (
+        <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
+      ) : (
+        <SinglesCard key={m.id} m={m} playersById={playersById} />
+      );
     },
     [filteredSortedMatches, membersByTeam, playersById],
   );
@@ -717,10 +810,18 @@ export default function MatchesPage() {
                   onChange={(e) => setDateFilter(e.target.value as any)}
                   className="px-3 sm:px-4 py-2 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 text-sm sm:text-base"
                 >
-                  <option value="all" className="bg-gray-800">全期間</option>
-                  <option value="today" className="bg-gray-800">今日</option>
-                  <option value="week" className="bg-gray-800">過去7日間</option>
-                  <option value="month" className="bg-gray-800">過去30日間</option>
+                  <option value="all" className="bg-gray-800">
+                    全期間
+                  </option>
+                  <option value="today" className="bg-gray-800">
+                    今日
+                  </option>
+                  <option value="week" className="bg-gray-800">
+                    過去7日間
+                  </option>
+                  <option value="month" className="bg-gray-800">
+                    過去30日間
+                  </option>
                 </select>
               </div>
             </div>

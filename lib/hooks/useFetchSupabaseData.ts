@@ -37,6 +37,89 @@ function toOrderColumns(orderBy?: OrderBy): { cols: string[]; asc: boolean } {
   return { cols: [orderBy.column], asc: !!orderBy.ascending };
 }
 
+/* ───────────────────────────── helpers ───────────────────────────── */
+function isNil(v: any) {
+  return v === null || v === undefined;
+}
+function toNumber(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+function pickNumber(obj: any, keys: string[]): number | null {
+  for (const k of keys) {
+    const n = toNumber(obj?.[k]);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
+/**
+ * ✅ PATCH: match_details の列名ブレ吸収
+ * - UI側が winner_points_change / loser_points_change を見ていても、delta/別名から補完する
+ * - change が 0 でも delta 等が非0なら置き換える（「0pt固定」対策）
+ */
+function normalizeMatchRow(m0: any) {
+  if (!m0 || typeof m0 !== 'object') return m0;
+  const m = { ...m0 }; // ★副作用を避ける
+
+  const affects = m?.affects_rating === false ? false : true;
+
+  if (affects) {
+    // points
+    const wpCandidate = pickNumber(m, ['winner_points_delta', 'winner_rp_delta', 'md_w_change', 'm_w_change']);
+    const lpCandidate = pickNumber(m, ['loser_points_delta', 'loser_rp_delta', 'md_l_change', 'm_l_change']);
+
+    const wpChange = pickNumber(m, ['winner_points_change']);
+    const lpChange = pickNumber(m, ['loser_points_change']);
+
+    if (isNil(m.winner_points_change) && wpCandidate !== null) m.winner_points_change = wpCandidate;
+    else if (wpChange === 0 && wpCandidate !== null && wpCandidate !== 0) m.winner_points_change = wpCandidate;
+
+    if (isNil(m.loser_points_change) && lpCandidate !== null) m.loser_points_change = lpCandidate;
+    else if (lpChange === 0 && lpCandidate !== null && lpCandidate !== 0) m.loser_points_change = lpCandidate;
+
+    // handicap（将来の表示ズレ保険）
+    const whCandidate = pickNumber(m, ['winner_handicap_delta', 'winner_hc_delta', 'winner_hc_change']);
+    const lhCandidate = pickNumber(m, ['loser_handicap_delta', 'loser_hc_delta', 'loser_hc_change']);
+
+    const whChange = pickNumber(m, ['winner_handicap_change']);
+    const lhChange = pickNumber(m, ['loser_handicap_change']);
+
+    if (isNil(m.winner_handicap_change) && whCandidate !== null) m.winner_handicap_change = whCandidate;
+    else if (whChange === 0 && whCandidate !== null && whCandidate !== 0) m.winner_handicap_change = whCandidate;
+
+    if (isNil(m.loser_handicap_change) && lhCandidate !== null) m.loser_handicap_change = lhCandidate;
+    else if (lhChange === 0 && lhCandidate !== null && lhCandidate !== 0) m.loser_handicap_change = lhCandidate;
+  }
+
+  return m;
+}
+function normalizeMatches(arr: any[]) {
+  return (arr ?? []).map((x) => normalizeMatchRow(x));
+}
+
+function isMatchDetailsAlias(name: string) {
+  return name === 'match_details' || name === 'match_details_public' || name === 'match_details_mv';
+}
+
+/**
+ * ✅ PATCH: match_details を読むときは public/mv に自動フォールバック
+ * - 未ログイン閲覧: public → mv → match_details
+ * - ログイン必須: mv → match_details → public
+ */
+function resolveTableCandidates(tableName: string, requireAuth: boolean): string[] {
+  if (tableName !== 'match_details') return [tableName];
+  return requireAuth
+    ? ['match_details_mv', 'match_details', 'match_details_public']
+    : ['match_details_public', 'match_details_mv', 'match_details'];
+}
+
 /** 内部: アクセストークン取得（必要なら少し待機してリトライ） */
 async function getAccessToken(requireAuth: boolean, tries = 3, delayMs = 300) {
   const supabase = createClient();
@@ -49,6 +132,114 @@ async function getAccessToken(requireAuth: boolean, tries = 3, delayMs = 300) {
   }
   return null;
 }
+
+/* ───────────────────────────── MATCH EXTRAS (PATCH) ─────────────────────────────
+ * match_details 系 VIEW に handicap_change が無い/0 固定のケースがあるため、
+ * 基表 matches から winner/loser の points_change / handicap_change を合流する。
+ * ※ 取れない (RLS/権限) 場合は黙ってスキップして UI は崩さない
+ */
+type MatchExtrasRow = {
+  id: string;
+  winner_points_change?: number | null;
+  loser_points_change?: number | null;
+  winner_handicap_change?: number | null;
+  loser_handicap_change?: number | null;
+};
+
+function chunk<T>(arr: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function fetchMatchExtrasByIds(ids: string[], token: string) {
+  const map = new Map<string, MatchExtrasRow>();
+  const uniq = Array.from(new Set(ids.filter((x) => typeof x === 'string' && x.length > 0)));
+  if (uniq.length === 0) return map;
+
+  // URL 長対策で分割
+  const groups = chunk(uniq, 120);
+
+  for (const g of groups) {
+    const inIds = g.map((id) => `"${id}"`).join(',');
+    const url =
+      `${SUPABASE_URL}/rest/v1/matches` +
+      `?id=in.(${inIds})&select=id,winner_points_change,loser_points_change,winner_handicap_change,loser_handicap_change`;
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      // RLS/権限などで取れない場合は全体を諦める（部分的に混ざると紛らわしい）
+      return new Map();
+    }
+
+    const rows = (await res.json()) as MatchExtrasRow[];
+    (rows ?? []).forEach((r) => map.set(String(r.id), r));
+  }
+
+  return map;
+}
+
+function mergeExtrasIntoMatchDetailsRows(rows: any[], extras: Map<string, MatchExtrasRow>) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows ?? [];
+
+  const merged = rows.map((m0) => {
+    const m = normalizeMatchRow(m0);
+    const ex = extras.get(String(m?.id ?? ''));
+    if (!ex) return m;
+
+    // affects_rating が false なら 0 扱いを尊重（ただし null の場合だけ入れる）
+    const affects = m?.affects_rating === false ? false : true;
+
+    const exWp = toNumber(ex.winner_points_change);
+    const exLp = toNumber(ex.loser_points_change);
+    const exWh = toNumber(ex.winner_handicap_change);
+    const exLh = toNumber(ex.loser_handicap_change);
+
+    const currWp = toNumber(m?.winner_points_change);
+    const currLp = toNumber(m?.loser_points_change);
+    const currWh = toNumber(m?.winner_handicap_change);
+    const currLh = toNumber(m?.loser_handicap_change);
+
+    const out: any = { ...m };
+
+    if (affects) {
+      // points
+      if (isNil(out.winner_points_change) && exWp !== null) out.winner_points_change = exWp;
+      else if (currWp === 0 && exWp !== null && exWp !== 0) out.winner_points_change = exWp;
+
+      if (isNil(out.loser_points_change) && exLp !== null) out.loser_points_change = exLp;
+      else if (currLp === 0 && exLp !== null && exLp !== 0) out.loser_points_change = exLp;
+
+      // handicap
+      if (isNil(out.winner_handicap_change) && exWh !== null) out.winner_handicap_change = exWh;
+      else if (currWh === 0 && exWh !== null && exWh !== 0) out.winner_handicap_change = exWh;
+
+      if (isNil(out.loser_handicap_change) && exLh !== null) out.loser_handicap_change = exLh;
+      else if (currLh === 0 && exLh !== null && exLh !== 0) out.loser_handicap_change = exLh;
+    } else {
+      // affects=false の場合: nullだけ埋める（0固定を壊さない）
+      if (isNil(out.winner_points_change) && exWp !== null) out.winner_points_change = exWp;
+      if (isNil(out.loser_points_change) && exLp !== null) out.loser_points_change = exLp;
+      if (isNil(out.winner_handicap_change) && exWh !== null) out.winner_handicap_change = exWh;
+      if (isNil(out.loser_handicap_change) && exLh !== null) out.loser_handicap_change = exLh;
+    }
+
+    return normalizeMatchRow(out);
+  });
+
+  return merged;
+}
+
+/* ───────────────────────────── Core Hook ───────────────────────────── */
 
 export function useFetchSupabaseData<T = any>(options: BaseOptions) {
   const {
@@ -72,7 +263,7 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
   const inflightKeyRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastKeyRef = useRef<string | null>(null); // StrictMode の二重実行回避（キーが同じ場合のみ抑止）
-  const retryTimerRef = useRef<number | null>(null); // ★PATCH: unmount 後 setState 防止
+  const retryTimerRef = useRef<number | null>(null); // unmount 後 setState 防止
 
   const { cols: orderCols, asc } = useMemo(() => toOrderColumns(orderBy), [orderBy]);
   const baseKey = useMemo(
@@ -82,58 +273,71 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
 
   const fetchOnce = useCallback(
     async (token: string | null): Promise<T[]> => {
+      const tableCandidates = resolveTableCandidates(tableName, requireAuth);
+
       // 指定順に order 候補を試し、ダメなら順序無し
-      const candidates = orderCols.length ? [...orderCols] : [];
-      candidates.push('__NO_ORDER__');
+      const orderCandidates = orderCols.length ? [...orderCols] : [];
+      orderCandidates.push('__NO_ORDER__');
 
-      for (const col of candidates) {
-        let url = `${SUPABASE_URL}/rest/v1/${tableName}?`;
-        const params = new URLSearchParams();
-        params.set('select', select);
+      let lastErr: string | null = null;
 
-        if (queryParams) {
-          for (const [k, v] of Object.entries(queryParams)) {
-            // undefined などが混ざっても壊れないように
-            if (typeof v === 'string' && v.length > 0) params.set(k, v);
+      for (const tbl of tableCandidates) {
+        for (const col of orderCandidates) {
+          let url = `${SUPABASE_URL}/rest/v1/${tbl}?`;
+          const params = new URLSearchParams();
+          params.set('select', select);
+
+          if (queryParams) {
+            for (const [k, v] of Object.entries(queryParams)) {
+              if (typeof v === 'string' && v.length > 0) params.set(k, v);
+            }
           }
-        }
 
-        if (col !== '__NO_ORDER__') {
-          params.append('order', `${col}.${asc ? 'asc' : 'desc'}`);
-        }
-        if (typeof limit === 'number') params.append('limit', String(limit));
+          if (col !== '__NO_ORDER__') {
+            params.append('order', `${col}.${asc ? 'asc' : 'desc'}`);
+          }
+          if (typeof limit === 'number') params.append('limit', String(limit));
 
-        url += params.toString();
+          url += params.toString();
 
-        // 以前のリクエストを中断
-        abortRef.current?.abort();
-        abortRef.current = new AbortController();
+          // 以前のリクエストを中断
+          abortRef.current?.abort();
+          abortRef.current = new AbortController();
 
-        const res = await fetch(url, {
-          method: 'GET',
-          headers: {
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          signal: abortRef.current.signal,
-          cache: 'no-store', // ★PATCH: 最新を取りたい（ランキング等）
-        });
+          const res = await fetch(url, {
+            method: 'GET',
+            headers: {
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${token ?? SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            signal: abortRef.current.signal,
+            cache: 'no-store',
+          });
 
-        if (!res.ok) {
-          // 列が存在しないなどの 400 は次候補へ
+          if (res.ok) {
+            const json = (await res.json()) as any[];
+            const out = isMatchDetailsAlias(tableName) ? normalizeMatches(json) : (json ?? []);
+            return out as T[];
+          }
+
+          const errorText = await res.text().catch(() => '');
+          lastErr = `HTTP ${res.status}: ${errorText}`;
+
+          // 400: order 列が無い等 → 次候補へ（同じテーブル内）
           if (res.status === 400 && col !== '__NO_ORDER__') continue;
-          const errorText = await res.text();
-          throw new Error(`HTTP ${res.status}: ${errorText}`);
-        }
 
-        const json = (await res.json()) as T[];
-        return json ?? [];
+          // テーブル未存在 / RLS / 権限など → 次テーブル候補へ
+          if ([400, 401, 403, 404].includes(res.status)) break;
+
+          // それ以外は致命
+          throw new Error(lastErr);
+        }
       }
 
-      return [];
+      throw new Error(lastErr || 'データの読み込みに失敗しました。');
     },
-    [tableName, select, orderCols, asc, limit, queryParams],
+    [tableName, select, orderCols, asc, limit, queryParams, requireAuth],
   );
 
   const fetchData = useCallback(
@@ -218,14 +422,14 @@ export function useFetchPlayersData(opts?: {
   requireAuth?: boolean;
   includeInactive?: boolean; // 非アクティブも含める
   includeDeleted?: boolean; // is_deleted も含める
-  includeAdmins?: boolean; // ★PATCH: 管理者も含める（既定 false）
+  includeAdmins?: boolean; // 管理者も含める（既定 false）
 }) {
   const { data, loading, error, retrying, refetch } = useFetchSupabaseData({
     tableName: 'players',
     select: '*',
     orderBy: { columns: ['ranking_points', 'id'], ascending: false },
     enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false, // 公開閲覧を許容
+    requireAuth: opts?.requireAuth ?? false,
   });
 
   const includeInactive = opts?.includeInactive ?? false;
@@ -234,16 +438,10 @@ export function useFetchPlayersData(opts?: {
 
   const filtered = useMemo(() => {
     return (data ?? []).filter((p: any) => {
-      // ★PATCH: admin を既定で除外（ランキング等に混ざる事故防止）
       if (!includeAdmins && p?.is_admin === true) return false;
-
-      // deleted を除外（列が無い/未設定でも動くように）
       if (!includeDeleted && p?.is_deleted === true) return false;
-
-      // ★最重要: is_active === true ではなく「false だけ除外」
-      // これで null/未設定の既存データは “アクティブ扱い” のままになる
+      // is_active === false だけ除外（null/未設定はアクティブ扱い）
       if (!includeInactive && p?.is_active === false) return false;
-
       return true;
     });
   }, [data, includeInactive, includeDeleted, includeAdmins]);
@@ -251,7 +449,7 @@ export function useFetchPlayersData(opts?: {
   return { players: filtered, loading, error, retrying, refetch };
 }
 
-/* ===== ここから: match_details の不足フィールドを players で補完する最小パッチ ===== */
+/* ===== match_details の不足フィールドを players で補完する最小パッチ ===== */
 
 type PlayerLite = { id: string; ranking_points: number | null; handicap: number | null };
 
@@ -259,11 +457,8 @@ async function fetchPlayersLite(playerIds: string[], requireAuth: boolean) {
   const token = await getAccessToken(requireAuth);
   if (requireAuth && !token) throw new Error('認証トークンが見つかりません（ログインが必要です）');
 
-  // REST の in は "..." で囲うのが安全
   const inPlayers = playerIds.map((id) => `"${id}"`).join(',');
-  const url =
-    `${SUPABASE_URL}/rest/v1/players` +
-    `?id=in.(${inPlayers})&select=id,ranking_points,handicap`;
+  const url = `${SUPABASE_URL}/rest/v1/players?id=in.(${inPlayers})&select=id,ranking_points,handicap`;
 
   const res = await fetch(url, {
     method: 'GET',
@@ -286,10 +481,7 @@ async function fetchPlayersLite(playerIds: string[], requireAuth: boolean) {
   return map;
 }
 
-export function useFetchMatchesData(
-  limit?: number,
-  opts?: { enabled?: boolean; requireAuth?: boolean },
-) {
+export function useFetchMatchesData(limit?: number, opts?: { enabled?: boolean; requireAuth?: boolean }) {
   const requireAuth = opts?.requireAuth ?? false;
 
   const {
@@ -299,21 +491,55 @@ export function useFetchMatchesData(
     retrying,
     refetch,
   } = useFetchSupabaseData({
-    tableName: 'match_details', // VIEW（読み取り専用）
+    tableName: 'match_details', // ✅ alias: public/mv に自動フォールバック
     select: '*',
-    orderBy: { columns: ['match_date', 'created_at', 'id'], ascending: false }, // 列が無ければ自動で次候補/順不同へ
+    orderBy: { columns: ['match_date', 'created_at', 'id'], ascending: false },
     limit,
     enabled: opts?.enabled ?? true,
-    requireAuth, // 公開閲覧を許容
+    requireAuth,
   });
 
   // 表示用（補完後）データ
   const [matches, setMatches] = useState<any[]>([]);
 
+  // 初期：列名ブレ吸収
   useEffect(() => {
-    setMatches(rawMatches as any[]);
+    const arr = (rawMatches as any[]) ?? [];
+    setMatches(normalizeMatches(arr));
   }, [rawMatches]);
 
+  // ✅ PATCH: match_details に無い/0固定の change を基表 matches から合流（取れなければスキップ）
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const arr0 = (rawMatches as any[]) ?? [];
+      if (arr0.length === 0) return;
+
+      const token = (await getAccessToken(requireAuth)) ?? SUPABASE_ANON_KEY;
+
+      try {
+        const ids = Array.from(
+          new Set(arr0.map((m: any) => String(m?.id ?? '')).filter((x: string) => x.length > 0)),
+        );
+        const extras = await fetchMatchExtrasByIds(ids, token);
+        if (cancelled) return;
+
+        if (extras.size > 0) {
+          const merged = mergeExtrasIntoMatchDetailsRows(arr0, extras);
+          setMatches(merged);
+        }
+      } catch {
+        // 取れなくても一覧は出す
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rawMatches, requireAuth]);
+
+  // singles の RP/HC が穴あきかチェック（teams は除外）
   useEffect(() => {
     let cancelled = false;
 
@@ -321,12 +547,11 @@ export function useFetchMatchesData(
       const arr = (rawMatches as any[]) ?? [];
       if (arr.length === 0) return;
 
-      // singles の RP/HC が穴あきかチェック（teams は除外）
       const needPlayerIds = new Set<string>();
 
-      const isNil = (v: any) => v === null || v === undefined;
+      for (const m0 of arr) {
+        const m = normalizeMatchRow(m0);
 
-      for (const m of arr) {
         const mode = m?.mode ?? null;
         const isTeams = mode === 'teams' || !!m?.winner_team_id || !!m?.loser_team_id;
         if (isTeams) continue;
@@ -335,19 +560,20 @@ export function useFetchMatchesData(
         const lid = m?.loser_id ? String(m.loser_id) : '';
         if (!wid || !lid) continue;
 
-        // match_details が RP/HC を返していない (= null) 場合に補完
         if (isNil(m?.winner_current_points) || isNil(m?.winner_current_handicap)) needPlayerIds.add(wid);
         if (isNil(m?.loser_current_points) || isNil(m?.loser_current_handicap)) needPlayerIds.add(lid);
       }
 
       const ids = Array.from(needPlayerIds);
-      if (ids.length === 0) return; // 補完不要
+      if (ids.length === 0) return;
 
       try {
         const pmap = await fetchPlayersLite(ids, requireAuth);
         if (cancelled) return;
 
-        const next = arr.map((m) => {
+        const next = (matches ?? arr).map((m0) => {
+          const m = normalizeMatchRow(m0);
+
           const mode = m?.mode ?? null;
           const isTeams = mode === 'teams' || !!m?.winner_team_id || !!m?.loser_team_id;
           if (isTeams) return m;
@@ -359,25 +585,26 @@ export function useFetchMatchesData(
           const wp = pmap.get(wid);
           const lp = pmap.get(lid);
 
-          // 既に入っている値は尊重し、null のときだけ埋める
           return {
             ...m,
-            winner_current_points: isNil(m?.winner_current_points) ? (wp?.ranking_points ?? null) : m.winner_current_points,
-            winner_current_handicap: isNil(m?.winner_current_handicap) ? (wp?.handicap ?? null) : m.winner_current_handicap,
-            loser_current_points: isNil(m?.loser_current_points) ? (lp?.ranking_points ?? null) : m.loser_current_points,
-            loser_current_handicap: isNil(m?.loser_current_handicap) ? (lp?.handicap ?? null) : m.loser_current_handicap,
+            winner_current_points: isNil(m?.winner_current_points) ? wp?.ranking_points ?? null : m.winner_current_points,
+            winner_current_handicap: isNil(m?.winner_current_handicap) ? wp?.handicap ?? null : m.winner_current_handicap,
+            loser_current_points: isNil(m?.loser_current_points) ? lp?.ranking_points ?? null : m.loser_current_points,
+            loser_current_handicap: isNil(m?.loser_current_handicap) ? lp?.handicap ?? null : m.loser_current_handicap,
           };
         });
 
         setMatches(next);
       } catch {
-        // 補完失敗しても一覧は出す（何もしない）
+        // 補完失敗しても一覧は出す
       }
     })();
 
     return () => {
       cancelled = true;
     };
+    // matches は依存に入れるとループしやすいので rawMatches を基準にする
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawMatches, requireAuth]);
 
   return { matches, loading, error, retrying, refetch };
@@ -438,7 +665,7 @@ export function useTeamsList(opts?: {
     orderBy: { column: orderCol, ascending: asc },
     limit: opts?.limit,
     enabled: opts?.enabled ?? true,
-    requireAuth: opts?.requireAuth ?? false, // 公開で読める運用なら false、RLS が厳しいなら true に変更
+    requireAuth: opts?.requireAuth ?? false,
   });
 
   return { teams: data, loading, error, retrying, refetch };
@@ -448,10 +675,147 @@ export function useTeamsList(opts?: {
  * 詳細系フック（既定: requireAuth: false）
  * =========================================================*/
 
-export function useFetchPlayerDetail(
-  playerId: string,
-  opts?: { enabled?: boolean; requireAuth?: boolean },
-) {
+function computeDelta(after: number | null, before: number | null) {
+  if (typeof after === 'number' && typeof before === 'number') return after - before;
+  return null;
+}
+
+function normalizeMyDeltas(m: any, playerId: string) {
+  const isWinner = String(m?.winner_id ?? '') === String(playerId);
+  const side = isWinner ? 'winner' : 'loser';
+
+  const pointsAfter = pickNumber(
+    m,
+    isWinner
+      ? ['winner_current_points', 'winner_points_after', 'winner_rp_after', 'winner_ranking_points_after']
+      : ['loser_current_points', 'loser_points_after', 'loser_rp_after', 'loser_ranking_points_after'],
+  );
+
+  const pointsBefore = pickNumber(
+    m,
+    isWinner
+      ? ['winner_prev_points', 'winner_previous_points', 'winner_points_before', 'winner_rp_before', 'winner_ranking_points_before']
+      : ['loser_prev_points', 'loser_previous_points', 'loser_points_before', 'loser_rp_before', 'loser_ranking_points_before'],
+  );
+
+  const pointsDelta =
+    pickNumber(
+      m,
+      isWinner
+        ? ['winner_points_delta', 'winner_points_change', 'winner_rp_delta', 'winner_rp_change', 'winner_ranking_points_delta']
+        : ['loser_points_delta', 'loser_points_change', 'loser_rp_delta', 'loser_rp_change', 'loser_ranking_points_delta'],
+    ) ?? computeDelta(pointsAfter, pointsBefore);
+
+  const hcAfter = pickNumber(
+    m,
+    isWinner
+      ? ['winner_current_handicap', 'winner_handicap_after', 'winner_hc_after']
+      : ['loser_current_handicap', 'loser_handicap_after', 'loser_hc_after'],
+  );
+
+  const hcBefore = pickNumber(
+    m,
+    isWinner
+      ? ['winner_prev_handicap', 'winner_previous_handicap', 'winner_handicap_before', 'winner_hc_before']
+      : ['loser_prev_handicap', 'loser_previous_handicap', 'loser_handicap_before', 'loser_hc_before'],
+  );
+
+  const hcDelta =
+    pickNumber(
+      m,
+      isWinner
+        ? ['winner_handicap_delta', 'winner_handicap_change', 'winner_hc_delta', 'winner_hc_change']
+        : ['loser_handicap_delta', 'loser_handicap_change', 'loser_hc_delta', 'loser_hc_change'],
+    ) ?? computeDelta(hcAfter, hcBefore);
+
+  const rankAfter = pickNumber(
+    m,
+    isWinner
+      ? ['winner_rank_after', 'winner_rank', 'winner_position', 'winner_current_rank']
+      : ['loser_rank_after', 'loser_rank', 'loser_position', 'loser_current_rank'],
+  );
+
+  const rankDelta = pickNumber(
+    m,
+    isWinner ? ['winner_rank_delta', 'winner_rank_change'] : ['loser_rank_delta', 'loser_rank_change'],
+  );
+
+  return {
+    my_side: side,
+    my_points_after: pointsAfter,
+    my_points_delta: pointsDelta,
+    my_handicap_after: hcAfter,
+    my_handicap_delta: hcDelta,
+    my_rank_after: rankAfter,
+    my_rank_delta: rankDelta,
+  };
+}
+
+async function fetchMatchDetailsForPlayer(playerId: string, token: string, requireAuth: boolean) {
+  const tables = resolveTableCandidates('match_details', requireAuth);
+
+  // created_at が無い VIEW でも死なないように order を段階フォールバック
+  const orderCandidates = ['match_date.desc,created_at.desc,id.desc', 'match_date.desc,id.desc', 'match_date.desc'];
+
+  let lastErr: any = null;
+
+  for (const tbl of tables) {
+    for (const ord of orderCandidates) {
+      const params = new URLSearchParams();
+      params.set('or', `(winner_id.eq.${playerId},loser_id.eq.${playerId})`);
+      params.set('order', ord);
+      params.set('limit', '50');
+
+      const url = `${SUPABASE_URL}/rest/v1/${tbl}?${params.toString()}`;
+
+      const res = await fetch(url, {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store',
+      });
+
+      if (res.ok) {
+        const json = (await res.json()) as any[];
+        const base = normalizeMatches(json ?? []);
+
+        // ✅ PATCH: HC変化などが VIEW から取れない場合に備えて、基表 matches から合流（取れなければスキップ）
+        try {
+          const ids = Array.from(
+            new Set(base.map((m: any) => String(m?.id ?? '')).filter((x: string) => x.length > 0)),
+          );
+          const extras = await fetchMatchExtrasByIds(ids, token);
+          if (extras.size > 0) {
+            return mergeExtrasIntoMatchDetailsRows(base, extras);
+          }
+        } catch {
+          // ignore
+        }
+
+        return base;
+      }
+
+      const text = await res.text().catch(() => '');
+      lastErr = new Error(`[${tbl}] HTTP ${res.status}: ${text}`);
+
+      // order 列が無い系は次の order へ
+      if (res.status === 400) continue;
+
+      // 401/403/404 は次の table へ
+      if ([401, 403, 404].includes(res.status)) break;
+
+      // それ以外は致命
+      throw lastErr;
+    }
+  }
+
+  console.warn('[useFetchPlayerDetail] match_details fetch failed:', lastErr);
+  return [];
+}
+
+export function useFetchPlayerDetail(playerId: string, opts?: { enabled?: boolean; requireAuth?: boolean }) {
   const [player, setPlayer] = useState<any>(null);
   const [matches, setMatches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -475,8 +839,7 @@ export function useFetchPlayerDetail(
         setError(null);
 
         const token =
-          (await supabase.auth.getSession()).data.session?.access_token ??
-          (requireAuth ? null : SUPABASE_ANON_KEY);
+          (await supabase.auth.getSession()).data.session?.access_token ?? (requireAuth ? null : SUPABASE_ANON_KEY);
 
         if (requireAuth && !token) throw new Error('認証トークンが見つかりません');
 
@@ -495,23 +858,18 @@ export function useFetchPlayerDetail(
         if (!playerData?.[0]) throw new Error('Player not found');
         if (cancelled) return;
 
-        // 試合履歴（VIEW）
-        const matchUrl =
-          `${SUPABASE_URL}/rest/v1/match_details` +
-          `?or=(winner_id.eq.${playerId},loser_id.eq.${playerId})&order=match_date.desc&limit=50`;
-        const matchesRes = await fetch(matchUrl, {
-          headers: {
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          cache: 'no-store',
-        });
-        const matchesData = matchesRes.ok ? await matchesRes.json() : [];
+        // 試合履歴（match_details_public/mv に自動フォールバック + order フォールバック）
+        const matchesData = await fetchMatchDetailsForPlayer(playerId, token, requireAuth);
         if (cancelled) return;
 
         setPlayer(playerData[0]);
-        setMatches(matchesData || []);
+
+        const enriched = (matchesData || []).map((m: any) => ({
+          ...m,
+          ...normalizeMyDeltas(m, playerId),
+        }));
+
+        setMatches(enriched);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || '読み込みに失敗しました');
       } finally {
@@ -549,7 +907,7 @@ export async function updatePlayer(playerId: string, updates: any) {
       method: 'PATCH',
       headers: {
         apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`, // ★ ユーザーのアクセストークン
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
@@ -576,12 +934,12 @@ export async function createMatch(matchData: any) {
     if (!session) throw new Error('ログインが必要です');
     const token = session.access_token;
 
-    const url = `${SUPABASE_URL}/rest/v1/matches`; // ★ VIEW ではなく基表へ
+    const url = `${SUPABASE_URL}/rest/v1/matches`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`, // ★ ユーザーのアクセストークン
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },

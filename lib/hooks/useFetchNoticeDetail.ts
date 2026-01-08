@@ -1,49 +1,92 @@
+// lib/hooks/useFetchNoticeDetail.ts
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
 
-type Notice = {
+const supabase = createClient();
+
+/** 必要最低限の Notice 型（DB列が増えても壊れないよう optional 多め） */
+export type NoticeRow = {
   id: string;
-  title: string | null;
-  content: string | null;
-  created_at: string | null;
-  // 必要に応じてフィールドを追加
+  title?: string | null;
+  body?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // あり得る列（環境差分吸収）
+  is_published?: boolean | null;
+  published_at?: string | null;
+  pinned?: boolean | null;
+  category?: string | null;
 };
 
-export function useFetchNoticeDetail(id: string) {
-  const [notice, setNotice] = useState<Notice | null>(null);
+type Options = {
+  requireAuth?: boolean; // 既存互換用（必要なら使う）
+};
+
+export function useFetchNoticeDetail(noticeId?: string | null, opts: Options = {}) {
+  const { requireAuth = false } = opts;
+
+  const [notice, setNotice] = useState<NoticeRow | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<unknown>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchNotice = useCallback(async () => {
-    setLoading(true);
+  const mountedRef = useRef(true);
+
+  const fetchOne = useCallback(async () => {
     setError(null);
+    setLoading(true);
+
     try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
+      if (!noticeId) {
+        if (mountedRef.current) {
+          setNotice(null);
+          setLoading(false);
+        }
+        return;
+      }
 
-      const { data, error } = await supabase
-        .from('notices')          // ← テーブル名を実際に合わせてください
+      if (requireAuth) {
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) {
+          if (mountedRef.current) {
+            setNotice(null);
+            setError('ログインが必要です。');
+            setLoading(false);
+          }
+          return;
+        }
+      }
+
+      const { data, error: qErr } = await supabase
+        .from('notices')
         .select('*')
-        .eq('id', id)
-        .single();
+        .eq('id', noticeId)
+        .maybeSingle();
 
-      if (error) throw error;
-      setNotice(data as Notice);
-    } catch (e) {
-      setError(e);
-      setNotice(null);
-    } finally {
-      setLoading(false);
+      if (qErr) throw qErr;
+
+      if (mountedRef.current) {
+        setNotice((data as any) ?? null);
+        setLoading(false);
+      }
+    } catch (e: any) {
+      if (mountedRef.current) {
+        setNotice(null);
+        setError(e?.message ?? 'お知らせの取得に失敗しました');
+        setLoading(false);
+      }
     }
-  }, [id]);
+  }, [noticeId, requireAuth]);
 
   useEffect(() => {
-    if (id) fetchNotice();
-  }, [id, fetchNotice]);
+    mountedRef.current = true;
+    void fetchOne();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [fetchOne]);
 
-  return { notice, loading, error, refetch: fetchNotice };
+  return { notice, loading, error, refetch: fetchOne };
 }

@@ -1,57 +1,41 @@
 // app/auth/callback/route.ts
-import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { NextRequest, NextResponse } from 'next/server';
+import { createRouteHandlerSupabaseClient } from '@/lib/supabase/serverClient';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-type Payload = {
-  event?: string;
-  session?: {
-    access_token?: string;
-    refresh_token?: string;
-  } | null;
-};
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({} as any));
+  const event = String(body?.event ?? '');
+  const session = body?.session ?? null;
 
-function createSupabaseFromCookies(cookieStore: Awaited<ReturnType<typeof cookies>>) {
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options: CookieOptions) {
-          cookieStore.set({ name, value: '', ...options, maxAge: 0 });
-        },
-      },
-    }
-  );
-}
+  // まず「この res」に cookie を積ませて返す
+  const res = NextResponse.json({ ok: true });
+  const supabase = createRouteHandlerSupabaseClient(req, res);
 
-export async function POST(req: Request) {
-  const cookieStore = await cookies();
-  const supabase = createSupabaseFromCookies(cookieStore);
-
-  const body = (await req.json().catch(() => ({}))) as Payload;
-  const s = body.session ?? null;
-
-  try {
-    if (s?.access_token && s?.refresh_token) {
-      await supabase.auth.setSession({
-        access_token: s.access_token,
-        refresh_token: s.refresh_token,
-      });
-    } else {
+  // SIGNED_OUT or session無し → cookie クリア
+  if (event === 'SIGNED_OUT' || !session?.access_token || !session?.refresh_token) {
+    try {
       await supabase.auth.signOut();
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
+    // action を追記（bodyは最初の json のままなので、別レスポンスにしない）
+    // そのまま res を返す（cookieが反映される）
+    return res;
   }
 
-  return NextResponse.json({ ok: true });
+  // セッションを cookie に反映
+  const { error } = await supabase.auth.setSession({
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+  });
+
+  if (error) {
+    // エラー時は cookie を返す必要がないので、新しいレスポンスでOK
+    return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+  }
+
+  return res;
 }

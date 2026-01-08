@@ -5,21 +5,16 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
 /**
  * 共通 ENV 取得（開発時のみ強い警告）
+ * ※ production では白画面事故を避けるため throw しない（既存方針踏襲）
  */
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 if ((!URL || !ANON) && process.env.NODE_ENV !== 'production') {
   // eslint-disable-next-line no-console
-  console.error(
-    '[supabase] Missing env: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY'
-  );
+  console.error('[supabase] Missing env: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY');
 }
 
-/**
- * CookieOptions を Next.js の cookies().set / res.cookies.set に
- * そのまま渡せる形にして返す（ほぼ同一だが型を明示）
- */
 function toCookieOptions(options: CookieOptions = {}): CookieOptions {
   return {
     domain: options.domain,
@@ -33,24 +28,39 @@ function toCookieOptions(options: CookieOptions = {}): CookieOptions {
 }
 
 /**
- * Server Components / Server Actions 用の Supabase クライアント。
- * - cookies() を直接利用
- * - 一部の場面（RSC）では cookies().set が禁止のため try/catch で安全化
+ * Server Components / Server Actions 用（読み取り中心）。
+ * ✅ Next.js 15: cookies() は await 必須 → async
+ * - ここでの set/remove は RSC 制約で失敗する場合があるため try/catch で安全化
+ * - Route Handler で cookie を確実に書きたい場合は createRouteHandlerSupabaseClient を使う
  */
-export function createServerSupabaseClient() {
-  const cookieStore = cookies();
+export async function createServerSupabaseClient() {
+  const cookieStore = await cookies(); // ✅ Next.js 15 対応
 
-  return createServerClient(URL!, ANON!, {
+  return createServerClient(URL ?? '', ANON ?? '', {
     cookies: {
+      // --- new style (推奨) ---
+      getAll() {
+        return cookieStore.getAll().map((c) => ({ name: c.name, value: c.value }));
+      },
+      setAll(cookiesToSet) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set({ name, value, ...toCookieOptions(options) });
+          });
+        } catch {
+          // RSC / Server Components では set 禁止の文脈がある → 無視
+        }
+      },
+
+      // --- legacy style (互換: supabase-ssr の版差対策) ---
       get(name: string) {
         return cookieStore.get(name)?.value;
       },
       set(name: string, value: string, options?: CookieOptions) {
         try {
-          // Next.js 14 ではオブジェクト or (name, value, options) の両方に対応
           cookieStore.set({ name, value, ...toCookieOptions(options) });
         } catch {
-          // RSC など set 禁止文脈では無視（Server Actions / Route Handlers で上書きされる）
+          // ignore
         }
       },
       remove(name: string, options?: CookieOptions) {
@@ -61,7 +71,7 @@ export function createServerSupabaseClient() {
             ...toCookieOptions({ ...options, maxAge: 0 }),
           });
         } catch {
-          // 同上
+          // ignore
         }
       },
     },
@@ -69,25 +79,31 @@ export function createServerSupabaseClient() {
 }
 
 /**
- * Route Handler 用の Supabase クライアント（推奨）。
- * - req/resp の Cookie を確実に同期できる
- * - 例: const supabase = createRouteHandlerSupabaseClient(req, res);
+ * Route Handler 用（cookie を確実に同期できる）
+ * - req/res を使って cookie を確実に読み書きできる
+ * - こちらは cookies() を触らないので async 不要
  */
-export function createRouteHandlerSupabaseClient(
-  req: NextRequest,
-  res: NextResponse
-) {
-  return createServerClient(URL!, ANON!, {
+export function createRouteHandlerSupabaseClient(req: NextRequest, res: NextResponse) {
+  return createServerClient(URL ?? '', ANON ?? '', {
     cookies: {
+      // --- new style (推奨) ---
+      getAll() {
+        // NextRequestCookies は getAll() を持つ（型差異があるので any ガード）
+        const all = (req.cookies as any).getAll?.() ?? [];
+        return all.map((c: any) => ({ name: c.name, value: c.value }));
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          res.cookies.set({ name, value, ...toCookieOptions(options) });
+        });
+      },
+
+      // --- legacy style (互換) ---
       get(name: string) {
         return req.cookies.get(name)?.value;
       },
       set(name: string, value: string, options?: CookieOptions) {
-        res.cookies.set({
-          name,
-          value,
-          ...toCookieOptions(options),
-        });
+        res.cookies.set({ name, value, ...toCookieOptions(options) });
       },
       remove(name: string, options?: CookieOptions) {
         res.cookies.set({
@@ -101,20 +117,8 @@ export function createRouteHandlerSupabaseClient(
 }
 
 /**
- * Middleware 用の Supabase クライアント。
- * - Middleware では NextResponse を自分で生成してから渡す必要があります。
- *   例:
- *     export async function middleware(req: NextRequest) {
- *       const res = NextResponse.next();
- *       const supabase = createMiddlewareSupabaseClient(req, res);
- *       const { data: { user } } = await supabase.auth.getUser();
- *       // ...（判定して必要に応じて res を返す）
- *       return res;
- *     }
+ * Middleware 用（実体は Route Handler と同じでOK）
  */
-export function createMiddlewareSupabaseClient(
-  req: NextRequest,
-  res: NextResponse
-) {
+export function createMiddlewareSupabaseClient(req: NextRequest, res: NextResponse) {
   return createRouteHandlerSupabaseClient(req, res);
 }

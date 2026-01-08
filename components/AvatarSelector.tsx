@@ -4,16 +4,16 @@
 import Image from 'next/image';
 import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 
 type AvatarItem = { name: string; url: string };
 
 type Props = {
   value?: string | null;
   onChange: (url: string) => void;
-  pageSize?: number;       // 既定: 20
-  bucket?: string;         // 既定: 'avatars'
-  prefix?: string;         // 既定: 'preset'
+  pageSize?: number; // 既定: 20
+  bucket?: string; // 既定: 'avatars'
+  prefix?: string; // 既定: 'preset'
   className?: string;
 };
 
@@ -36,25 +36,61 @@ export default function AvatarSelector({
   // 表示サイズ（next/image の sizes）
   const tileSizes = '(min-width:640px) 80px, 64px';
 
+  /**
+   * ✅ 重要：SSR で createClient() を呼ばない
+   * （Next.js のプリレンダー/ハイドレーションで server 側評価される可能性対策）
+   */
+  const supabase = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    return createClient();
+  }, []);
+
   async function fetchPage(p: number) {
     setLoading(true);
     setErrorMsg(null);
+
     try {
+      if (!supabase) return; // 念のため（useEffectはクライアントのみだが保険）
+
       const offset = (p - 1) * pageSize;
-      const { data, error } = await supabase.storage
-        .from(bucket)
-        .list(prefix, {
-          limit: pageSize,
-          offset,
-          sortBy: { column: 'name', order: 'asc' },
-        });
+
+      const { data, error } = await supabase.storage.from(bucket).list(prefix, {
+        limit: pageSize,
+        offset,
+        sortBy: { column: 'name', order: 'asc' },
+      });
       if (error) throw error;
 
-      const files = (data ?? []).filter(f => !!f.name && !f.name.startsWith('.'));
-      const mapped: AvatarItem[] = files.map((f) => {
-        const pub = supabase.storage.from(bucket).getPublicUrl(`${prefix}/${f.name}`);
-        return { name: f.name, url: pub.data.publicUrl };
-      });
+      const files = (data ?? []).filter((f) => !!f.name && !f.name.startsWith('.'));
+      const paths = files.map((f) => `${prefix}/${f.name}`);
+
+      // ✅ private bucket でも表示できるように signed URL を優先（失敗したら publicUrl にフォールバック）
+      const signedMap: Record<string, string> = {};
+      if (paths.length > 0) {
+        const { data: signedData, error: signedErr } = await supabase.storage
+          .from(bucket)
+          .createSignedUrls(paths, 60 * 60); // 1 hour
+
+        if (!signedErr && Array.isArray(signedData)) {
+          for (const row of signedData as any[]) {
+            if (row?.path && row?.signedUrl) {
+              signedMap[row.path] = row.signedUrl;
+            }
+          }
+        }
+      }
+
+      const mapped: AvatarItem[] = files
+        .map((f) => {
+          const path = `${prefix}/${f.name}`;
+          const signedUrl = signedMap[path];
+          const pub = supabase.storage.from(bucket).getPublicUrl(path);
+
+          const url = signedUrl || pub.data.publicUrl || '';
+          return { name: f.name, url };
+        })
+        .filter((x) => !!x.url);
+
       setItems(mapped);
     } catch (e: any) {
       console.error('[AvatarSelector] fetch error:', e?.message || e);
@@ -103,9 +139,7 @@ export default function AvatarSelector({
         </div>
       </div>
 
-      {errorMsg && (
-        <div className="text-xs text-yellow-400">{errorMsg}</div>
-      )}
+      {errorMsg && <div className="text-xs text-yellow-400">{errorMsg}</div>}
 
       <div className={clsx('grid gap-3', gridCols)}>
         {loading
@@ -126,13 +160,7 @@ export default function AvatarSelector({
                   )}
                   title={item.name}
                 >
-                  <Image
-                    src={item.url}
-                    alt={item.name}
-                    fill
-                    sizes={tileSizes}
-                    className="object-cover"
-                  />
+                  <Image src={item.url} alt={item.name} fill sizes={tileSizes} className="object-cover" />
                   {selected && (
                     <div className="absolute inset-0 bg-sky-500/20">
                       <svg

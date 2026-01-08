@@ -1,17 +1,14 @@
+// lib/supabase/client.ts
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
- * ✅ ここが肝：
- * Database 型があるなら any を差し替えてください。
- * 例) import type { Database } from '@/types/supabase'
+ * ✅ このアプリの Supabase Auth の storageKey は必ず統一する
  */
-type Database = any;
+export const SUPABASE_AUTH_STORAGE_KEY = 'tsc-auth';
 
-// HMR / チャンク跨ぎでもインスタンスを 1 つに固定
-type SB = SupabaseClient<Database>;
+type SB = ReturnType<typeof createBrowserClient>;
 
 declare global {
   // eslint-disable-next-line no-var
@@ -20,155 +17,142 @@ declare global {
   var __supabase_auth_patched__: boolean | undefined;
 }
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if ((!SUPABASE_URL || !SUPABASE_ANON_KEY) && process.env.NODE_ENV !== 'production') {
+  // ここで throw すると白画面になりやすいので警告のみ（ただし後で Proxy で明示エラーにする）
+  // eslint-disable-next-line no-console
+  console.error('[supabase] Missing env: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY');
+}
+
+function isInvalidRefreshTokenError(e: any) {
+  const msg = String(e?.message || e || '');
+  return (
+    msg.includes('Invalid Refresh Token') ||
+    msg.includes('Refresh Token Not Found') ||
+    msg.includes('refresh_token') // 400系の文言を拾う保険
+  );
+}
 
 /**
- * storageKey は「このアプリだけ」で統一してください。
- * もし他の場所で createClient(url, anon) 等を使っていると、
- * 互いに別キーになって refresh token の競合が起きやすいです。
+ * 端末内に残る古い Supabase auth の localStorage 残骸を掃除（storageKey 混在対策）
+ * - keepKey を渡すと、そのキーだけ残して他を削除
+ * - keepKey を渡さないと、該当パターンを全部削除
  */
-const STORAGE_KEY = 'tsc-auth';
-
-if (!url || !anon) {
-  // ここで throw すると本番で白画面になるため、開発時のみ警告
-  if (process.env.NODE_ENV !== 'production') {
-    // eslint-disable-next-line no-console
-    console.error(
-      '[supabase] Missing env: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY'
-    );
-  }
-}
-
-/** エラー判定 */
-function isInvalidRefreshToken(err: any) {
-  const msg = String(err?.message ?? err ?? '');
-  return /Invalid Refresh Token/i.test(msg) || /Already Used/i.test(msg);
-}
-
-/** 未ログイン（セッション無し）判定：コンソールを汚さないために握る */
-function isAuthSessionMissing(err: any) {
-  const name = String(err?.name ?? '');
-  const msg = String(err?.message ?? err ?? '');
-  return name === 'AuthSessionMissingError' || /Auth session missing/i.test(msg);
-}
-
-/** 競合/残骸からの復旧（= いったんログアウト扱いにして正常系へ戻す） */
-async function recoverAuth(client: any) {
+function purgeAuthLocalStorage(keepKey?: string) {
   try {
-    // localStorage を使っている構成の場合に備えて掃除（cookie 構成でも害はない）
-    try {
-      if (typeof window !== 'undefined') {
-        window.localStorage?.removeItem(STORAGE_KEY);
-      }
-    } catch {
-      // ignore
+    const ls = window.localStorage;
+    const keys = Object.keys(ls);
+
+    for (const k of keys) {
+      const isSupabaseAuthLike =
+        k === 'supabase.auth.token' ||
+        k === 'supabase-auth-token' ||
+        k.startsWith('sb-') && k.includes('-auth-token') || // sb-<ref>-auth-token 系
+        k.includes('supabase') && k.includes('auth') && k.includes('token');
+
+      if (!isSupabaseAuthLike) continue;
+      if (keepKey && k === keepKey) continue;
+
+      ls.removeItem(k);
     }
-
-    // サーバ/クライアント双方の状態を「未ログイン」に寄せる
-    await client.auth.signOut();
   } catch {
-    // ignore
+    // Safari / プライベート等で localStorage が死ぬ場合があるので無視
   }
 }
 
-const _client: SB =
-  globalThis.__supabase__ ??
-  createBrowserClient<Database>(url!, anon!, {
-    auth: {
-      storageKey: STORAGE_KEY, // ✅ このアプリで統一
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-    },
-    global: {
-      headers: {
-        'x-client-info': 'tsc-web',
+/**
+ * SSR/Node 側で createClient() が呼ばれても落とさないための Proxy。
+ * - 「作るだけ」はOK
+ * - サーバ側で実際に使おうとした瞬間に明示エラーにする
+ */
+function createServerProxyClient(): SB {
+  const err = new Error(
+    '[supabase] createClient() was called during SSR. ' +
+      'This is expected in Next.js, but you must NOT use the returned client on the server. ' +
+      'Use createServerSupabaseClient / createRouteHandlerSupabaseClient instead.'
+  );
+
+  return new Proxy(
+    {},
+    {
+      get(_t, prop) {
+        // React/Next が内部で触る可能性があるものは安全に返す
+        if (prop === '__isSupabaseSSRProxy__') return true;
+        if (prop === 'then') return undefined; // Promise 判定回避
+        throw err;
       },
-    },
-  });
-
-if (typeof window !== 'undefined') {
-  globalThis.__supabase__ = _client;
-
-  // auth メソッドを 1 回だけパッチ（Invalid Refresh Token を握りつぶして復旧）
-  if (!globalThis.__supabase_auth_patched__) {
-    globalThis.__supabase_auth_patched__ = true;
-
-    const auth: any = (_client as any).auth;
-
-    // getSession パッチ
-    const origGetSession = auth.getSession.bind(auth);
-    auth.getSession = async (...args: any[]) => {
-      try {
-        const res = await origGetSession(...args);
-
-        // ✅ 未ログインは正常扱い
-        if (res?.error && isAuthSessionMissing(res.error)) {
-          return { data: { session: null }, error: null };
-        }
-
-        if (res?.error && isInvalidRefreshToken(res.error)) {
-          await recoverAuth(_client as any);
-          return { data: { session: null }, error: null };
-        }
-        return res;
-      } catch (e: any) {
-        // ✅ 未ログインは正常扱い
-        if (isAuthSessionMissing(e)) {
-          return { data: { session: null }, error: null };
-        }
-
-        if (isInvalidRefreshToken(e)) {
-          await recoverAuth(_client as any);
-          return { data: { session: null }, error: null };
-        }
-        throw e;
-      }
-    };
-
-    // getUser パッチ（内部で refresh が走ることがあるため同様に）
-    const origGetUser = auth.getUser.bind(auth);
-    auth.getUser = async (...args: any[]) => {
-      try {
-        const res = await origGetUser(...args);
-
-        // ✅ 未ログインは正常扱い
-        if (res?.error && isAuthSessionMissing(res.error)) {
-          return { data: { user: null }, error: null };
-        }
-
-        if (res?.error && isInvalidRefreshToken(res.error)) {
-          await recoverAuth(_client as any);
-          return { data: { user: null }, error: null };
-        }
-        return res;
-      } catch (e: any) {
-        // ✅ 未ログインは正常扱い
-        if (isAuthSessionMissing(e)) {
-          return { data: { user: null }, error: null };
-        }
-
-        if (isInvalidRefreshToken(e)) {
-          await recoverAuth(_client as any);
-          return { data: { user: null }, error: null };
-        }
-        throw e;
-      }
-    };
-
-    // 起動直後に一度だけセッションを触って、残骸があれば即復旧（overlay 対策）
-    void (async () => {
-      const { error } = await auth.getSession();
-      if (error && isInvalidRefreshToken(error)) {
-        await recoverAuth(_client as any);
-      }
-    })();
-  }
+    }
+  ) as SB;
 }
 
-/** 推奨：各所で呼び出して同一インスタンスを得る */
-export const createClient = () => _client;
+/**
+ * 無効な refresh token を検知したら、
+ * - localStorage の残骸掃除
+ * - signOut
+ * で復旧できる状態に戻す（ログイン画面に戻すのは各ページ側の判定に任せる）
+ */
+function patchInvalidRefreshRecovery(sb: SB) {
+  if (globalThis.__supabase_auth_patched__) return;
+  globalThis.__supabase_auth_patched__ = true;
 
-/** 互換輸出：直接使いたい場合はこちらを import */
-export { _client as supabase };
+  const auth: any = sb.auth;
+
+  const wrap = (fnName: 'getSession' | 'refreshSession') => {
+    const orig = auth?.[fnName]?.bind(auth);
+    if (!orig) return;
+
+    auth[fnName] = async (...args: any[]) => {
+      const res = await orig(...args);
+
+      if (res?.error && isInvalidRefreshTokenError(res.error)) {
+        try {
+          // 「混在キー」は消す（keep しない）
+          purgeAuthLocalStorage();
+          await sb.auth.signOut();
+        } catch {
+          // ignore
+        }
+      }
+
+      return res;
+    };
+  };
+
+  wrap('getSession');
+  wrap('refreshSession');
+}
+
+/**
+ * ✅ アプリで使うブラウザ用 Supabase クライアント
+ * - SSR で呼ばれても throw しない（Proxy を返す）
+ * - ブラウザで初回だけ生成して singleton 化
+ * - storageKey を tsc-auth に統一
+ */
+export function createClient(): SB {
+  // ✅ Next.js は client component もSSRで一度評価されることがあるため、ここで throw しない
+  if (typeof window === 'undefined') {
+    return createServerProxyClient();
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    // ブラウザでも env が無いなら Proxy（使った瞬間に分かる）
+    return createServerProxyClient();
+  }
+
+  if (!globalThis.__supabase__) {
+    // ✅ 混在源を掃除（tsc-auth 自体は残す）
+    purgeAuthLocalStorage(SUPABASE_AUTH_STORAGE_KEY);
+
+    globalThis.__supabase__ = createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        storageKey: SUPABASE_AUTH_STORAGE_KEY,
+      },
+    });
+
+    patchInvalidRefreshRecovery(globalThis.__supabase__);
+  }
+
+  return globalThis.__supabase__!;
+}

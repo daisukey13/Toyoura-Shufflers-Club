@@ -1,4 +1,3 @@
-// next.config.js
 /** @type {import('next').NextConfig} */
 
 // ---- Security Headers (CSP tuned for Supabase + Cloudflare Turnstile + fonts) ----
@@ -45,23 +44,17 @@ const securityHeaders = [
 const nextConfig = {
   reactStrictMode: true,
 
-  // next/image: allow Supabase Storage public bucket images
+  /**
+   * ✅ next/image 許可（最小修正）
+   * - wildcard hostname は Next の remotePatterns では期待通り動かないため、プロジェクト固有 host を明示
+   * - /public だけでなく /sign も通すため pathname を /storage/v1/object/** に広げる
+   */
   images: {
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: '*.supabase.co',
-        pathname: '/storage/v1/object/public/**',
-      },
-      {
-        protocol: 'https',
-        hostname: '*.supabase.in',
-        pathname: '/storage/v1/object/public/**',
-      },
-      {
-        protocol: 'https',
-        hostname: '*.supabase.net',
-        pathname: '/storage/v1/object/public/**',
+        hostname: 'cpfyaezsyvjjwpbuhewa.supabase.co',
+        pathname: '/storage/v1/object/**',
       },
     ],
   },

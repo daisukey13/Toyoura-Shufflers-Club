@@ -5,7 +5,7 @@ import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'rea
 import Script from 'next/script';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { createClient, SUPABASE_AUTH_STORAGE_KEY } from '@/lib/supabase/client';
 import { FaLock, FaPhone, FaEnvelope, FaArrowLeft } from 'react-icons/fa';
 
 type Mode = 'email' | 'phone';
@@ -30,6 +30,37 @@ function toE164JapanForView(input: string): string {
   if (s.startsWith('00')) return '+' + s.slice(2);
   if (/^0\d{9,10}$/.test(s)) return '+81' + s.slice(1);
   return s;
+}
+
+function isInvalidRefreshTokenMessage(msg: string) {
+  const s = String(msg || '');
+  return (
+    /Invalid Refresh Token/i.test(s) ||
+    /Already Used/i.test(s) ||
+    /Refresh Token Not Found/i.test(s) ||
+    /grant_type=refresh_token/i.test(s)
+  );
+}
+
+function cleanupAuthStorage() {
+  if (typeof window === 'undefined') return;
+  try {
+    const ls = window.localStorage;
+
+    // 統一キー
+    ls.removeItem(SUPABASE_AUTH_STORAGE_KEY);
+    ls.removeItem(`${SUPABASE_AUTH_STORAGE_KEY}-code-verifier`);
+
+    // 過去に default key を使っていた残骸も掃除（sb-<ref>-auth-token 等）
+    for (let i = ls.length - 1; i >= 0; i--) {
+      const k = ls.key(i);
+      if (!k) continue;
+      if (/^sb-.*-auth-token$/i.test(k)) ls.removeItem(k);
+      if (/^supabase\.auth\./i.test(k)) ls.removeItem(k);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 function Fallback() {
@@ -79,6 +110,22 @@ function LoginPageInner() {
   const tokenTimeRef = useRef<number>(0); // 取得時刻(ms)
   const TOKEN_TTL_MS = 110 * 1000; // 110秒で期限切れ扱い
 
+  // ✅ ログイン画面では auto refresh を止める（壊れた refresh token の連打を防ぐ）
+  useEffect(() => {
+    try {
+      (supabase.auth as any).stopAutoRefresh?.();
+    } catch {
+      // ignore
+    }
+    return () => {
+      try {
+        (supabase.auth as any).startAutoRefresh?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, [supabase]);
+
   /** ✅ 管理者判定（既存運用: app_admins / players.is_admin） */
   const isAdminUser = useCallback(
     async (userId: string) => {
@@ -122,7 +169,6 @@ function LoginPageInner() {
         const authed = !!j?.authenticated;
         setAlreadyAuthed(authed);
 
-        // ✅ 既ログインなら（管理者は admin/dashboard、一般は従来通り）
         if (authed) {
           const {
             data: { user },
@@ -258,9 +304,7 @@ function LoginPageInner() {
     const token = fromWidget || cfToken || '';
     if (!token) return '';
     const age = Date.now() - tokenTimeRef.current;
-    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) {
-      return '';
-    }
+    if (!tokenTimeRef.current || age > TOKEN_TTL_MS) return '';
     return token;
   }, [cfToken]);
 
@@ -280,6 +324,14 @@ function LoginPageInner() {
     setLoading(true);
 
     try {
+      // ✅ まず残骸セッションを捨てる（壊れた refresh token を握ってると失敗しやすい）
+      try {
+        await supabase.auth.signOut();
+        await syncServerSession('SIGNED_OUT', null);
+      } catch {
+        // ignore
+      }
+
       let loginEmail = email.trim();
 
       if (mode === 'phone') {
@@ -300,36 +352,29 @@ function LoginPageInner() {
         const json = await safeJson(res);
 
         if (!res.ok) {
-          // サーバからの JSON 以外（= ルート間違いなど）を検知
           if ((json as any)?.__nonjson) {
-            throw new Error(
-              'サーバ応答が不正です。エンドポイント /api/login/resolve-email を確認してください。',
-            );
+            throw new Error('サーバ応答が不正です。/api/login/resolve-email を確認してください。');
           }
-          // Turnstile 失敗の詳細を表示
+
           if ((json as any)?.error === 'captcha_failed') {
             const codes: string[] = (json as any)?.codes || [];
             let msg = '人間確認に失敗しました。もう一度 CAPTCHA を完了してください。';
             if (codes.includes('timeout-or-duplicate'))
-              msg =
-                'CAPTCHA の有効期限が切れたか、既に使用済みです。もう一度実施してください。';
+              msg = 'CAPTCHA の有効期限が切れたか、既に使用済みです。もう一度実施してください。';
             if (codes.includes('invalid-input-secret'))
-              msg =
-                'サーバ側の Turnstile シークレットが正しくありません（管理者設定が必要）。';
+              msg = 'サーバ側の Turnstile シークレットが正しくありません（管理者設定が必要）。';
             if (codes.includes('missing-input-secret'))
               msg = 'サーバ側のシークレットが未設定です（管理者設定が必要）。';
             if (codes.includes('invalid-input-response'))
-              msg =
-                'CAPTCHA 応答が無効です。ページを再読み込みして再度お試しください。';
+              msg = 'CAPTCHA 応答が無効です。ページを再読み込みして再度お試しください。';
+
             resetCaptcha(msg);
             throw new Error(msg);
           }
-          if ((json as any)?.error === 'invalid_phone')
-            throw new Error('電話番号の形式が正しくありません。');
-          if ((json as any)?.error === 'not_found')
-            throw new Error('この電話番号のユーザーが見つかりませんでした。');
-          if ((json as any)?.error === 'rate_limited')
-            throw new Error('リクエストが多すぎます。しばらくしてからお試しください。');
+
+          if ((json as any)?.error === 'invalid_phone') throw new Error('電話番号の形式が正しくありません。');
+          if ((json as any)?.error === 'not_found') throw new Error('この電話番号のユーザーが見つかりませんでした。');
+          if ((json as any)?.error === 'rate_limited') throw new Error('リクエストが多すぎます。しばらくしてからお試しください。');
 
           throw new Error((json as any)?.message || '照会に失敗しました。');
         }
@@ -337,26 +382,46 @@ function LoginPageInner() {
         loginEmail = (json as any).email;
       }
 
-      // メール/パスワードでログイン（電話番号の時は解決した email を使用）
+      // メール/パスワードでログイン
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password,
       });
-      if (signInError)
+
+      if (signInError) {
+        const msg = String(signInError.message || '');
+        if (isInvalidRefreshTokenMessage(msg)) {
+          cleanupAuthStorage();
+          throw new Error('古いログイン情報が壊れていました。ページを再読み込みして、もう一度ログインしてください。');
+        }
         throw new Error('メール（または電話に紐づくメール）かパスワードが正しくありません。');
+      }
 
       if (data.session) await syncServerSession('SIGNED_IN', data.session);
 
+      // ✅ ログイン後は auto refresh を再開
+      try {
+        (supabase.auth as any).startAutoRefresh?.();
+      } catch {
+        // ignore
+      }
+
+      // CAPTCHA リセット
       try {
         if (widgetIdRef.current && window.turnstile) window.turnstile.reset(widgetIdRef.current);
         tokenTimeRef.current = 0;
         setCfToken('');
       } catch {}
 
-      // ✅ ここが変更点：管理者なら /admin/dashboard
       await afterSuccessRedirect();
     } catch (err: any) {
-      setError(err?.message || 'ログインに失敗しました');
+      const msg = String(err?.message || 'ログインに失敗しました');
+      if (isInvalidRefreshTokenMessage(msg)) {
+        cleanupAuthStorage();
+        setError('古いログイン情報が壊れていました。ページを再読み込みして、もう一度ログインしてください。');
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -366,6 +431,7 @@ function LoginPageInner() {
     try {
       await supabase.auth.signOut();
       await syncServerSession('SIGNED_OUT', null);
+      cleanupAuthStorage();
     } catch {}
     setAlreadyAuthed(false);
   };
@@ -406,7 +472,10 @@ function LoginPageInner() {
   }
 
   const primaryButtonText = loading ? 'ログイン中…' : 'ログイン';
-  const primaryDisabled = loading || (mode === 'phone' && !!SITE_KEY && !cfToken); // 電話番号タブでは CAPTCHA 完了が必須
+
+  // ✅ 電話番号タブは “stateのcfToken” だけでなく widget.getResponse も見る（スマホ対策）
+  const phoneTokenOk = mode !== 'phone' || !SITE_KEY || !!getFreshToken();
+  const primaryDisabled = loading || !phoneTokenOk;
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
@@ -558,7 +627,7 @@ function LoginPageInner() {
 
                 <div className="mt-2">
                   <div ref={widgetHostRef} style={{ minHeight: 80 }} />
-                  {!cfToken && (
+                  {!getFreshToken() && (
                     <p className="text-xs text-gray-500 mt-2">
                       {cfMsg ||
                         (scriptError

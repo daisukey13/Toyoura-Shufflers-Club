@@ -64,6 +64,14 @@ function genPassword(len = 14) {
   return s;
 }
 
+// ★ハンドル名の正規化（前後空白・全角空白・連続空白の吸収）
+function normalizeHandleName(s: string) {
+  return (s ?? '')
+    .replace(/\u3000/g, ' ')     // 全角スペース→半角
+    .replace(/\s+/g, ' ')       // 連続空白を1つに
+    .trim();
+}
+
 export default function RegisterPage() {
   const router = useRouter();
 
@@ -112,19 +120,45 @@ export default function RegisterPage() {
 
   // ---- helpers -------------------------------------------------------------
 
-  async function ensureHandleUnique(handle: string) {
+  /**
+   * ✅ ハンドル重複チェック（最小強化）
+   * - is_deleted=false のみ対象
+   * - handle_name は正規化して比較
+   */
+  async function ensureHandleUnique(handleRaw: string) {
+    const handle = normalizeHandleName(handleRaw);
+    if (!handle) return true;
+
     const { data, error } = await supabase
       .from('players')
       .select('id')
+      .eq('is_deleted', false)
       .eq('handle_name', handle)
       .limit(1)
       .maybeSingle();
 
     if (error) {
       if (process.env.NODE_ENV !== 'production') console.warn('[ensureHandleUnique]', error.message);
+      // エラー時は「一旦OK扱い」にして入力を止めない（送信時にDB側で弾かれる）
       return true;
     }
     return !data;
+  }
+
+  /**
+   * ✅ 途中失敗で players だけ残った場合の自動クリーンアップ（再発防止の本命）
+   * - 登録処理の途中で失敗したら、その userId の players を論理削除して handle を解放する
+   * - RLS 等で失敗する可能性はあるが、できる範囲で実行する（失敗してもメインのエラーは返す）
+   */
+  async function cleanupPartialPlayer(userId: string) {
+    try {
+      await supabase
+        .from('players')
+        .update({ is_deleted: true, is_active: false } as any)
+        .eq('id', userId);
+    } catch {
+      // ignore（RLS 等で更新不可でも、ログイン側の運用で救済できる）
+    }
   }
 
   // ★管理者チェック：ログイン中ユーザー → players.is_admin or metadata を確認
@@ -191,14 +225,15 @@ export default function RegisterPage() {
   }, [supabase]);
 
   useEffect(() => {
-    if (!formData.handle_name || formData.handle_name.length < 3) {
+    const handle = normalizeHandleName(formData.handle_name);
+    if (!handle || handle.length < 3) {
       setHandleNameError('');
       return;
     }
     let active = true;
     const t = setTimeout(async () => {
       setCheckingHandleName(true);
-      const ok = await ensureHandleUnique(formData.handle_name);
+      const ok = await ensureHandleUnique(handle);
       if (!active) return;
       setHandleNameError(ok ? '' : 'このハンドルネームは既に使用されています');
       setCheckingHandleName(false);
@@ -273,8 +308,19 @@ export default function RegisterPage() {
     setLoading(true);
     setCreatedCreds(null);
 
+    // ★途中失敗のクリーンアップ用
+    let createdUserId: string | null = null;
+    let insertedPlayers = false;
+
     try {
-      const uniqueNow = await ensureHandleUnique(formData.handle_name);
+      const handle = normalizeHandleName(formData.handle_name);
+
+      if (!handle) {
+        alert('ハンドルネームを入力してください。');
+        return;
+      }
+
+      const uniqueNow = await ensureHandleUnique(handle);
       if (!uniqueNow) {
         setHandleNameError('このハンドルネームは既に使用されています');
         alert('このハンドルネームは既に使用されています。別の名前を選んでください。');
@@ -296,19 +342,24 @@ export default function RegisterPage() {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { handle_name: formData.handle_name, full_name: formData.full_name } },
+        options: { data: { handle_name: handle, full_name: formData.full_name } },
       });
       if (authError || !authData?.user) throw authError ?? new Error('ユーザー作成に失敗しました');
+
       const userId = authData.user.id;
+      createdUserId = userId;
 
       // 2) 公開 players
       const publicRow = {
         id: userId,
-        handle_name: formData.handle_name,
+        auth_user_id: userId, // ✅ 追加（紐付けを明確化）
+        user_id: userId,      // ✅ 追加（互換のため）
+        handle_name: handle,  // ✅ 正規化済み
         avatar_url: formData.avatar_url || DEFAULT_AVATAR,
         address: formData.address || '未設定',
         is_admin: false,
         is_active: true,
+        is_deleted: false,    // ✅ 明示
         ranking_points: RATING_DEFAULT,
         handicap: HANDICAP_DEFAULT,
         matches_played: 0,
@@ -318,6 +369,7 @@ export default function RegisterPage() {
       {
         const { error } = await supabase.from('players').insert(publicRow as any);
         if (error) throw error;
+        insertedPlayers = true;
       }
 
       // 3) 非公開 players_private（主キー候補を順に試行）
@@ -342,11 +394,6 @@ export default function RegisterPage() {
       // ★対面登録: 管理者セッションへ戻す（自動ログインが発生した場合の対策）
       if (formData.adminAssisted && adminTokens) {
         const { data: uNow } = await supabase.auth.getUser();
-        // “今のユーザー” が admin じゃない（＝新規ユーザーに切り替わってる）時だけ戻す
-        // ※ admin 判定は先に済んでるので、ここは単純比較でOK
-        if (uNow.user && !isAdmin) {
-          // ここには普通来ない想定
-        }
         if (uNow.user && uNow.user.email === email) {
           const { error: se } = await supabase.auth.setSession(adminTokens);
           if (se) console.warn('[admin restore] failed:', se.message);
@@ -366,6 +413,11 @@ export default function RegisterPage() {
     } catch (err: any) {
       const msg = String(err?.message || err);
 
+      // ✅ 途中で players まで作れたのに失敗した場合は、handle を解放する（再発防止）
+      if (createdUserId && insertedPlayers) {
+        await cleanupPartialPlayer(createdUserId);
+      }
+
       if (/duplicate key value|unique constraint|23505/i.test(msg)) {
         alert('このハンドルネームは既に使用されています。別の名前を選んでください。');
         setHandleNameError('このハンドルネームは既に使用されています');
@@ -377,7 +429,7 @@ export default function RegisterPage() {
       }
 
       let hint = '';
-      if (/row-level security|RLS/i.test(msg)) hint = '\n（Supabase の RLS で INSERT 許可ポリシーを確認してください）';
+      if (/row-level security|RLS/i.test(msg)) hint = '\n（Supabase の RLS で INSERT/UPDATE 許可ポリシーを確認してください）';
       if (/does not exist|schema|relation .* does not exist|column .* does not exist/i.test(msg)) hint = '\n（テーブル/カラム名がスキーマと一致しているか確認してください）';
       alert(`登録中にエラーが発生しました。\n詳細: ${msg}${hint}`);
       console.error('[register] submit error:', err);

@@ -1,46 +1,36 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { useEffect } from 'react';
+import { createClient } from '@/lib/supabase/client';
+
+function isInvalidRefreshTokenLike(err: any) {
+  const msg = String(err?.message ?? err ?? '');
+  return (
+    /Invalid Refresh Token/i.test(msg) ||
+    /Already Used/i.test(msg) ||
+    /Refresh Token Not Found/i.test(msg)
+  );
+}
 
 export default function AuthCookieSync() {
-  const started = useRef(false);
-
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
+    const supabase = createClient();
 
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-
-    const sync = async (event: string, session: any) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, session) => {
       try {
         await fetch('/auth/callback', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          cache: 'no-store',
+          headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ event, session }),
         });
-      } catch {
-        // ignore
+      } catch (e) {
+        // 競合系は悪化しやすいので黙って終わる
+        if (isInvalidRefreshTokenLike(e)) return;
       }
-    };
-
-    // 初回：localStorage 側の session をサーバ cookie に反映
-    supabase.auth.getSession().then(({ data }) => {
-      void sync('INITIAL_SESSION', data.session);
-    });
-
-    // 以後：ログイン/ログアウト等の変化を反映
-    const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      void sync(event, session);
     });
 
     return () => {
-      data.subscription.unsubscribe();
+      sub.subscription.unsubscribe();
     };
   }, []);
 

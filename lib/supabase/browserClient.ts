@@ -1,30 +1,30 @@
+// lib/supabase/browserClient.ts
 'use client';
 
-import { createBrowserClient } from '@supabase/ssr';
+import { createClient, SUPABASE_AUTH_STORAGE_KEY } from './client';
 
-// 型
-type SB = ReturnType<typeof createBrowserClient>;
+export { createClient, SUPABASE_AUTH_STORAGE_KEY };
 
-// グローバル退避でHMR・チャンク跨ぎの重複生成防止
-declare global {
-  // eslint-disable-next-line no-var
-  var __supabase_browser__: SB | undefined;
+/**
+ * ✅ 重要：
+ * - import 時点で createClient() を実行しない（= サーバで 500 を起こさない）
+ * - 実際に supabase.* を触った瞬間にだけ生成する
+ */
+let _client: ReturnType<typeof createClient> | null = null;
+
+function getClient() {
+  if (_client) return _client;
+  _client = createClient(); // ここで初めてブラウザ専用チェックが走る
+  return _client;
 }
 
-const supabase =
-  globalThis.__supabase_browser__ ??
-  createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      auth: {
-        storageKey: 'tsc-auth', // アプリ固有キー
-      },
-    }
-  );
+// 既存コード互換：named export supabase / default export 両対応
+export const supabase: ReturnType<typeof createClient> = new Proxy({} as any, {
+  get(_target, prop) {
+    const c = getClient();
+    const v = (c as any)[prop];
+    return typeof v === 'function' ? v.bind(c) : v;
+  },
+}) as any;
 
-if (typeof window !== 'undefined') {
-  globalThis.__supabase_browser__ = supabase;
-}
-
-export { supabase };
+export default supabase;

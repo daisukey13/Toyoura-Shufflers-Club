@@ -54,6 +54,14 @@ type JoinedMatch = {
   side_no: number;
   matches?: MatchRow | undefined;
   opponent?: { id: string; handle_name: string } | null;
+
+  // ✅ 不戦勝などで false のときはRP/HC表示しない＆グラフにも含めない
+  affects_rating?: boolean;
+
+  // ✅ 自分の変化
+  my_points_change?: number;
+  my_handicap_change?: number;
+  my_rp_after?: number | null;
 };
 
 type TeamLite = { id: string; name: string };
@@ -68,6 +76,117 @@ type PickerItem = {
 
 const supabase = createClient();
 const cls = (...xs: Array<string | false | null | undefined>) => xs.filter(Boolean).join(' ');
+
+/* ================================ 小道具 ================================ */
+function toNum(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    const m = s.match(/-?\d+(\.\d+)?/);
+    if (!m) return null;
+    const n = Number(m[0]);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function pickDelta(m: any, keys: string[]): number | null {
+  for (const k of keys) {
+    const n = toNum(m?.[k]);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
+function pointsChangeOf(m: any, isWin: boolean): number {
+  const keys = isWin
+    ? ['winner_points_change', 'winner_points_delta', 'winner_rp_change', 'winner_rp_delta']
+    : ['loser_points_change', 'loser_points_delta', 'loser_rp_change', 'loser_rp_delta'];
+  return pickDelta(m, keys) ?? 0;
+}
+
+function handicapChangeOf(m: any, isWin: boolean): number {
+  const keys = isWin
+    ? ['winner_handicap_change', 'winner_handicap_delta', 'winner_hc_change', 'winner_hc_delta']
+    : ['loser_handicap_change', 'loser_handicap_delta', 'loser_hc_change', 'loser_hc_delta'];
+  return pickDelta(m, keys) ?? 0;
+}
+
+function formatShortDate(s?: string | null) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** 簡易SVG折れ線（順位は 1 が上） */
+function MiniRankLine({
+  ranks,
+  labels,
+  currentRank,
+}: {
+  ranks: number[];
+  labels: string[];
+  currentRank: number | null;
+}) {
+  const w = 320;
+  const h = 120;
+  const padX = 18;
+  const padY = 14;
+
+  const n = ranks.length;
+  if (n === 0) {
+    return <div className="text-xs text-gray-400">データがありません。</div>;
+  }
+
+  const minR = Math.min(...ranks);
+  const maxR = Math.max(...ranks);
+  const spanR = Math.max(1, maxR - minR);
+
+  const xOf = (i: number) => {
+    if (n === 1) return w / 2;
+    return padX + (i * (w - padX * 2)) / (n - 1);
+  };
+  const yOf = (rank: number) => {
+    // rankが小さいほど上（yが小さい）
+    return padY + ((rank - minR) * (h - padY * 2)) / spanR;
+  };
+
+  const pts = ranks.map((r, i) => `${xOf(i)},${yOf(r)}`).join(' ');
+  const path = `M ${pts.replaceAll(' ', ' L ')}`;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm text-gray-300">最近5試合の順位推移</div>
+        <div className="text-xs text-gray-400">
+          現在: <span className="text-yellow-100 font-semibold">{currentRank ?? '—'}位</span>
+        </div>
+      </div>
+
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-[120px]">
+        <rect x="0" y="0" width={w} height={h} rx="12" className="fill-black/20" />
+        <path d={path} className="stroke-purple-300" strokeWidth="2.5" fill="none" />
+        {ranks.map((r, i) => (
+          <circle key={i} cx={xOf(i)} cy={yOf(r)} r="4" className="fill-yellow-100/90" />
+        ))}
+      </svg>
+
+      <div className="mt-2 flex justify-between text-[11px] text-gray-400">
+        {labels.map((lb, i) => (
+          <span key={i} className="tabular-nums">
+            {lb || ' '}
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-2 text-[11px] text-gray-500">
+        ※順位は「各試合時点のRP（match_details側の値）」から推定しています（最小実装）
+      </div>
+    </div>
+  );
+}
 
 /* ================================ ページ本体 ================================ */
 export default function MyPage() {
@@ -95,10 +214,7 @@ export default function MyPage() {
   const [pickerMsg, setPickerMsg] = useState<string>('');
   const PAGE_SIZE = 20;
   const [pickerPage, setPickerPage] = useState(1);
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(pickerItems.length / PAGE_SIZE)),
-    [pickerItems.length]
-  );
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(pickerItems.length / PAGE_SIZE)), [pickerItems.length]);
   const pageSlice = useMemo(() => {
     const s = (pickerPage - 1) * PAGE_SIZE;
     return pickerItems.slice(s, s + PAGE_SIZE);
@@ -117,11 +233,65 @@ export default function MyPage() {
   const [joinMsg, setJoinMsg] = useState<string>('');
   const TEAM_CAP = 4;
 
-  /* ===== 認証 & 初期化 =====
-     ✅ 最小修正ポイント:
-     - getUser() は「セッション無し」で AuthSessionMissingError になり得るため、
-       先に getSession() で判定してから進む
-  */
+  // ✅ 順位推移用：全体RP
+  const [playersLite, setPlayersLite] = useState<Array<{ id: string; ranking_points: number | null }>>([]);
+
+  const computeRank = useCallback(
+    (rp: number, uid: string) => {
+      const arr = (playersLite ?? []).map((p) => ({
+        id: String(p.id),
+        rp: String(p.id) === String(uid) ? rp : (p.ranking_points ?? 0),
+      }));
+      arr.sort((a, b) => b.rp - a.rp || a.id.localeCompare(b.id));
+      const idx = arr.findIndex((x) => x.id === String(uid));
+      return idx >= 0 ? idx + 1 : null;
+    },
+    [playersLite],
+  );
+
+  const currentRank = useMemo(() => {
+    if (!userId || !me) return null;
+    const rp = me.ranking_points ?? 0;
+    return computeRank(rp, userId);
+  }, [userId, me, computeRank]);
+
+  const [rankTrend, setRankTrend] = useState<{ labels: string[]; ranks: number[] } | null>(null);
+
+  // ✅ 最近5試合（レートに影響する試合のみ）から順位推移を作る
+  useEffect(() => {
+    if (!recentMatches || recentMatches.length === 0 || !userId) {
+      setRankTrend(null);
+      return;
+    }
+
+    // 不戦勝など affects_rating=false を除外
+    const base = recentMatches.filter((x) => x.affects_rating !== false);
+
+    const last5 = base
+      .slice(0, 5)
+      .filter((x) => typeof x.my_rp_after === 'number' && Number.isFinite(x.my_rp_after as number));
+
+    if (last5.length === 0) {
+      setRankTrend(null);
+      return;
+    }
+
+    // 古い→新しいにして折れ線
+    const seq = [...last5].reverse();
+    const labels = seq.map((x) => formatShortDate(x.matches?.match_date ?? null));
+    const ranks = seq
+      .map((x) => computeRank(x.my_rp_after as number, userId) ?? 0)
+      .filter((n) => n > 0);
+
+    if (ranks.length === 0) {
+      setRankTrend(null);
+      return;
+    }
+
+    setRankTrend({ labels, ranks });
+  }, [recentMatches, userId, computeRank]);
+
+  /* ===== 認証 & 初期化 ===== */
   useEffect(() => {
     let cancelled = false;
 
@@ -130,7 +300,6 @@ export default function MyPage() {
       try {
         const { data, error } = await supabase.auth.getSession();
 
-        // refresh token 系が壊れている可能性があるときは一度サインアウトしてから login へ
         if (error) {
           const msg = String((error as any)?.message ?? '');
           if (msg.includes('Invalid Refresh Token') || msg.includes('Already Used')) {
@@ -181,6 +350,14 @@ export default function MyPage() {
         setHandle(current.handle_name || '');
         setAvatarUrl(current.avatar_url || null);
 
+        // ✅ 順位用：全体RP
+        try {
+          const { data: pls } = await supabase.from('players').select('id, ranking_points').limit(500);
+          if (!cancelled) setPlayersLite((pls ?? []) as any);
+        } catch {
+          if (!cancelled) setPlayersLite([]);
+        }
+
         // 参加チーム
         try {
           const { data: tm, error: tmErr } = await supabase
@@ -188,6 +365,7 @@ export default function MyPage() {
             .select('team_id, teams:team_id(id, name)')
             .eq('player_id', user.id)
             .maybeSingle();
+
           if (tmErr && (tmErr as any).code !== 'PGRST116') throw tmErr;
 
           if (tm && (tm as any).teams) {
@@ -201,7 +379,6 @@ export default function MyPage() {
         }
       } catch (e) {
         console.error(e);
-        // ここで認証が怪しい場合は login へ
         router.replace('/login?redirect=/mypage');
       } finally {
         if (!cancelled) setLoading(false);
@@ -213,16 +390,26 @@ export default function MyPage() {
     };
   }, [router]);
 
-  /* ===== 最近試合取得（DB統一：match_players 起点に固定） =====
-     ✅ 最小修正ポイント:
-     - uid確定時も getUser() を使わず getSession() を使う（セッション無しで落ちない）
-  */
+  /* ✅ players を軽く再取得（ポイントが反映されない対策） */
+  const refreshMe = useCallback(async (uid: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('players')
+        .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses, matches_played, created_at')
+        .eq('id', uid)
+        .maybeSingle();
+      if (!error && data) {
+        setMe((prev) => (prev ? { ...prev, ...(data as any) } : (data as any)));
+      }
+    } catch {}
+  }, []);
+
+  /* ===== 最近試合取得（match_players 起点） + 変化は match_details から補完 ===== */
   const fetchRecentMatches = useCallback(async () => {
     setMatchesLoading(true);
     setMatchFetchNote(null);
 
     try {
-      // uid の確定（state優先 / 無ければ session から）
       let uid = userId;
 
       if (!uid) {
@@ -253,7 +440,7 @@ export default function MyPage() {
         const msg = myErr.message || '戦績取得に失敗しました';
         if (msg.includes('relationship') || msg.includes('schema cache')) {
           setMatchFetchNote(
-            'DBの外部キー（match_players.match_id → matches.id）が未設定、または Supabase の schema cache が未更新の可能性があります。Dashboard → Settings → API → Reload schema cache を試してください。'
+            'DBの外部キー（match_players.match_id → matches.id）が未設定、または Supabase の schema cache が未更新の可能性があります。Dashboard → Settings → API → Reload schema cache を試してください。',
           );
         } else {
           setMatchFetchNote(msg);
@@ -262,10 +449,8 @@ export default function MyPage() {
         return;
       }
 
-      // matches が埋め込まれている行だけにする
       const list = ((myRows ?? []) as any[]).filter((r) => !!r.matches);
 
-      // match_date で必ず降順に並べ替える（DB側 order が効かなくてもOK）
       list.sort((a, b) => {
         const ta = a.matches?.match_date ? new Date(a.matches.match_date).getTime() : 0;
         const tb = b.matches?.match_date ? new Date(b.matches.match_date).getTime() : 0;
@@ -279,7 +464,7 @@ export default function MyPage() {
 
       const matchIds = list.map((r) => String(r.match_id));
 
-      // 2) 相手（同じ match_id の “自分以外” をまとめて取る）
+      // 2) 相手（同じ match_id の “自分以外”）
       const { data: oppRows, error: oppErr } = await supabase
         .from('match_players')
         .select('match_id, player_id, players:players(id, handle_name)')
@@ -298,19 +483,67 @@ export default function MyPage() {
         g.set(mid, [...(g.get(mid) ?? []), String(name)]);
       }
 
+      // 3) 変化(pt/HC)・試合時点RP・affects_rating を match_details から取得（VIEWフォールバック）
+      const detailCandidates = ['match_details_mv', 'match_details_public', 'match_details'] as const;
+      let detailRows: any[] = [];
+      let lastDetailErr: any = null;
+
+      for (const t of detailCandidates) {
+        const { data, error } = await (supabase.from(t) as any)
+          .select(
+            'id,winner_id,loser_id,affects_rating,winner_points_change,loser_points_change,winner_points_delta,loser_points_delta,winner_rp_change,loser_rp_change,winner_handicap_change,loser_handicap_change,winner_hc_change,loser_hc_change,winner_current_points,loser_current_points',
+          )
+          .in('id', matchIds);
+
+        if (!error && data) {
+          detailRows = data as any[];
+          lastDetailErr = null;
+          break;
+        }
+        lastDetailErr = error;
+      }
+      if (lastDetailErr) {
+        console.warn('[mypage] match_details fallback error:', lastDetailErr);
+      }
+
+      const dmap = new Map<string, any>();
+      for (const r of detailRows ?? []) dmap.set(String(r.id), r);
+
       const items: JoinedMatch[] = list.map((r: any) => {
         const mid = String(r.match_id);
         const names = g.get(mid) ?? [];
         const oppName = names.length ? names.join(' / ') : null;
+
+        const d = dmap.get(mid);
+        const isWin = d ? String(d.winner_id) === String(uid) : false;
+        const affects = d ? d.affects_rating !== false : true;
+
+        const pt = d ? pointsChangeOf(d, isWin) : 0;
+        const hc = d ? handicapChangeOf(d, isWin) : 0;
+        const rpAfter = d ? toNum(isWin ? d.winner_current_points : d.loser_current_points) : null;
+
         return {
           match_id: mid,
           side_no: Number(r.side_no ?? 0),
           matches: r.matches as MatchRow,
           opponent: oppName ? { id: 'multi', handle_name: oppName } : null,
+          affects_rating: affects,
+          my_points_change: pt,
+          my_handicap_change: hc,
+          my_rp_after: rpAfter,
         };
       });
 
       setRecentMatches(items);
+
+      // pointsが反映されない対策：最後にmeを軽く更新
+      refreshMe(uid);
+
+      // 順位推定に使う全体RPもたまに更新
+      try {
+        const { data: pls } = await supabase.from('players').select('id, ranking_points').limit(500);
+        setPlayersLite((pls ?? []) as any);
+      } catch {}
     } catch (e: any) {
       console.error('[recent] fail', e);
       setRecentMatches([]);
@@ -318,7 +551,7 @@ export default function MyPage() {
     } finally {
       setMatchesLoading(false);
     }
-  }, [userId]);
+  }, [userId, refreshMe]);
 
   useEffect(() => {
     fetchRecentMatches();
@@ -375,7 +608,7 @@ export default function MyPage() {
     }
   };
 
-  /* ===== アバター: ピッカー（自分の画像＋プリセット） ===== */
+  /* ===== アバター: ピッカー ===== */
   const openPicker = useCallback(async () => {
     if (!userId) return;
     setPickerOpen(true);
@@ -384,7 +617,6 @@ export default function MyPage() {
     setPickerItems([]);
     setPickerPage(1);
     try {
-      // 自分の画像
       const ownListRes = await supabase.storage.from('avatars').list(`public/users/${userId}`, {
         limit: 200,
         sortBy: { column: 'created_at', order: 'desc' },
@@ -402,7 +634,6 @@ export default function MyPage() {
           };
         });
 
-      // プリセット
       const presetRes = await supabase.storage.from('avatars').list(`preset`, {
         limit: 200,
         sortBy: { column: 'name', order: 'asc' },
@@ -422,9 +653,7 @@ export default function MyPage() {
 
       const all = [...ownItems, ...presetItems].filter((x) => !!x.url);
       if (all.length === 0)
-        setPickerMsg(
-          '候補がありません（自分でアップロードするか、管理者にプリセットの追加を依頼してください）。'
-        );
+        setPickerMsg('候補がありません（自分でアップロードするか、管理者にプリセットの追加を依頼してください）。');
       setPickerItems(all);
     } catch (e: any) {
       setPickerItems([]);
@@ -500,11 +729,7 @@ export default function MyPage() {
       return;
     }
     const t = setTimeout(async () => {
-      const { data, error } = await supabase
-        .from('teams')
-        .select('id, name')
-        .ilike('name', `%${teamSearch.trim()}%`)
-        .limit(10);
+      const { data, error } = await supabase.from('teams').select('id, name').ilike('name', `%${teamSearch.trim()}%`).limit(10);
       if (!error) setTeamCandidates((data || []) as TeamLite[]);
     }, 250);
     return () => clearTimeout(t);
@@ -519,10 +744,7 @@ export default function MyPage() {
     }
     setJoinBusy(true);
     try {
-      const { count } = await supabase
-        .from('team_members')
-        .select('player_id', { count: 'exact', head: true })
-        .eq('team_id', team.id);
+      const { count } = await supabase.from('team_members').select('player_id', { count: 'exact', head: true }).eq('team_id', team.id);
       if ((count ?? 0) >= TEAM_CAP) {
         setJoinMsg('定員オーバーのため参加できません（各チーム最大4名）。');
         return;
@@ -574,7 +796,7 @@ export default function MyPage() {
     router.replace('/');
   };
 
-  /* ============================ UI（※既存UIそのまま） ============================ */
+  /* ============================ UI ============================ */
   if (loading) {
     return (
       <div className="min-h-screen grid place-items-center p-6">
@@ -639,7 +861,7 @@ export default function MyPage() {
                   disabled={uploadBusy}
                   className={cls(
                     'px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2',
-                    'bg-purple-600 hover:bg-purple-700 disabled:opacity-60'
+                    'bg-purple-600 hover:bg-purple-700 disabled:opacity-60',
                   )}
                 >
                   <FaUpload /> 画像をアップロード
@@ -714,63 +936,14 @@ export default function MyPage() {
                   disabled={savingProfile}
                   className={cls(
                     'px-4 py-2 rounded-lg inline-flex items-center gap-2',
-                    'bg-green-600 hover:bg-green-700 disabled:opacity-60'
+                    'bg-green-600 hover:bg-green-700 disabled:opacity-60',
                   )}
                 >
                   {savingProfile ? <FaSpinner className="animate-spin" /> : <FaSave />} 保存
                 </button>
 
-                {/* JSONエクスポート（統一：match_players 起点） */}
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!userId) return;
-
-                    const payload: any = {
-                      player: null,
-                      match_players: [] as any[],
-                      note: null as string | null,
-                    };
-
-                    try {
-                      const { data: p } = await supabase.from('players').select('*').eq('id', userId).single();
-                      payload.player = p || null;
-                    } catch {}
-
-                    try {
-                      const { data: mps, error: mpErr } = await supabase
-                        .from('match_players')
-                        .select('match_id, side_no, matches:matches(*)')
-                        .eq('player_id', userId)
-                        .order('match_date', { foreignTable: 'matches', ascending: false })
-                        .limit(200);
-
-                      if (mpErr) throw mpErr;
-
-                      const arr = (mps ?? []) as any[];
-                      arr.sort((a, b) => {
-                        const ta = a.matches?.match_date ? new Date(a.matches.match_date).getTime() : 0;
-                        const tb = b.matches?.match_date ? new Date(b.matches.match_date).getTime() : 0;
-                        return tb - ta;
-                      });
-
-                      payload.match_players = arr;
-                    } catch (e: any) {
-                      payload.note = e?.message ?? 'match_players fetch failed';
-                      payload.match_players = [];
-                    }
-
-                    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `mydata-${userId.slice(0, 8)}.json`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"
-                >
-                  データをエクスポート(JSON)
+                <button type="button" onClick={() => refreshMe(userId)} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">
+                  再読み込み
                 </button>
               </div>
 
@@ -820,10 +993,7 @@ export default function MyPage() {
               >
                 <FaTrophy /> チームを探す
               </Link>
-              <button
-                onClick={signOut}
-                className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 inline-flex items-center gap-2"
-              >
+              <button onClick={signOut} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 inline-flex items-center gap-2">
                 <FaSignOutAlt /> ログアウト
               </button>
             </div>
@@ -855,9 +1025,7 @@ export default function MyPage() {
               </div>
             ) : (
               <>
-                <p className="text-sm text-gray-400 mb-3">
-                  参加するチームを検索して選択してください（各チーム最大4名／複数チーム参加不可）。
-                </p>
+                <p className="text-sm text-gray-400 mb-3">参加するチームを検索して選択してください（各チーム最大4名／複数チーム参加不可）。</p>
                 <div className="relative">
                   <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
@@ -889,9 +1057,18 @@ export default function MyPage() {
             )}
           </div>
 
-          {/* チーム試合登録タイル（SSG不可のため dynamic import） */}
+          {/* チーム試合登録タイル */}
           <TeamRegisterFile />
         </div>
+      </div>
+
+      {/* ✅ 所属チームと直近の試合の間：最近5試合のランキング折線グラフ */}
+      <div className="mt-8 glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
+        {rankTrend ? (
+          <MiniRankLine ranks={rankTrend.ranks} labels={rankTrend.labels} currentRank={currentRank} />
+        ) : (
+          <div className="text-sm text-gray-400">順位推移は、レートに影響する試合が増えると表示されます。</div>
+        )}
       </div>
 
       {/* 最近の試合 */}
@@ -917,6 +1094,10 @@ export default function MyPage() {
               {recentMatches.map((r) => {
                 const m = r.matches!;
                 const when = m.match_date ? new Date(m.match_date).toLocaleString() : '-';
+
+                const pt = r.my_points_change ?? 0;
+                const hc = r.my_handicap_change ?? 0;
+
                 return (
                   <div
                     key={r.match_id}
@@ -927,10 +1108,24 @@ export default function MyPage() {
                       <div className="text-sm text-yellow-100 truncate">
                         {m.mode} / {m.status || '-'}
                       </div>
-                      {r.opponent && (
-                        <div className="text-xs text-gray-400 truncate">vs {r.opponent.handle_name}</div>
+
+                      {r.opponent && <div className="text-xs text-gray-400 truncate">vs {r.opponent.handle_name}</div>}
+
+                      {/* ✅ RP/HC は「レートに影響する試合」だけ表示（不戦勝など affects_rating=false は非表示） */}
+                      {r.affects_rating !== false && (
+                        <div className="mt-1 text-xs">
+                          <span className={pt >= 0 ? 'text-green-300' : 'text-red-300'}>
+                            {pt > 0 ? '+' : ''}
+                            {pt}pt
+                          </span>
+                          <span className="ml-2 text-blue-200">
+                            HC {hc > 0 ? '+' : ''}
+                            {hc}
+                          </span>
+                        </div>
                       )}
                     </div>
+
                     <div className="text-right">
                       <div className="text-lg font-bold text-white">
                         {m.winner_score ?? '-'} - {m.loser_score ?? '-'}
@@ -947,7 +1142,6 @@ export default function MyPage() {
           {matchFetchNote && <div className="mt-3 text-xs text-gray-400">{matchFetchNote}</div>}
         </div>
 
-        {/* 予備スペース／お知らせ等 */}
         <div className="glass-card rounded-xl p-5 border border-purple-500/30 bg-gray-900/50">
           <h2 className="text-lg font-semibold text-purple-200 mb-3">お知らせ</h2>
           <p className="text-sm text-gray-300">

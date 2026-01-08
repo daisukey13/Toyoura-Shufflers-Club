@@ -12,6 +12,7 @@ import {
   FaArrowLeft,
   FaUsers,
   FaEdit,
+  FaSpinner,
 } from 'react-icons/fa';
 import { useFetchPlayerDetail, useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
 import { createClient } from '@/lib/supabase/client';
@@ -49,6 +50,49 @@ function winRateOf(p?: Player | null) {
   return g ? Math.round((w / g) * 100) : 0;
 }
 
+/**
+ * ✅ PATCH（最小）：match_details の列名ブレ吸収
+ */
+function toInt(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function affectsRatingOf(m: any): boolean {
+  // affects_rating が false の場合だけ「影響なし」扱い。それ以外（null/undefined含む）は影響あり扱い。
+  return m?.affects_rating === false ? false : true;
+}
+
+function pointsChangeOf(m: any, isWin: boolean): number {
+  const keys = isWin
+    ? ['winner_points_change', 'winner_points_delta', 'winner_rp_delta', 'md_w_change', 'm_w_change']
+    : ['loser_points_change', 'loser_points_delta', 'loser_rp_delta', 'md_l_change', 'm_l_change'];
+
+  for (const k of keys) {
+    const n = toInt(m?.[k]);
+    if (n !== null) return n;
+  }
+  return 0;
+}
+
+function handicapChangeOf(m: any, isWin: boolean): number {
+  const keys = isWin
+    ? ['winner_handicap_change', 'winner_handicap_delta', 'winner_hc_change', 'winner_hc_delta']
+    : ['loser_handicap_change', 'loser_handicap_delta', 'loser_hc_change', 'loser_hc_delta'];
+
+  for (const k of keys) {
+    const n = toInt(m?.[k]);
+    if (n !== null) return n;
+  }
+  return 0;
+}
+
 /* ───────────────────────────── Rank badge (Huge) ───────────────────────────── */
 function rankTheme(rank?: number | null) {
   if (!rank) return { ring: 'from-purple-500 to-pink-600', glow: 'bg-purple-400' };
@@ -80,6 +124,115 @@ function HugeRankBadge({ rank }: { rank?: number | null }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ───────────────────────────── Rank Trend (Snapshots) ───────────────────────────── */
+type RankSnapshotRow = {
+  snapshot_date: string; // date (JST基準で入っている想定: 'YYYY-MM-DD')
+  rank: number;
+  ranking_points?: number | null;
+};
+
+type TrendMode = 'daily' | 'weekly' | 'monthly';
+
+function pickIntFrom(obj: any, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = obj?.[k];
+    const n = toInt(v);
+    if (n !== null && n > 0) return n;
+  }
+  return null;
+}
+
+function parseJstDate(dateStr: string) {
+  // snapshot_date は 'YYYY-MM-DD' 想定。JSTとして解釈して表示を安定させる。
+  return new Date(`${dateStr}T00:00:00+09:00`);
+}
+
+function fmtMD(dateStr: string) {
+  const d = parseJstDate(dateStr);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+function fmtYM(dateStr: string) {
+  const d = parseJstDate(dateStr);
+  return `${d.getFullYear()}/${d.getMonth() + 1}`;
+}
+
+/**
+ * ✅ 重要：閲覧者のタイムゾーンに依存せず、常にJST基準で判定する
+ * - JST正午で固定してUTC側で曜日/日付を取るとブレにくい
+ */
+function isJstMonday(dateStr: string) {
+  return new Date(`${dateStr}T12:00:00+09:00`).getUTCDay() === 1; // Monday
+}
+function isJstFirstOfMonth(dateStr: string) {
+  return new Date(`${dateStr}T12:00:00+09:00`).getUTCDate() === 1; // 1st
+}
+
+function MiniRankLine({
+  points,
+  currentRank,
+}: {
+  points: Array<{ label: string; rank: number }>;
+  currentRank: number | null;
+}) {
+  const w = 320;
+  const h = 120;
+  const padX = 18;
+  const padY = 14;
+
+  const ranks = points.map((p) => p.rank).filter((n) => Number.isFinite(n) && n > 0);
+  if (ranks.length === 0) {
+    return <div className="text-sm text-gray-400">データがありません。</div>;
+  }
+
+  const n = ranks.length;
+  const minR = Math.min(...ranks);
+  const maxR = Math.max(...ranks);
+  const spanR = Math.max(1, maxR - minR);
+
+  const xOf = (i: number) => {
+    if (n === 1) return w / 2;
+    return padX + (i * (w - padX * 2)) / (n - 1);
+  };
+  const yOf = (rank: number) => {
+    // rankが小さいほど上（yが小さい）
+    return padY + ((rank - minR) * (h - padY * 2)) / spanR;
+  };
+
+  const coords = ranks.map((r, i) => [xOf(i), yOf(r)] as const);
+  const path = coords
+    .map(([x, y], i) => (i === 0 ? `M ${x} ${y}` : `L ${x} ${y}`))
+    .join(' ');
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm text-gray-300">順位推移</div>
+        <div className="text-xs text-gray-400">
+          現在: <span className="text-yellow-100 font-semibold">{currentRank ?? '—'}位</span>
+        </div>
+      </div>
+
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-[120px]">
+        <rect x="0" y="0" width={w} height={h} rx="12" className="fill-black/20" />
+        <path d={path} className="stroke-purple-300" strokeWidth="2.5" fill="none" />
+        {coords.map(([x, y], i) => (
+          <circle key={i} cx={x} cy={y} r="4" className="fill-yellow-100/90" />
+        ))}
+      </svg>
+
+      <div className="mt-2 flex justify-between text-[11px] text-gray-400">
+        {points.map((p, i) => (
+          <span key={i} className="tabular-nums">
+            {p.label || ' '}
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-2 text-[11px] text-gray-500">※ 0:00（JST）集計の順位スナップショットを表示します</div>
     </div>
   );
 }
@@ -254,15 +407,192 @@ export default function PlayerProfilePage() {
     };
   }, [playerId, viewerChecked, isHidden, canViewHidden]);
 
+  /* ───────── 順位スナップショット設定（ranking_config） + 取得 ───────── */
+  const [trendMode, setTrendMode] = useState<TrendMode>('daily');
+  const [trendCfg, setTrendCfg] = useState<{ days: number; weeks: number; months: number }>({
+    days: 5,
+    weeks: 5,
+    months: 5,
+  });
+
+  // ✅ 取得後に「デフォルトモード」を1回だけ適用（ユーザー操作を上書きしない）
+  const [trendModeInit, setTrendModeInit] = useState(false);
+
+  const [snapLoading, setSnapLoading] = useState(false);
+  const [snapMsg, setSnapMsg] = useState<string>('');
+  const [snapRows, setSnapRows] = useState<RankSnapshotRow[]>([]);
+
+  // 1) ranking_config 取得（✅ id='global' を優先 → 無ければ先頭1行）
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+
+    (async () => {
+      try {
+        let cfg: any = null;
+
+        const q1 = await (supabase.from('ranking_config') as any).select('*').eq('id', 'global').maybeSingle();
+        if (!q1.error && q1.data) {
+          cfg = q1.data;
+        } else {
+          const q2 = await (supabase.from('ranking_config') as any).select('*').limit(1).maybeSingle();
+          if (!q2.error && q2.data) cfg = q2.data;
+        }
+
+        if (cancelled) return;
+        if (!cfg) return;
+
+        const days =
+          pickIntFrom(cfg, [
+            'trend_daily_days',
+            'profile_trend_days',
+            'player_profile_trend_days',
+            'rank_trend_days',
+            'rank_snapshot_days',
+            'trend_days',
+            'display_days',
+          ]) ?? 5;
+
+        const weeks =
+          pickIntFrom(cfg, [
+            'trend_weekly_weeks',
+            'profile_trend_weeks',
+            'player_profile_trend_weeks',
+            'rank_trend_weeks',
+            'trend_weeks',
+          ]) ?? 5;
+
+        const months =
+          pickIntFrom(cfg, [
+            'trend_monthly_months',
+            'profile_trend_months',
+            'player_profile_trend_months',
+            'rank_trend_months',
+            'trend_months',
+          ]) ?? 5;
+
+        setTrendCfg({ days, weeks, months });
+
+        const mode = String(
+          cfg?.trend_default_mode ??
+            cfg?.profile_trend_mode ??
+            cfg?.player_profile_trend_mode ??
+            cfg?.rank_trend_mode ??
+            ''
+        ).toLowerCase();
+
+        // ✅ 初回だけ適用
+        if (!trendModeInit && (mode === 'weekly' || mode === 'monthly' || mode === 'daily')) {
+          setTrendMode(mode as TrendMode);
+          setTrendModeInit(true);
+        } else if (!trendModeInit) {
+          setTrendModeInit(true);
+        }
+      } catch (e) {
+        // 失敗時は既定値のまま（UIは動く）
+        if (!trendModeInit) setTrendModeInit(true);
+        console.warn('[player profile] ranking_config load failed:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 2) rank_snapshots 取得（プレーヤーごと）
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+
+    (async () => {
+      if (!playerId) return;
+
+      // 非表示＆閲覧権限なしの場合は取得しない
+      if (viewerChecked && isHidden && !canViewHidden) return;
+
+      setSnapLoading(true);
+      setSnapMsg('');
+      try {
+        const { data, error } = await (supabase.from('rank_snapshots') as any)
+          .select('snapshot_date, rank, ranking_points')
+          .eq('player_id', playerId)
+          .order('snapshot_date', { ascending: false })
+          .limit(400);
+
+        if (cancelled) return;
+        if (error) throw error;
+
+        setSnapRows((data ?? []) as RankSnapshotRow[]);
+      } catch (e: any) {
+        if (!cancelled) {
+          setSnapRows([]);
+          setSnapMsg(e?.message ?? '順位履歴の取得に失敗しました');
+        }
+      } finally {
+        if (!cancelled) setSnapLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [playerId, viewerChecked, isHidden, canViewHidden]);
+
+  const trendTitle = useMemo(() => {
+    if (trendMode === 'daily') return `直近${trendCfg.days}日間の順位変化`;
+    if (trendMode === 'weekly') return `直近 毎週月曜ごと${trendCfg.weeks}週間分の変化`;
+    return `直近 毎月1日ごと${trendCfg.months}ヶ月分の変化`;
+  }, [trendMode, trendCfg.days, trendCfg.weeks, trendCfg.months]);
+
+  const trendPoints = useMemo(() => {
+    const rows = Array.isArray(snapRows) ? snapRows : [];
+    if (rows.length === 0) return [] as Array<{ label: string; rank: number }>;
+
+    if (trendMode === 'daily') {
+      const take = Math.max(1, trendCfg.days);
+      const picked = rows.slice(0, take).reverse();
+      return picked.map((r) => ({ label: fmtMD(r.snapshot_date), rank: r.rank }));
+    }
+
+    if (trendMode === 'weekly') {
+      const take = Math.max(1, trendCfg.weeks);
+      const mondays = rows.filter((r) => isJstMonday(r.snapshot_date));
+      const picked = mondays.slice(0, take).reverse();
+      return picked.map((r) => ({ label: fmtMD(r.snapshot_date), rank: r.rank }));
+    }
+
+    // monthly
+    {
+      const take = Math.max(1, trendCfg.months);
+      const firstDays = rows.filter((r) => isJstFirstOfMonth(r.snapshot_date));
+      const picked = firstDays.slice(0, take).reverse();
+      return picked.map((r) => ({ label: fmtYM(r.snapshot_date), rank: r.rank }));
+    }
+  }, [snapRows, trendMode, trendCfg.days, trendCfg.weeks, trendCfg.months]);
+
+  const currentSnapRank = useMemo(() => {
+    const rows = Array.isArray(snapRows) ? snapRows : [];
+    return rows.length ? rows[0].rank : null;
+  }, [snapRows]);
+
+  const emptyTrendMsg = useMemo(() => {
+    if (trendMode === 'daily') {
+      return 'まだ順位履歴がありません。毎日0時（JST）の集計が溜まると表示されます。';
+    }
+    if (trendMode === 'weekly') {
+      return '週表示は「月曜0時（JST）時点」の記録が必要です。次の月曜集計以降に表示されます。';
+    }
+    return '月表示は「毎月1日0時（JST）時点」の記録が必要です。次の月初集計以降に表示されます。';
+  }, [trendMode]);
+
   return (
     <div className="min-h-screen bg-[#2a2a3e] text-white">
       <div className="container mx-auto px-4 py-6 sm:py-8">
         {/* アクション（戻る / 編集） */}
         <div className="mb-4 flex items-center justify-between gap-3">
-          <Link
-            href="/players"
-            className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
-          >
+          <Link href="/players" className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200">
             <FaArrowLeft /> 一覧へ戻る
           </Link>
 
@@ -308,17 +638,10 @@ export default function PlayerProfilePage() {
         {/* ★非表示プレーヤーのガード（一般閲覧を遮断） */}
         {!loading && !error && player && viewerChecked && isHidden && !canViewHidden && (
           <div className="max-w-4xl mx-auto glass-card rounded-2xl p-6 sm:p-8 border border-yellow-500/30 bg-yellow-500/10">
-            <div className="text-yellow-100 font-bold text-lg mb-2">
-              このプレーヤーは現在「非表示」です
-            </div>
-            <div className="text-gray-300 text-sm sm:text-base">
-              管理者または本人のみ閲覧できます。
-            </div>
+            <div className="text-yellow-100 font-bold text-lg mb-2">このプレーヤーは現在「非表示」です</div>
+            <div className="text-gray-300 text-sm sm:text-base">管理者または本人のみ閲覧できます。</div>
             <div className="mt-4">
-              <Link
-                href="/players"
-                className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200"
-              >
+              <Link href="/players" className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200">
                 <FaArrowLeft /> 一覧へ戻る
               </Link>
             </div>
@@ -386,15 +709,11 @@ export default function PlayerProfilePage() {
                   {/* 勝利/敗北/勝率 */}
                   <div className="mt-5 grid grid-cols-3 gap-3 sm:gap-4">
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
-                      <div className="text-2xl font-extrabold text-green-400">
-                        {(player as any).wins ?? 0}
-                      </div>
+                      <div className="text-2xl font-extrabold text-green-400">{(player as any).wins ?? 0}</div>
                       <div className="text-xs sm:text-sm text-gray-400">勝利</div>
                     </div>
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
-                      <div className="text-2xl font-extrabold text-red-400">
-                        {(player as any).losses ?? 0}
-                      </div>
+                      <div className="text-2xl font-extrabold text-red-400">{(player as any).losses ?? 0}</div>
                       <div className="text-xs sm:text-sm text-gray-400">敗北</div>
                     </div>
                     <div className="text-center rounded-xl bg-gray-900/60 border border-purple-500/20 p-3 sm:p-4">
@@ -454,6 +773,48 @@ export default function PlayerProfilePage() {
               )}
             </div>
 
+            {/* ── ✅ 順位推移グラフ ───────────────── */}
+            <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
+              <div className="flex items-start justify-between gap-3 mb-4 sm:mb-5">
+                <div>
+                  <h2 className="text-lg sm:text-xl font-bold text-yellow-100 flex items-center gap-2">
+                    <FaChartLine className="text-purple-300" />
+                    {trendTitle}
+                  </h2>
+                  <div className="text-xs text-gray-400 mt-1">※ 0:00（JST）更新の順位を表示します</div>
+                </div>
+
+                <div className="shrink-0">
+                  <label className="block text-[11px] text-gray-400 mb-1">表示間隔</label>
+                  <select
+                    value={trendMode}
+                    onChange={(e) => setTrendMode(e.target.value as TrendMode)}
+                    className="px-3 py-2 rounded-lg bg-gray-900/60 border border-purple-500/30 text-gray-100 text-sm
+                               focus:outline-none focus:border-purple-400"
+                  >
+                    <option value="daily">直近{trendCfg.days}日</option>
+                    <option value="weekly">毎週月曜（直近{trendCfg.weeks}週）</option>
+                    <option value="monthly">毎月1日（直近{trendCfg.months}ヶ月）</option>
+                  </select>
+                </div>
+              </div>
+
+              {snapLoading ? (
+                <div className="text-gray-400 py-8 text-center">
+                  <FaSpinner className="inline mr-2 animate-spin" />
+                  読み込み中…
+                </div>
+              ) : snapMsg ? (
+                <div className="text-sm text-gray-300">{snapMsg}</div>
+              ) : trendPoints.length === 0 ? (
+                <div className="text-sm text-gray-400">{emptyTrendMsg}</div>
+              ) : (
+                <div className="rounded-xl border border-purple-500/20 bg-purple-900/10 p-3">
+                  <MiniRankLine points={trendPoints} currentRank={currentSnapRank ?? rank ?? null} />
+                </div>
+              )}
+            </div>
+
             {/* ── 直近の試合（簡易） ──────────────────────────── */}
             <div className="glass-card rounded-2xl p-6 sm:p-7 border border-purple-500/30">
               <h2 className="text-lg sm:text-xl font-bold text-yellow-100 mb-4 sm:mb-5">直近の試合</h2>
@@ -466,6 +827,10 @@ export default function PlayerProfilePage() {
                     const isWin = m.winner_id === playerId;
                     const oppName = m.winner_id === playerId ? m.loser_name : m.winner_name;
                     const oppId = m.winner_id === playerId ? m.loser_id : m.winner_id;
+
+                    const showDelta = affectsRatingOf(m);
+                    const delta = pointsChangeOf(m, isWin);
+                    const hcDelta = handicapChangeOf(m, isWin);
 
                     return (
                       <div
@@ -490,15 +855,25 @@ export default function PlayerProfilePage() {
                               {isWin ? '勝利' : '敗北'}：{oppName}
                             </div>
                           </div>
+
                           <div className="text-right">
                             <div className="text-lg sm:text-xl font-extrabold text-white">
                               15 - {m.loser_score ?? 0}
                             </div>
-                            <div className={`text-xs sm:text-sm ${isWin ? 'text-green-300' : 'text-red-300'}`}>
-                              {isWin ? '+' : ''}
-                              {isWin ? m.winner_points_change ?? 0 : m.loser_points_change ?? 0}
-                              pt
-                            </div>
+
+                            {showDelta && (
+                              <>
+                                <div className={`text-xs sm:text-sm ${isWin ? 'text-green-300' : 'text-red-300'}`}>
+                                  {delta > 0 ? '+' : ''}
+                                  {delta}
+                                  pt
+                                </div>
+                                <div className="text-xs sm:text-sm text-gray-300">
+                                  HC {hcDelta > 0 ? '+' : ''}
+                                  {hcDelta}
+                                </div>
+                              </>
+                            )}
                           </div>
                         </div>
 
