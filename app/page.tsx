@@ -44,6 +44,8 @@ type RecentMatch = {
   id: string;
   match_date: string;
   mode?: string | null; // 'singles' | 'teams'
+  status?: string | null;
+
   is_tournament?: boolean | null;
   tournament_name?: string | null;
   venue?: string | null;
@@ -62,12 +64,14 @@ type RecentMatch = {
   loser_name?: string | null;
   loser_avatar?: string | null;
   loser_avatar_url?: string | null;
+  winner_score?: number | null; // APIが返す場合のみ
   loser_score?: number | null;
+
   loser_current_points?: number | null;
   loser_current_handicap?: number | null;
   loser_points_change?: number | null;
 
-  // 団体戦（unified_match_feed から）
+  // 団体戦
   winner_team_id?: string | null;
   winner_team_name?: string | null;
   loser_team_id?: string | null;
@@ -90,7 +94,6 @@ type TournamentLite = {
 
 type MemberLite = { id: string; handle_name: string; avatar_url: string | null };
 
-/** 画像（汎用アバター）: 404時はデフォルトにフォールバック */
 function AvatarImg({
   src,
   alt,
@@ -144,7 +147,6 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // （任意）ログイン済みなら自動遷移（既存挙動維持）
   useEffect(() => {
     if (user && player && !loading) {
       if (player.is_admin) router.push('/admin/dashboard');
@@ -152,7 +154,6 @@ export default function HomePage() {
     }
   }, [user, player, loading, router]);
 
-  // ★アクティブ判定（null/未設定は「アクティブ扱い」）
   const isActiveMemberRow = (p: any) => p?.is_active !== false && p?.is_deleted !== true;
 
   const fetchStats = async () => {
@@ -198,7 +199,7 @@ export default function HomePage() {
     }
   };
 
-  // ✅ 最近の試合：サーバAPI経由（RLS/ビュー差分に強くする）
+  // ✅ 最近の試合：API経由（RLS/ビュー差分に強い）
   const fetchRecentMatches = async () => {
     try {
       const res = await fetch('/api/public/recent-matches?limit=6', { cache: 'no-store' });
@@ -256,7 +257,6 @@ export default function HomePage() {
     }
   };
 
-  // ────────────────────────── メニュー ──────────────────────────
   const menuItems = [
     { icon: FaChartLine, title: 'ランキング', description: '最新のランキング', href: '/rankings' },
     { icon: FaUsers, title: 'メンバー', description: 'クラブメンバーを見る', href: '/players' },
@@ -271,7 +271,6 @@ export default function HomePage() {
     return g > 0 ? Math.round((W / g) * 100) : 0;
   };
 
-  // チーム戦の堅牢判定
   const isTeamMatch = (m: RecentMatch) =>
     (m.mode && m.mode.toLowerCase() === 'teams') ||
     !!m.winner_team_id ||
@@ -279,7 +278,6 @@ export default function HomePage() {
     !!m.winner_team_name ||
     !!m.loser_team_name;
 
-  // 最近の試合に出てくるチームのメンバー（アバター＋ハンドルネーム）を一括取得
   useEffect(() => {
     const loadTeamMembers = async () => {
       try {
@@ -336,8 +334,11 @@ export default function HomePage() {
           if (!grouped[tid]) grouped[tid] = [];
           grouped[tid].push(member);
         });
+
         Object.keys(grouped).forEach((tid) => {
-          grouped[tid] = grouped[tid].sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja')).slice(0, 4);
+          grouped[tid] = grouped[tid]
+            .sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'))
+            .slice(0, 4);
         });
 
         setTeamMembersMap((prev) => ({ ...prev, ...grouped }));
@@ -350,11 +351,9 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recentMatches]);
 
-  // null/undefined 安全な Link ラッパ
   const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
     href ? <Link href={href}>{children}</Link> : <div>{children}</div>;
 
-  // メンバー列（アバター＋名前を横並び / 団体戦用）
   const TeamMembersInline = ({ teamId }: { teamId?: string | null }) => {
     const members: MemberLite[] = teamId ? teamMembersMap[teamId] ?? [] : [];
     if (!teamId || members.length === 0) return null;
@@ -376,11 +375,9 @@ export default function HomePage() {
     );
   };
 
-  /** 個人戦アバターの安全な取得（winner/loser） */
   const winnerAvatarOf = (m: RecentMatch) => m.winner_avatar ?? m.winner_avatar_url ?? null;
   const loserAvatarOf = (m: RecentMatch) => m.loser_avatar ?? m.loser_avatar_url ?? null;
 
-  // ────────────────────────── 大会バナー ──────────────────────────
   const tournamentTitleOf = (t: TournamentLite) => t.name ?? t.title ?? '大会';
 
   const tournamentDateLabel = (t: TournamentLite) => {
@@ -445,7 +442,6 @@ export default function HomePage() {
       </Link>
     );
   };
-  // ─────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen">
@@ -822,17 +818,23 @@ export default function HomePage() {
 
           <div className="space-y-3">
             {recentMatches.slice(0, 5).map((m) => {
-              const scoreDiff = 15 - (m.loser_score ?? 0);
+              const winnerScore = (m.winner_score ?? 15) as number;
+              const loserScore = (m.loser_score ?? 0) as number;
+
+              const scoreDiff = winnerScore - loserScore;
               const upset =
                 (m.winner_current_points ?? 0) < (m.loser_current_points ?? 0) - 100 ||
                 (m.winner_current_handicap ?? 0) > (m.loser_current_handicap ?? 0) + 5;
 
-              const dateLabel = new Date(m.match_date).toLocaleString('ja-JP', {
-                month: 'numeric',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              });
+              const d = new Date(m.match_date);
+              const dateLabel = Number.isNaN(d.getTime())
+                ? ''
+                : d.toLocaleString('ja-JP', {
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  });
 
               const team = isTeamMatch(m);
               const winnerHref = team
@@ -911,7 +913,7 @@ export default function HomePage() {
                           {team && <TeamMembersInline teamId={m.winner_team_id} />}
                         </div>
                         <div className="text-right">
-                          <div className="text-xl sm:text-2xl font-bold text-yellow-100">15</div>
+                          <div className="text-xl sm:text-2xl font-bold text-yellow-100">{winnerScore}</div>
                         </div>
                       </div>
                     </MaybeLink>
@@ -948,7 +950,7 @@ export default function HomePage() {
                           />
                         )}
                         <div className="order-3 text-right">
-                          <div className="text-xl sm:text-2xl font-bold text-yellow-100">{m.loser_score ?? 0}</div>
+                          <div className="text-xl sm:text-2xl font-bold text-yellow-100">{loserScore}</div>
                         </div>
                       </div>
                     </MaybeLink>
