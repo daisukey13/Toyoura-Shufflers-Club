@@ -1,7 +1,7 @@
 // app/(main)/page.tsx
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import RegisterButtons from '@/components/RegisterButtons';
 import AuthAwareLoginButtonClient from '@/components/client/AuthAwareLoginButton.client';
@@ -53,7 +53,7 @@ type RecentMatch = {
   winner_id?: string | null;
   winner_name?: string | null;
   winner_avatar?: string | null;
-  winner_avatar_url?: string | null; // ← フォールバック
+  winner_avatar_url?: string | null;
   winner_current_points?: number | null;
   winner_current_handicap?: number | null;
   winner_points_change?: number | null;
@@ -61,7 +61,7 @@ type RecentMatch = {
   loser_id?: string | null;
   loser_name?: string | null;
   loser_avatar?: string | null;
-  loser_avatar_url?: string | null; // ← フォールバック
+  loser_avatar_url?: string | null;
   loser_score?: number | null;
   loser_current_points?: number | null;
   loser_current_handicap?: number | null;
@@ -81,12 +81,10 @@ type TournamentLite = {
   start_date?: string | null;
   created_at?: string | null;
 
-  // 画像カラムがあれば拾う（無くてもOK）
   banner_url?: string | null;
   image_url?: string | null;
   banner_image_url?: string | null;
 
-  // 任意
   venue?: string | null;
 };
 
@@ -161,7 +159,6 @@ export default function HomePage() {
     try {
       const [matchesResult, playersResult] = await Promise.all([
         supabase.from('matches').select('id', { count: 'exact', head: true }),
-        // ★ server側で is_active=true を固定しない（null を取りこぼさない）
         supabase.from('players').select('id, ranking_points, is_active, is_deleted').eq('is_admin', false),
       ]);
 
@@ -187,7 +184,6 @@ export default function HomePage() {
 
   const fetchTopPlayers = async () => {
     try {
-      // ★ いったん多めに取ってから active 判定で絞る（null を取りこぼさない）
       const { data } = await supabase
         .from('players')
         .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses, is_active, is_deleted')
@@ -202,39 +198,22 @@ export default function HomePage() {
     }
   };
 
-  // unified_match_feed（個人/チーム混在）→ フォールバックで match_details
+  // ✅ 最近の試合：サーバAPI経由（RLS/ビュー差分に強くする）
   const fetchRecentMatches = async () => {
     try {
-      let data: RecentMatch[] | null = null;
+      const res = await fetch('/api/public/recent-matches?limit=6', { cache: 'no-store' });
+      const json = await res.json().catch(() => null);
 
-      // トライ1: unified_match_feed
-      {
-        const res = await supabase
-          .from('unified_match_feed')
-          .select('*')
-          .order('match_date', { ascending: false })
-          .limit(6);
-
-        if (!res.error && res.data) data = res.data as RecentMatch[];
+      if (!res.ok || !json?.ok) {
+        console.error('recent-matches api failed:', json?.message ?? res.statusText);
+        setRecentMatches([]);
+        return;
       }
 
-      // フォールバック: match_details（個人戦ビュー）
-      if (!data) {
-        const res = await supabase
-          .from('match_details')
-          .select('*')
-          // ★ created_at が無いビューでも落ちないように match_date を使う
-          .order('match_date', { ascending: false })
-          .limit(6);
-
-        if (!res.error) {
-          data = (res.data ?? []).map((m: any) => ({ ...m, mode: m?.mode ?? 'singles' })) as RecentMatch[];
-        }
-      }
-
-      setRecentMatches(data ?? []);
+      setRecentMatches((json.matches ?? []) as RecentMatch[]);
     } catch (error) {
       console.error('Error fetching recent matches:', error);
+      setRecentMatches([]);
     }
   };
 
@@ -358,9 +337,7 @@ export default function HomePage() {
           grouped[tid].push(member);
         });
         Object.keys(grouped).forEach((tid) => {
-          grouped[tid] = grouped[tid]
-            .sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'))
-            .slice(0, 4);
+          grouped[tid] = grouped[tid].sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja')).slice(0, 4);
         });
 
         setTeamMembersMap((prev) => ({ ...prev, ...grouped }));
@@ -403,7 +380,7 @@ export default function HomePage() {
   const winnerAvatarOf = (m: RecentMatch) => m.winner_avatar ?? m.winner_avatar_url ?? null;
   const loserAvatarOf = (m: RecentMatch) => m.loser_avatar ?? m.loser_avatar_url ?? null;
 
-  // ────────────────────────── 大会バナー（UI追加部分） ──────────────────────────
+  // ────────────────────────── 大会バナー ──────────────────────────
   const tournamentTitleOf = (t: TournamentLite) => t.name ?? t.title ?? '大会';
 
   const tournamentDateLabel = (t: TournamentLite) => {
@@ -468,7 +445,7 @@ export default function HomePage() {
       </Link>
     );
   };
-  // ───────────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen">
@@ -789,10 +766,14 @@ export default function HomePage() {
                       <div className="text-xs text-gray-400 mt-0.5">HC {p?.handicap ?? '—'}</div>
                     </div>
                     <div className="mt-3 flex items-center justify-center gap-2">
-                      <span className={`px-2 py-1 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${S.pill}`}>
+                      <span
+                        className={`px-2 py-1 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${S.pill}`}
+                      >
                         RP <b className="text-yellow-100 ml-1">{p?.ranking_points ?? '—'}</b>
                       </span>
-                      <span className={`px-2 py-1 rounded-full bg-blue-900/40 text-blue-200 border border-blue-500/30 ${S.pill}`}>
+                      <span
+                        className={`px-2 py-1 rounded-full bg-blue-900/40 text-blue-200 border border-blue-500/30 ${S.pill}`}
+                      >
                         勝率 <b className="text-yellow-100 ml-1">{winRate(p?.wins, p?.losses)}%</b>
                       </span>
                     </div>
