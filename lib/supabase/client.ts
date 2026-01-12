@@ -2,13 +2,19 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/lib/database.types';
 
 /**
  * ✅ このアプリの Supabase Auth の storageKey は必ず統一する
  */
 export const SUPABASE_AUTH_STORAGE_KEY = 'tsc-auth';
 
-type SB = ReturnType<typeof createBrowserClient>;
+/**
+ * ✅ SupabaseClient の型は「Database だけ」にする
+ * （supabase-js / @supabase/ssr のバージョン差で 2/3 引数の定義がブレやすく、ビルドが壊れるため）
+ */
+type SB = SupabaseClient<Database>;
 
 declare global {
   // eslint-disable-next-line no-var
@@ -49,8 +55,8 @@ function purgeAuthLocalStorage(keepKey?: string) {
       const isSupabaseAuthLike =
         k === 'supabase.auth.token' ||
         k === 'supabase-auth-token' ||
-        k.startsWith('sb-') && k.includes('-auth-token') || // sb-<ref>-auth-token 系
-        k.includes('supabase') && k.includes('auth') && k.includes('token');
+        (k.startsWith('sb-') && k.includes('-auth-token')) || // sb-<ref>-auth-token 系
+        (k.includes('supabase') && k.includes('auth') && k.includes('token'));
 
       if (!isSupabaseAuthLike) continue;
       if (keepKey && k === keepKey) continue;
@@ -84,7 +90,7 @@ function createServerProxyClient(): SB {
         throw err;
       },
     }
-  ) as SB;
+  ) as unknown as SB;
 }
 
 /**
@@ -97,7 +103,7 @@ function patchInvalidRefreshRecovery(sb: SB) {
   if (globalThis.__supabase_auth_patched__) return;
   globalThis.__supabase_auth_patched__ = true;
 
-  const auth: any = sb.auth;
+  const auth: any = (sb as any).auth;
 
   const wrap = (fnName: 'getSession' | 'refreshSession') => {
     const orig = auth?.[fnName]?.bind(auth);
@@ -110,7 +116,7 @@ function patchInvalidRefreshRecovery(sb: SB) {
         try {
           // 「混在キー」は消す（keep しない）
           purgeAuthLocalStorage();
-          await sb.auth.signOut();
+          await (sb as any).auth.signOut();
         } catch {
           // ignore
         }
@@ -145,11 +151,11 @@ export function createClient(): SB {
     // ✅ 混在源を掃除（tsc-auth 自体は残す）
     purgeAuthLocalStorage(SUPABASE_AUTH_STORAGE_KEY);
 
-    globalThis.__supabase__ = createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    globalThis.__supabase__ = createBrowserClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         storageKey: SUPABASE_AUTH_STORAGE_KEY,
       },
-    });
+    }) as unknown as SB;
 
     patchInvalidRefreshRecovery(globalThis.__supabase__);
   }

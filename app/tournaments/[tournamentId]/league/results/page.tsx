@@ -479,10 +479,9 @@ export default function TournamentLeagueResultsPage() {
     try {
       // 1) まずはクライアントから update を試す（RLSで通る環境なら最小）
       {
-        const { error: upErr } = await supabase
-          .from('league_blocks')
-          .update({ winner_player_id: winnerPlayerId } as any)
-          .eq('id', blockId);
+        const { error: upErr } = await (supabase.from('league_blocks') as any)
+  .update({ winner_player_id: winnerPlayerId })
+  .eq('id', blockId);
 
         if (!upErr) {
           await loadAll();
@@ -600,13 +599,13 @@ export default function TournamentLeagueResultsPage() {
             )
           ).filter((pid) => isRealPlayerId(pid));
 
-          const picked = winnerPickByBlock[block.id] ?? (winnerId && isRealPlayerId(winnerId) ? winnerId : candidateIds[0] ?? '');
+          const picked =
+            winnerPickByBlock[block.id] ??
+            (winnerId && isRealPlayerId(winnerId) ? winnerId : candidateIds[0] ?? '');
 
           return (
             <section key={block.id} className="space-y-4">
               <h2 className="text-xl font-bold">ブロック {block.label ?? '?'} リーグ結果</h2>
-
-              
 
               {showWinnerCard && (
                 <div className="rounded-2xl border border-blue-500/40 bg-blue-900/40 p-4 flex items-center gap-4">
@@ -646,7 +645,11 @@ export default function TournamentLeagueResultsPage() {
                       </div>
 
                       {/* ✅ 管理者だけ：未確定ならDBへ反映ボタン */}
-                      {isAdmin && statusFinished && !block.winner_player_id && winnerId && isRealPlayerId(winnerId) ? (
+                      {isAdmin &&
+                      statusFinished &&
+                      !block.winner_player_id &&
+                      winnerId &&
+                      isRealPlayerId(winnerId) ? (
                         <div className="mt-2 flex items-center gap-3">
                           <button
                             type="button"

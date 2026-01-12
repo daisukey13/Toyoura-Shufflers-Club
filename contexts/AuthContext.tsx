@@ -105,7 +105,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return null;
       }
 
-      const row = (res.data ?? null) as PlayerRow | null;
+      const data = (res as any)?.data ?? null;
+if (!data || typeof data !== 'object') return null;
+const row = data as PlayerRow;
+
       if (!row) return null;
 
       return {

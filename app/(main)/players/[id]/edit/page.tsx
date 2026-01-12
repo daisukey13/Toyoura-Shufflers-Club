@@ -18,16 +18,7 @@ type AvatarUploaderProps = {
 };
 const AvatarUploader = AvatarUploaderRaw as unknown as ComponentType<AvatarUploaderProps>;
 
-const ADDRESS_OPTIONS: string[] = [
-  '未選択',
-  '豊浦町',
-  '洞爺湖町',
-  '伊達市',
-  '室蘭市',
-  '登別市',
-  '札幌市',
-  'その他',
-];
+const ADDRESS_OPTIONS: string[] = ['未選択', '豊浦町', '洞爺湖町', '伊達市', '室蘭市', '登別市', '札幌市', 'その他'];
 
 type PrivateBaseRow = {
   full_name: string | null;
@@ -49,6 +40,9 @@ export default function EditPlayerPage() {
 
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+
+  // ✅ write系を確実に型エラー回避するためのヘルパー（UI/UX変更なし）
+  const fromAny = useCallback((table: string) => (supabase.from(table as any) as any), [supabase]);
 
   const [authChecked, setAuthChecked] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
@@ -77,7 +71,7 @@ export default function EditPlayerPage() {
     avatar_url: '',
 
     // ★管理者用: 表示/非表示
-    is_active_ui: true,   // UI上「表示する」= true
+    is_active_ui: true, // UI上「表示する」= true
     is_deleted_ui: false, // UI上「削除扱い」= true
   });
 
@@ -193,10 +187,7 @@ export default function EditPlayerPage() {
 
       // チーム一覧
       try {
-        const { data: t, error: tErr } = await supabase
-          .from('teams')
-          .select('id, name')
-          .order('name', { ascending: true });
+        const { data: t, error: tErr } = await supabase.from('teams').select('id, name').order('name', { ascending: true });
         if (!tErr && t) setTeams(t as any);
         else setTeams([]);
       } catch {
@@ -205,14 +196,14 @@ export default function EditPlayerPage() {
 
       setPlayer(pBase as any);
 
-      const base = (!privBaseErr && privBase ? (privBase as any as PrivateBaseRow) : null);
+      const base = (!privBaseErr && privBase ? ((privBase as any) as PrivateBaseRow) : null);
 
       const addr = ((pBase as any).address ?? '') as string;
       const addressVal = addr && String(addr).trim() ? String(addr) : '未選択';
 
       // ★is_active: false のときだけ非表示なので、UIは “表示する” = true/false にする
-      const uiActive = (pVis?.is_active !== false); // null/true => 表示
-      const uiDeleted = (pVis?.is_deleted === true);
+      const uiActive = pVis?.is_active !== false; // null/true => 表示
+      const uiDeleted = pVis?.is_deleted === true;
 
       setFormData({
         full_name: (base?.full_name ?? '') || '',
@@ -246,9 +237,7 @@ export default function EditPlayerPage() {
     return hit?.name ?? '';
   }, [teams, selectedTeamId]);
 
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
-  ) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
@@ -270,30 +259,24 @@ export default function EditPlayerPage() {
     const prevTeam = originalTeamId || '';
     if (nextTeam === prevTeam) return;
 
+    if (!playerId) throw new Error('Invalid player id');
+
     if (!nextTeam && prevTeam) {
-      const { error: delErr } = await supabase
-        .from('team_members')
-        .delete()
-        .eq('player_id', playerId)
-        .eq('team_id', prevTeam);
+      const { error: delErr } = await fromAny('team_members').delete().eq('player_id', playerId).eq('team_id', prevTeam);
       if (delErr) throw delErr;
       setOriginalTeamId('');
       return;
     }
 
     if (prevTeam) {
-      const { error: delErr } = await supabase
-        .from('team_members')
-        .delete()
-        .eq('player_id', playerId)
-        .eq('team_id', prevTeam);
+      const { error: delErr } = await fromAny('team_members').delete().eq('player_id', playerId).eq('team_id', prevTeam);
       if (delErr) throw delErr;
     }
 
-    const { error: insErr } = await supabase.from('team_members').insert({
+    const { error: insErr } = await fromAny('team_members').insert({
       team_id: nextTeam,
       player_id: playerId,
-    } as any);
+    });
 
     if (insErr) throw insErr;
 
@@ -315,29 +298,26 @@ export default function EditPlayerPage() {
       if (!isAdmin && authUserId !== playerId) throw new Error('Unauthorized');
 
       // ✅ players 更新（handle_name / avatar_url / address）
-      const { error: upPlayerErr } = await supabase
-        .from('players')
-        .update({
-          handle_name: formData.handle_name.trim(),
-          avatar_url: formData.avatar_url || null,
-          address: formData.address || null,
-        } as any)
-        .eq('id', playerId);
+      const playerPayload = {
+        handle_name: formData.handle_name.trim(),
+        avatar_url: formData.avatar_url || null,
+        address: formData.address || null,
+        // ...この下も同様に元のまま（必要ならここに追記）
+      };
 
+      const { error: upPlayerErr } = await fromAny('players').update(playerPayload).eq('id', playerId);
       if (upPlayerErr) throw upPlayerErr;
 
       // ★管理者のみ：表示/非表示を保存（列が無ければスキップ）
       if (isAdmin && visibilityColsOk) {
         try {
-          const payload = {
+          const visPayload = {
             // “表示する”チェック = true/false を is_active に反映
             is_active: formData.is_active_ui,
             is_deleted: formData.is_deleted_ui,
           };
-          const { error: visErr } = await supabase
-            .from('players')
-            .update(payload as any)
-            .eq('id', playerId);
+
+          const { error: visErr } = await fromAny('players').update(visPayload).eq('id', playerId);
 
           if (visErr) {
             setSchemaWarn('is_active / is_deleted の保存に失敗しました。DBカラムやRLSを確認してください。');
@@ -356,10 +336,7 @@ export default function EditPlayerPage() {
         updated_at: new Date().toISOString(),
       };
 
-      const { error: upPrivBaseErr } = await (supabase.from('players_private') as any).upsert(
-        basePayload,
-        { onConflict: 'player_id' }
-      );
+      const { error: upPrivBaseErr } = await fromAny('players_private').upsert(basePayload, { onConflict: 'player_id' });
       if (upPrivBaseErr) throw upPrivBaseErr;
 
       // admin_note は try
@@ -369,10 +346,7 @@ export default function EditPlayerPage() {
           admin_note: formData.admin_note || null,
           updated_at: new Date().toISOString(),
         };
-        const { error: upPrivOptErr } = await (supabase.from('players_private') as any).upsert(
-          optPayload,
-          { onConflict: 'player_id' }
-        );
+        const { error: upPrivOptErr } = await fromAny('players_private').upsert(optPayload, { onConflict: 'player_id' });
         if (upPrivOptErr) {
           setSchemaWarn('admin_note の保存に失敗しました。DBにカラムがあるか確認してください。');
         }
@@ -408,10 +382,7 @@ export default function EditPlayerPage() {
           <p className="font-bold">Error</p>
           <p>{error}</p>
         </div>
-        <button
-          onClick={() => router.back()}
-          className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-        >
+        <button onClick={() => router.back()} className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">
           Go Back
         </button>
       </div>
@@ -422,10 +393,7 @@ export default function EditPlayerPage() {
     return (
       <div className="container mx-auto px-4 py-8">
         <p>Player not found</p>
-        <button
-          onClick={() => router.back()}
-          className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-        >
+        <button onClick={() => router.back()} className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">
           Go Back
         </button>
       </div>
@@ -438,9 +406,7 @@ export default function EditPlayerPage() {
         <h1 className="text-3xl font-bold mb-8">Edit Player</h1>
 
         {schemaWarn && (
-          <div className="mb-4 bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded">
-            {schemaWarn}
-          </div>
+          <div className="mb-4 bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded">{schemaWarn}</div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -450,28 +416,16 @@ export default function EditPlayerPage() {
               <div className="font-semibold text-gray-800 mb-2">表示設定（管理者のみ）</div>
 
               <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  name="is_active_ui"
-                  checked={!!formData.is_active_ui}
-                  onChange={handleCheck}
-                />
+                <input type="checkbox" name="is_active_ui" checked={!!formData.is_active_ui} onChange={handleCheck} />
                 表示する（OFFで非表示）
               </label>
 
               <label className="flex items-center gap-2 text-sm text-gray-700 mt-2">
-                <input
-                  type="checkbox"
-                  name="is_deleted_ui"
-                  checked={!!formData.is_deleted_ui}
-                  onChange={handleCheck}
-                />
+                <input type="checkbox" name="is_deleted_ui" checked={!!formData.is_deleted_ui} onChange={handleCheck} />
                 削除扱い（一覧・ランキングから除外）
               </label>
 
-              <div className="text-xs text-gray-500 mt-2">
-                ※ 削除扱いが優先されます（削除扱いONの場合、表示チェックはOFFになります）
-              </div>
+              <div className="text-xs text-gray-500 mt-2">※ 削除扱いが優先されます（削除扱いONの場合、表示チェックはOFFになります）</div>
             </div>
           )}
 

@@ -7,9 +7,6 @@ import { useParams, useRouter } from 'next/navigation';
 import { FaShieldAlt, FaTrophy } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
-const supabase = createClient();
-const fromAny = (table: string) => (supabase.from(table as any) as any);
-
 type MatchFormat = 'single' | 'bo3';
 
 type FinalBracket = {
@@ -39,7 +36,7 @@ type FinalMatchRow = {
   winner_id?: string | null;
   loser_id?: string | null;
   winner_score?: number | null; // single: 点 / bo3: 勝数（Adv込み）
-  loser_score?: number | null;  // single: 点 / bo3: 勝数（Adv込み）
+  loser_score?: number | null; // single: 点 / bo3: 勝数（Adv込み）
 
   finish_reason?: string | null;
   end_reason?: string | null;
@@ -96,27 +93,10 @@ const clampInt = (v: unknown, min: number, max: number, fallback: number) => {
 const normalizeReason = (m: FinalMatchRow) =>
   String(m.finish_reason ?? m.end_reason ?? 'normal').trim().toLowerCase();
 
-const inferWinnerFromSets = (a: Array<number | null>, b: Array<number | null>) => {
-  let aWins = 0;
-  let bWins = 0;
-  for (let i = 0; i < 3; i++) {
-    const as = a[i];
-    const bs = b[i];
-    if (as == null || bs == null) continue;
-    if (as < 0 || bs < 0) continue;
-    if (as === bs) continue;
-    if (as > bs) aWins++;
-    else bWins++;
-  }
-  if (aWins >= 2) return 'A' as const;
-  if (bWins >= 2) return 'B' as const;
-  return null;
-};
-
 const isMissingColumnError = (err: any) => {
-  const code = err?.code;
+  const code = String(err?.code ?? '');
   const msg = String(err?.message ?? '');
-  return code === '42703' || msg.includes('does not exist') || msg.includes('column');
+  return code === '42703' || msg.includes('does not exist') || msg.toLowerCase().includes('column');
 };
 
 const isMissingTableError = (err: any) => {
@@ -194,19 +174,16 @@ function inferFormatFromMatch(m: FinalMatchRow | null, forcedBo3: boolean): Matc
   if (m?.sets != null) {
     const p = parseSetsMeta(m.sets);
     if (p.format) return p.format;
-    // sets があるのに format 不明なら bo3 扱い
     return 'bo3';
   }
 
-  // 既に結果が入っている場合：点数が大きいなら single と推定
   const ws = typeof m?.winner_score === 'number' ? m?.winner_score : null;
   const ls = typeof m?.loser_score === 'number' ? m?.loser_score : null;
   if (ws != null && ls != null) {
-    if (ws <= 3 && ls <= 3) return 'bo3'; // 勝数っぽい
+    if (ws <= 3 && ls <= 3) return 'bo3';
     return 'single';
   }
 
-  // 未入力なら「基本は bo3」
   return 'bo3';
 }
 
@@ -248,15 +225,70 @@ function calcBo3Wins(
   };
 }
 
+function normalizeLeagueCandidateRows(source: string, rows: any[], tournamentId: string): LeagueCandidates {
+  const filtered = rows.filter((r) => {
+    const tid = pick(r, ['tournament_id', 'tournamentId', 't_id', 'tournament']);
+    return tid == null ? true : String(tid) === tournamentId;
+  });
+
+  const byBlock = new Map<string, LeagueCandidateBlock>();
+
+  for (const r of filtered) {
+    const bid = String(pick(r, ['block_id', 'league_block_id', 'group_id', 'block']) ?? '');
+    const pid = String(pick(r, ['player_id', 'player', 'entrant_id', 'winner_id', 'winner_player_id']) ?? '');
+    if (!bid || !pid) continue;
+
+    const blockNo = pick(r, ['block_no', 'group_no']);
+    const name = pick(r, ['block_name', 'block_label', 'block_title', 'name', 'label']);
+    const label = String(name ?? '') || (blockNo !=null ? `Block ${blockNo}` : `Block ${bid.slice(0, 6)}`);
+
+    if (!byBlock.has(bid)) byBlock.set(bid, { block_id: bid, block_label: label, rows: [] });
+
+    byBlock.get(bid)!.rows.push({
+      block_id: bid,
+      block_label: label,
+      player_id: pid,
+      rank: toNum(pick(r, ['rank', 'position', 'place']), null),
+      wins: toNum(pick(r, ['wins', 'win', 'w']), null),
+      losses: toNum(pick(r, ['losses', 'loss', 'l']), null),
+      point_diff: toNum(pick(r, ['point_diff', 'diff', 'score_diff', 'pt_diff']), null),
+      played: toNum(pick(r, ['played', 'games', 'matches']), null),
+    });
+  }
+
+  const blocks = Array.from(byBlock.values());
+
+  for (const b of blocks) {
+    b.rows.sort((a, c) => {
+      const ar = a.rank ?? 9999;
+      const cr = c.rank ?? 9999;
+      if (ar !== cr) return ar - cr;
+
+      const aw = a.wins ?? -9999;
+      const cw = c.wins ?? -9999;
+      if (cw !== aw) return cw - aw;
+
+      const ad = a.point_diff ?? -9999;
+      const cd = c.point_diff ?? -9999;
+      if (cd !== ad) return cd - ad;
+
+      return String(a.player_id).localeCompare(String(c.player_id));
+    });
+  }
+
+  blocks.sort((a, b) => a.block_label.localeCompare(b.block_label, 'ja'));
+  return { source, blocks };
+}
+
 /**
  * ✅ ブロック勝者の取得方針
  * 1) league_block_winners_v があればそれを最優先
  * 2) それが使えない時だけ league_blocks + league_block_members で「手動選択用候補」
  */
-async function loadLeagueCandidates(tournamentId: string): Promise<LeagueCandidates | null> {
+async function loadLeagueCandidates(db: any, tournamentId: string): Promise<LeagueCandidates | null> {
   // --- 1) winners view を最優先 ---
   try {
-    const r1 = await fromAny('league_block_winners_v').select('*').eq('tournament_id', tournamentId);
+    const r1 = await (db.from('league_block_winners_v') as any).select('*').eq('tournament_id', tournamentId);
     if (!r1?.error && Array.isArray(r1?.data) && r1.data.length > 0) {
       const mapped = (r1.data as any[]).map((r) => ({
         tournament_id: tournamentId,
@@ -284,14 +316,19 @@ async function loadLeagueCandidates(tournamentId: string): Promise<LeagueCandida
     let blockSource = '';
 
     for (const bt of blockTables) {
-      const rb1 = await fromAny(bt).select('*').eq('tournament_id', tournamentId).order('block_no', { ascending: true });
+      const rb1 = await (db.from(bt) as any)
+        .select('*')
+        .eq('tournament_id', tournamentId)
+        .order('block_no', { ascending: true });
+
       if (!rb1?.error && Array.isArray(rb1?.data)) {
         blocks = rb1.data as any[];
         blockSource = bt;
         if (blocks.length) break;
       }
+
       if (rb1?.error && isMissingColumnError(rb1.error)) {
-        const rb2 = await fromAny(bt).select('*').limit(5000);
+        const rb2 = await (db.from(bt) as any).select('*').limit(5000);
         if (!rb2?.error && Array.isArray(rb2?.data)) {
           const all = rb2.data as any[];
           blocks = all.filter((x) => String(pick(x, ['tournament_id', 'tournamentId', 't_id']) ?? '') === tournamentId);
@@ -299,6 +336,7 @@ async function loadLeagueCandidates(tournamentId: string): Promise<LeagueCandida
           if (blocks.length) break;
         }
       }
+
       if (rb1?.error && isMissingTableError(rb1.error)) continue;
     }
 
@@ -312,7 +350,7 @@ async function loadLeagueCandidates(tournamentId: string): Promise<LeagueCandida
     let memberSource = '';
 
     for (const mt of memberTables) {
-      const rm1 = await fromAny(mt).select('*').in('league_block_id', blockIds);
+      const rm1 = await (db.from(mt) as any).select('*').in('league_block_id', blockIds);
       if (!rm1?.error && Array.isArray(rm1?.data)) {
         members = rm1.data as any[];
         memberSource = mt;
@@ -320,7 +358,7 @@ async function loadLeagueCandidates(tournamentId: string): Promise<LeagueCandida
       }
 
       if (rm1?.error && isMissingColumnError(rm1.error)) {
-        const rm2 = await fromAny(mt).select('*').in('block_id', blockIds);
+        const rm2 = await (db.from(mt) as any).select('*').in('block_id', blockIds);
         if (!rm2?.error && Array.isArray(rm2?.data)) {
           members = rm2.data as any[];
           memberSource = `${mt} (block_id)`;
@@ -362,70 +400,15 @@ async function loadLeagueCandidates(tournamentId: string): Promise<LeagueCandida
   }
 }
 
-function normalizeLeagueCandidateRows(source: string, rows: any[], tournamentId: string): LeagueCandidates {
-  const filtered = rows.filter((r) => {
-    const tid = pick(r, ['tournament_id', 'tournamentId', 't_id', 'tournament']);
-    return tid == null ? true : String(tid) === tournamentId;
-  });
-
-  const byBlock = new Map<string, LeagueCandidateBlock>();
-
-  for (const r of filtered) {
-    const bid = String(pick(r, ['block_id', 'league_block_id', 'group_id', 'block']) ?? '');
-    const pid = String(pick(r, ['player_id', 'player', 'entrant_id', 'winner_id', 'winner_player_id']) ?? '');
-    if (!bid || !pid) continue;
-
-    const blockNo = pick(r, ['block_no', 'group_no']);
-    const name = pick(r, ['block_name', 'block_label', 'block_title', 'name', 'label']);
-    const label = String(name ?? '') || (blockNo != null ? `Block ${blockNo}` : `Block ${bid.slice(0, 6)}`);
-
-    if (!byBlock.has(bid)) byBlock.set(bid, { block_id: bid, block_label: label, rows: [] });
-
-    byBlock.get(bid)!.rows.push({
-      block_id: bid,
-      block_label: label,
-      player_id: pid,
-      rank: toNum(pick(r, ['rank', 'position', 'place']), null),
-      wins: toNum(pick(r, ['wins', 'win', 'w']), null),
-      losses: toNum(pick(r, ['losses', 'loss', 'l']), null),
-      point_diff: toNum(pick(r, ['point_diff', 'diff', 'score_diff', 'pt_diff']), null),
-      played: toNum(pick(r, ['played', 'games', 'matches']), null),
-    });
-  }
-
-  const blocks = Array.from(byBlock.values());
-
-  for (const b of blocks) {
-    b.rows.sort((a, c) => {
-      const ar = a.rank ?? 9999;
-      const cr = c.rank ?? 9999;
-      if (ar !== cr) return ar - cr;
-
-      const aw = a.wins ?? -9999;
-      const cw = c.wins ?? -9999;
-      if (cw !== aw) return cw - aw;
-
-      const ad = a.point_diff ?? -9999;
-      const cd = c.point_diff ?? -9999;
-      if (cd !== ad) return cd - ad;
-
-      return String(a.player_id).localeCompare(String(c.player_id));
-    });
-  }
-
-  blocks.sort((a, b) => a.block_label.localeCompare(b.block_label, 'ja'));
-  return { source, blocks };
-}
-
-async function fetchFinalMatchesOnce(bracketId: string): Promise<FinalMatchRow[]> {
-  const { data, error } = await fromAny('final_matches')
+async function fetchFinalMatchesOnce(db: any, bracketId: string): Promise<FinalMatchRow[]> {
+  const { data, error } = await (db.from('final_matches') as any)
     .select('*')
     .eq('bracket_id', bracketId)
     .order('round_no', { ascending: true });
 
   if (!error) return (data ?? []) as FinalMatchRow[];
 
-  const { data: data2, error: error2 } = await fromAny('final_matches').select('*').eq('bracket_id', bracketId);
+  const { data: data2, error: error2 } = await (db.from('final_matches') as any).select('*').eq('bracket_id', bracketId);
   if (error2) throw new Error(String(error2.message || 'final_matches fetch failed'));
   return (data2 ?? []) as FinalMatchRow[];
 }
@@ -450,16 +433,22 @@ async function postFinalReport(payload: {
   });
 
   const text = await res.text();
+
+  // JSON優先、ダメならテキスト
+  let parsed: any = null;
   try {
-    const j = JSON.parse(text);
-    if (!res.ok || j?.ok === false) throw new Error(j?.error || j?.message || `HTTP ${res.status}`);
-    return j;
-  } catch {
-    throw new Error(text.slice(0, 200));
+    parsed = JSON.parse(text);
+  } catch {}
+
+  if (!res.ok || parsed?.ok === false) {
+    const msg = parsed?.error || parsed?.message || text.slice(0, 200) || `HTTP ${res.status}`;
+    throw new Error(`HTTP ${res.status}: ${msg}`);
   }
+
+  return parsed ?? { ok: true };
 }
 
-async function clearFinalMatchesFromRound(bracketId: string, fromRoundNo: number) {
+async function clearFinalMatchesFromRound(db: any, bracketId: string, fromRoundNo: number) {
   const candidates: Record<string, any>[] = [
     {
       winner_id: null,
@@ -494,7 +483,7 @@ async function clearFinalMatchesFromRound(bracketId: string, fromRoundNo: number
   let lastErr: any = null;
 
   for (const payload of candidates) {
-    const { error } = await fromAny('final_matches')
+    const { error } = await (db.from('final_matches') as any)
       .update(payload as any)
       .eq('bracket_id', bracketId)
       .gte('round_no', fromRoundNo);
@@ -509,11 +498,14 @@ async function clearFinalMatchesFromRound(bracketId: string, fromRoundNo: number
   throw new Error(String(lastErr?.message || 'final_matches clear failed'));
 }
 
-async function deleteFinalRoundsFrom(bracketId: string, fromRoundNo: number) {
-  const r1 = await fromAny('final_matches').delete().eq('bracket_id', bracketId).gte('round_no', fromRoundNo);
+async function deleteFinalRoundsFrom(db: any, bracketId: string, fromRoundNo: number) {
+  const r1 = await (db.from('final_matches') as any).delete().eq('bracket_id', bracketId).gte('round_no', fromRoundNo);
   if (r1?.error) throw new Error(String(r1.error?.message || 'final_matches delete failed'));
 
-  const r2 = await fromAny('final_round_entries').delete().eq('bracket_id', bracketId).gte('round_no', fromRoundNo);
+  const r2 = await (db.from('final_round_entries') as any)
+    .delete()
+    .eq('bracket_id', bracketId)
+    .gte('round_no', fromRoundNo);
   if (r2?.error) throw new Error(String(r2.error?.message || 'final_round_entries delete failed'));
 }
 
@@ -522,9 +514,109 @@ const paramToString = (v: any) => {
   return String(v ?? '').trim();
 };
 
+// ✅ /api/finals/report が無い/死んでる時のフォールバック：clientから final_matches を安全に upsert
+async function upsertFinalMatchSafe(
+  db: any,
+  row: {
+    bracket_id: string;
+    round_no: number;
+    match_no: number;
+    winner_id: string | null;
+    loser_id: string | null;
+    winner_score: number | null;
+    loser_score: number | null;
+    reason: string; // normal/time_limit/forfeit
+    sets?: any;
+  }
+) {
+  // key列が match_no か match_index かを吸収
+  const tryFind = async (keyCol: 'match_no' | 'match_index') => {
+    const { data, error } = await (db.from('final_matches') as any)
+      .select('id')
+      .eq('bracket_id', row.bracket_id)
+      .eq('round_no', row.round_no)
+      .eq(keyCol, row.match_no)
+      .maybeSingle();
+    if (error) throw error;
+    return { id: data?.id ? String(data.id) : null, keyCol };
+  };
+
+  let found: { id: string | null; keyCol: 'match_no' | 'match_index' } = { id: null, keyCol: 'match_no' };
+  try {
+    found = await tryFind('match_no');
+  } catch (e: any) {
+    if (isMissingColumnError(e)) {
+      found = await tryFind('match_index');
+    } else {
+      throw e;
+    }
+  }
+
+  const basePayload: any = {
+    bracket_id: row.bracket_id,
+    round_no: row.round_no,
+    [found.keyCol]: row.match_no,
+    winner_id: row.winner_id,
+    loser_id: row.loser_id,
+    winner_score: row.winner_score,
+    loser_score: row.loser_score,
+  };
+
+  const payloads: any[] = [
+    { ...basePayload, end_reason: row.reason, sets: row.sets ?? null },
+    { ...basePayload, finish_reason: row.reason, sets: row.sets ?? null },
+    { ...basePayload, end_reason: row.reason },
+    { ...basePayload, finish_reason: row.reason },
+    { ...basePayload, sets: row.sets ?? null },
+    { ...basePayload },
+  ];
+
+  const tryUpdate = async (id: string, payload: any) => {
+    const { error } = await (db.from('final_matches') as any).update(payload).eq('id', id);
+    if (error) throw error;
+  };
+
+  const tryInsert = async (payload: any) => {
+    const { error } = await (db.from('final_matches') as any).insert(payload);
+    if (error) throw error;
+  };
+
+  if (found.id) {
+    let lastErr: any = null;
+    for (const p of payloads) {
+      try {
+        await tryUpdate(found.id, p);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+        if (isMissingColumnError(e)) continue;
+        throw e;
+      }
+    }
+    throw new Error(String(lastErr?.message || 'final_matches update failed'));
+  } else {
+    let lastErr: any = null;
+    for (const p of payloads) {
+      try {
+        await tryInsert(p);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+        if (isMissingColumnError(e)) continue;
+        throw e;
+      }
+    }
+    throw new Error(String(lastErr?.message || 'final_matches insert failed'));
+  }
+}
+
 export default function AdminTournamentFinalsPage() {
   const router = useRouter();
   const params = useParams();
+
+  // ✅ Supabaseは「コンポーネント内で」生成（最重要：UI変更なし）
+  const supabase = useMemo(() => createClient(), []);
+  const db: any = supabase;
 
   const tournamentId = useMemo(() => {
     const p = params as any;
@@ -551,7 +643,7 @@ export default function AdminTournamentFinalsPage() {
 
   const [winnerByBlock, setWinnerByBlock] = useState<Record<string, string>>({});
 
-  // ✅ 追加：形式（1回/3回）を各試合ごとに保持
+  // ✅ 形式（1回/3回）を各試合ごとに保持
   const [formatByKey, setFormatByKey] = useState<Record<string, MatchFormat>>({});
 
   const storageKey = useMemo(
@@ -601,8 +693,8 @@ export default function AdminTournamentFinalsPage() {
         }
 
         const [adminResp, playerResp] = await Promise.all([
-          (supabase.from('app_admins') as any).select('user_id').eq('user_id', user.id).maybeSingle(),
-          (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
+          (db.from('app_admins') as any).select('user_id').eq('user_id', user.id).maybeSingle(),
+          (db.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle(),
         ]);
 
         const adminRow = (adminResp?.data ?? null) as AdminRow | null;
@@ -610,7 +702,7 @@ export default function AdminTournamentFinalsPage() {
         const isAdmin = Boolean(adminRow?.user_id) || playerRow?.is_admin === true;
 
         if (!isAdmin) {
-          setAuthz('no');
+          if (!cancelled) setAuthz('no');
           return;
         }
 
@@ -620,7 +712,7 @@ export default function AdminTournamentFinalsPage() {
         }
       } catch (e) {
         console.error('[admin/finals] auth error:', e);
-        setAuthz('no');
+        if (!cancelled) setAuthz('no');
       }
     })();
 
@@ -628,7 +720,7 @@ export default function AdminTournamentFinalsPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, tournamentId]);
+  }, [router, tournamentId, supabase]);
 
   const loadAll = async () => {
     if (!tournamentId) return;
@@ -638,8 +730,7 @@ export default function AdminTournamentFinalsPage() {
     setMessage(null);
 
     try {
-      const { data: allPlayers, error: apErr } = await supabase
-        .from('players')
+      const { data: allPlayers, error: apErr } = await (db.from('players') as any)
         .select('id,handle_name,avatar_url,ranking_points,handicap,is_dummy')
         .order('handle_name', { ascending: true });
 
@@ -658,7 +749,7 @@ export default function AdminTournamentFinalsPage() {
       });
       setPlayers(dict);
 
-      const c = await loadLeagueCandidates(tournamentId);
+      const c = await loadLeagueCandidates(db, tournamentId);
       setLeagueCandidates(c);
 
       if (c?.blocks?.length) {
@@ -671,7 +762,7 @@ export default function AdminTournamentFinalsPage() {
         });
       }
 
-      const { data: bRows, error: bErr } = await fromAny('final_brackets')
+      const { data: bRows, error: bErr } = await (db.from('final_brackets') as any)
         .select('id,tournament_id,title,created_at')
         .eq('tournament_id', tournamentId)
         .order('created_at', { ascending: false });
@@ -696,7 +787,7 @@ export default function AdminTournamentFinalsPage() {
       const b = bRows[0] as FinalBracket;
       setBracket(b);
 
-      const { data: eRows, error: eErr } = await fromAny('final_round_entries')
+      const { data: eRows, error: eErr } = await (db.from('final_round_entries') as any)
         .select('id,bracket_id,round_no,slot_no,player_id')
         .eq('bracket_id', b.id)
         .order('round_no', { ascending: true })
@@ -712,7 +803,7 @@ export default function AdminTournamentFinalsPage() {
 
       let ms: FinalMatchRow[] = [];
       try {
-        ms = await fetchFinalMatchesOnce(b.id);
+        ms = await fetchFinalMatchesOnce(db, b.id);
       } catch (e) {
         console.error('[admin/finals] final_matches fetch error:', e);
         setError('決勝トーナメント試合結果の取得に失敗しました');
@@ -806,7 +897,6 @@ export default function AdminTournamentFinalsPage() {
     return s;
   }, [players]);
 
-  // ✅ 「過去ラウンドで def と当たって勝ち上がったか」を entries から推定
   const hadDefByeBefore = (playerId: string, beforeRound: number) => {
     if (!playerId) return false;
     if (beforeRound <= 1) return false;
@@ -827,14 +917,11 @@ export default function AdminTournamentFinalsPage() {
         if (real === playerId) return true;
       }
     }
-
     return false;
   };
 
   const computeAdvantage = (roundNo: number, pidA: string | null, pidB: string | null) => {
     if (!pidA || !pidB) return { advA: 0, advB: 0, forcedBo3: false, aHadBye: false, bHadBye: false };
-
-    // def本人が今対戦にいるケースは通常想定しない（R1のbye処理のためのdefのみ）
     if (defIds.has(pidA) || defIds.has(pidB)) {
       return { advA: 0, advB: 0, forcedBo3: false, aHadBye: false, bHadBye: false };
     }
@@ -845,7 +932,6 @@ export default function AdminTournamentFinalsPage() {
     let advA = 0;
     let advB = 0;
 
-    // 片方だけ def勝ち上がりの場合、通常勝ち上がり側に +1
     if (aHadBye !== bHadBye) {
       if (aHadBye) advB = 1;
       if (bHadBye) advA = 1;
@@ -940,7 +1026,7 @@ export default function AdminTournamentFinalsPage() {
       let newBracketId = String(j?.bracket_id ?? j?.bracketId ?? '').trim();
 
       if (!newBracketId) {
-        const rb = await fromAny('final_brackets')
+        const rb = await (db.from('final_brackets') as any)
           .select('id')
           .eq('tournament_id', tournamentId)
           .order('created_at', { ascending: false })
@@ -950,7 +1036,7 @@ export default function AdminTournamentFinalsPage() {
 
       if (newBracketId) {
         try {
-          await deleteFinalRoundsFrom(newBracketId, 2); // R1だけ残す
+          await deleteFinalRoundsFrom(db, newBracketId, 2); // R1だけ残す
           setManualMaxRoundAndPersist(1);
         } catch (e) {
           console.warn('[admin/finals] trim to R1 failed:', e);
@@ -980,11 +1066,11 @@ export default function AdminTournamentFinalsPage() {
     try {
       const next = nextPlayerId ? nextPlayerId : null;
 
-      const { error } = await fromAny('final_round_entries').update({ player_id: next } as any).eq('id', entry.id);
+      const { error } = await (db.from('final_round_entries') as any).update({ player_id: next } as any).eq('id', entry.id);
       if (error) throw new Error(error.message);
 
       if (bracket?.id) {
-        await clearFinalMatchesFromRound(bracket.id, entry.round_no);
+        await clearFinalMatchesFromRound(db, bracket.id, entry.round_no);
       }
 
       setMessage('枠を更新しました（このラウンド以降の試合結果をクリアしました）');
@@ -1015,7 +1101,7 @@ export default function AdminTournamentFinalsPage() {
         return;
       }
 
-      await deleteFinalRoundsFrom(bracket.id, fromRound);
+      await deleteFinalRoundsFrom(db, bracket.id, fromRound);
 
       if ((manualMaxRound ?? 0) >= fromRound) setManualMaxRoundAndPersist(Math.max(fromRound - 1, 0));
 
@@ -1045,10 +1131,10 @@ export default function AdminTournamentFinalsPage() {
         player_id: null,
       }));
 
-      const { error: insErr } = await fromAny('final_round_entries').insert(rows as any);
+      const { error: insErr } = await (db.from('final_round_entries') as any).insert(rows as any);
       if (insErr) throw new Error(insErr.message);
 
-      await clearFinalMatchesFromRound(bracket.id, roundNo);
+      await clearFinalMatchesFromRound(db, bracket.id, roundNo);
 
       setMessage(`R${roundNo}に枠を追加しました（以降の試合結果をクリア）`);
       await loadAll();
@@ -1066,7 +1152,7 @@ export default function AdminTournamentFinalsPage() {
     await handleAddSlots(next, 2);
   };
 
-  // ✅ 形式の初期値を各試合に付与（読み込み時）
+  // ✅ 形式の初期値（読み込み時）
   useEffect(() => {
     if (!bracket?.id) return;
 
@@ -1147,17 +1233,34 @@ export default function AdminTournamentFinalsPage() {
     setSavingKey(saveKey);
 
     try {
-      await postFinalReport({
-        bracket_id: bracket.id,
-        round_no: roundNo,
-        match_no: matchNo,
-        winner_id,
-        loser_id,
-        winner_score,
-        loser_score,
-        end_reason,
-        sets: { format: 'single' },
-      });
+      // まずはAPI（既存運用を維持）
+      try {
+        await postFinalReport({
+          bracket_id: bracket.id,
+          round_no: roundNo,
+          match_no: matchNo,
+          winner_id,
+          loser_id,
+          winner_score,
+          loser_score,
+          end_reason,
+          sets: { format: 'single' },
+        });
+      } catch (apiErr: any) {
+        // APIが無い/落ちる場合はフォールバック
+        console.warn('[admin/finals] report(single) api failed -> fallback', apiErr);
+        await upsertFinalMatchSafe(db, {
+          bracket_id: bracket.id,
+          round_no: roundNo,
+          match_no: matchNo,
+          winner_id,
+          loser_id,
+          winner_score,
+          loser_score,
+          reason: end_reason,
+          sets: { format: 'single' },
+        });
+      }
 
       setMessage('保存しました');
       await loadAll();
@@ -1209,33 +1312,24 @@ export default function AdminTournamentFinalsPage() {
       { a: s3a < 0 ? null : s3a, b: s3b < 0 ? null : s3b },
     ];
 
-    // 2勝に届かない場合の保険として「勝者手動選択」も残す（基本は自動判定）
     const manualWinner = String((form.elements.namedItem('winner_id') as HTMLSelectElement)?.value || '').trim();
 
     const win = calcBo3Wins(pidA, pidB, games, advA, advB);
 
     let winner_id = win.winner_id;
     let loser_id = win.loser_id;
-    let winner_score = win.totalA;
-    let loser_score = win.totalB;
 
     if (!winner_id && manualWinner) {
       if (manualWinner !== pidA && manualWinner !== pidB) {
         setError('勝者が不正です');
         return;
       }
-
-      // 手動指定の場合、入力済みセットからの勝数＋Advで勝者を確定扱いにする
-      // （ただし、2勝に到達していないならエラーにする）
       if (win.totalA < 2 && win.totalB < 2) {
         setError('勝者を確定できません（セット結果が不足）。少なくともどちらかが2勝に到達するよう入力してください。');
         return;
       }
-
       winner_id = manualWinner;
       loser_id = manualWinner === pidA ? pidB : pidA;
-      winner_score = manualWinner === pidA ? win.totalA : win.totalB;
-      loser_score = manualWinner === pidA ? win.totalB : win.totalA;
     }
 
     if (!winner_id || !loser_id) {
@@ -1243,27 +1337,45 @@ export default function AdminTournamentFinalsPage() {
       return;
     }
 
-    // ✅ sets 保存（Advも含めて保存）
+    const winner_score = winner_id === pidA ? win.totalA : win.totalB;
+    const loser_score = winner_id === pidA ? win.totalB : win.totalA;
+
     const saveKey = `match:${roundNo}:${matchNo}`;
     setSavingKey(saveKey);
 
     try {
-      await postFinalReport({
-        bracket_id: bracket.id,
-        round_no: roundNo,
-        match_no: matchNo,
-        winner_id,
-        loser_id,
-        // bo3 は「勝数（Adv込み）」を入れる
-        winner_score: winner_id === pidA ? win.totalA : win.totalB,
-        loser_score: winner_id === pidA ? win.totalB : win.totalA,
-        end_reason,
-        sets: {
-          format: 'bo3',
-          advantage: { a: advA, b: advB },
-          games,
-        },
-      });
+      const setsPayload = {
+        format: 'bo3',
+        advantage: { a: advA, b: advB },
+        games,
+      };
+
+      try {
+        await postFinalReport({
+          bracket_id: bracket.id,
+          round_no: roundNo,
+          match_no: matchNo,
+          winner_id,
+          loser_id,
+          winner_score,
+          loser_score,
+          end_reason,
+          sets: setsPayload,
+        });
+      } catch (apiErr: any) {
+        console.warn('[admin/finals] report(bo3) api failed -> fallback', apiErr);
+        await upsertFinalMatchSafe(db, {
+          bracket_id: bracket.id,
+          round_no: roundNo,
+          match_no: matchNo,
+          winner_id,
+          loser_id,
+          winner_score,
+          loser_score,
+          reason: end_reason,
+          sets: setsPayload,
+        });
+      }
 
       setMessage('保存しました');
       await loadAll();
@@ -1667,21 +1779,18 @@ export default function AdminTournamentFinalsPage() {
                             const key = `${r}:${matchNo}`;
                             const fmt = forcedBo3 ? 'bo3' : (formatByKey[key] ?? inferFormatFromMatch(m, forcedBo3));
 
-                            // 現状表示（bo3 は勝敗、single は点）
                             let currentResult = '未入力';
                             if (m?.winner_id && m?.loser_id) {
                               if (fmt === 'bo3') {
                                 const meta = parseSetsMeta(m.sets);
                                 const g = meta.games.length ? meta.games : [];
-                                const { totalA, totalB } =
-                                  pidA && pidB
-                                    ? calcBo3Wins(pidA, pidB, g, meta.advantageA, meta.advantageB)
-                                    : { totalA: m.winner_score ?? 0, totalB: m.loser_score ?? 0 };
-
-                                // winner_id 기준 표시
                                 const wName = players[m.winner_id]?.handle_name ?? '勝者';
                                 const lName = players[m.loser_id]?.handle_name ?? '敗者';
-                                currentResult = `${wName} ${m.winner_score ?? totalA}-${m.loser_score ?? totalB} ${lName}`;
+                                currentResult = `${wName} ${m.winner_score ?? '-'}-${m.loser_score ?? '-'} ${lName}`;
+                                if (!m.winner_score && pidA && pidB) {
+                                  const x = calcBo3Wins(pidA, pidB, g, meta.advantageA, meta.advantageB);
+                                  currentResult = `${wName} ${m.winner_score ?? (m.winner_id === pidA ? x.totalA : x.totalB)}-${m.loser_score ?? (m.loser_id === pidA ? x.totalA : x.totalB)} ${lName}`;
+                                }
                               } else {
                                 const wName = players[m.winner_id]?.handle_name ?? '勝者';
                                 const lName = players[m.loser_id]?.handle_name ?? '敗者';

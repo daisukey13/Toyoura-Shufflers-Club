@@ -346,7 +346,7 @@ export default function PlayerProfilePage() {
 
         for (const c of membershipCandidates) {
           const sel = c.roleCol ? `${c.teamCol}, ${c.roleCol}` : `${c.teamCol}`;
-          const { data, error } = await (supabase.from(c.table) as any).select(sel).eq(c.playerCol, playerId);
+          const { data, error } = await (supabase as any).from(c.table).select(sel).eq(c.playerCol, playerId);
 
           if (!error && data) {
             memberRows = (data as any[]).map((r) => ({

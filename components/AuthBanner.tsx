@@ -1,30 +1,39 @@
 // components/AuthBanner.tsx
 import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AuthBanner() {
-  const cookieStore = cookies();
+  // ✅ Next.js 15: cookies() は Promise
+  const cookieStore = await cookies();
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      // ✅ 新API: getAll / setAll のみ渡す（overload 解決のため）
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          // Nextの cookie は {name,value,...} を返すので supabase 期待形式へ
+          return cookieStore.getAll().map((c) => ({ name: c.name, value: c.value }));
         },
-        set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
+        setAll(cookiesToSet) {
+          // Server Component では set が禁止/無効な場合があるので安全に no-op
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              (cookieStore as any).set({ name, value, ...(options ?? {}) });
+            });
+          } catch {}
         },
-        remove(name: string, options: CookieOptions) {
-          cookieStore.set({ name, value: '', ...options });
-        },
-      },
+      } as any, // 型ズレ吸収（Supabase/Nextの版差で型が変わるため）
     }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) return null;
 
   const name =

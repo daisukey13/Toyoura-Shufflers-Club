@@ -6,9 +6,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import {
-  FaUserPlus, FaUser, FaEnvelope, FaPhone, FaMapMarkerAlt,
-  FaGamepad, FaCheckCircle, FaExclamationCircle,
-  FaSpinner, FaLock, FaImage
+  FaUserPlus,
+  FaUser,
+  FaEnvelope,
+  FaPhone,
+  FaMapMarkerAlt,
+  FaGamepad,
+  FaCheckCircle,
+  FaExclamationCircle,
+  FaSpinner,
+  FaLock,
+  FaImage,
 } from 'react-icons/fa';
 import AvatarSelector from '@/components/AvatarSelector';
 
@@ -28,9 +36,21 @@ type FormData = {
   adminAssisted: boolean;
 };
 
+import type { TablesInsert } from '@/lib/database.types';
+
 const addressOptions = [
-  '豊浦町','洞爺湖町','壮瞥町','伊達市','室蘭市','登別市',
-  '倶知安町','ニセコ町','札幌市','その他道内','内地','外国（Visitor)'
+  '豊浦町',
+  '洞爺湖町',
+  '壮瞥町',
+  '伊達市',
+  '室蘭市',
+  '登別市',
+  '倶知安町',
+  'ニセコ町',
+  '札幌市',
+  'その他道内',
+  '内地',
+  '外国（Visitor)',
 ];
 
 const DEFAULT_AVATAR = '/default-avatar.png';
@@ -67,8 +87,8 @@ function genPassword(len = 14) {
 // ★ハンドル名の正規化（前後空白・全角空白・連続空白の吸収）
 function normalizeHandleName(s: string) {
   return (s ?? '')
-    .replace(/\u3000/g, ' ')     // 全角スペース→半角
-    .replace(/\s+/g, ' ')       // 連続空白を1つに
+    .replace(/\u3000/g, ' ') // 全角スペース→半角
+    .replace(/\s+/g, ' ') // 連続空白を1つに
     .trim();
 }
 
@@ -77,6 +97,9 @@ export default function RegisterPage() {
 
   // ★他ページと同じ Supabase client に統一（ここが重要）
   const supabase = createClient();
+
+  // ✅ never 問題回避：書き込み系だけ any チェーンに落とす（UI/挙動は変えない）
+  const fromAny = (table: string) => (supabase.from(table as any) as any);
 
   // 毎回ロックから始める（PASSCODE が空なら最初から解錠）
   const [unlocked, setUnlocked] = useState<boolean>(PASSCODE.length === 0);
@@ -116,7 +139,9 @@ export default function RegisterPage() {
   const [adminNote, setAdminNote] = useState<string | null>(null);
 
   // ★対面登録で作ったログイン情報（表示用）
-  const [createdCreds, setCreatedCreds] = useState<{ email: string; password: string } | null>(null);
+  const [createdCreds, setCreatedCreds] = useState<{ email: string; password: string } | null>(
+    null
+  );
 
   // ---- helpers -------------------------------------------------------------
 
@@ -152,10 +177,7 @@ export default function RegisterPage() {
    */
   async function cleanupPartialPlayer(userId: string) {
     try {
-      await supabase
-        .from('players')
-        .update({ is_deleted: true, is_active: false } as any)
-        .eq('id', userId);
+      await fromAny('players').update({ is_deleted: true, is_active: false }).eq('id', userId);
     } catch {
       // ignore（RLS 等で更新不可でも、ログイン側の運用で救済できる）
     }
@@ -193,11 +215,7 @@ export default function RegisterPage() {
         }
 
         // players テーブルから is_admin を確認
-        const { data, error } = await supabase
-          .from('players')
-          .select('is_admin')
-          .eq('id', u.id)
-          .maybeSingle();
+        const { data, error } = await supabase.from('players').select('is_admin').eq('id', u.id).maybeSingle();
 
         if (error) {
           if (!alive) return;
@@ -353,43 +371,42 @@ export default function RegisterPage() {
       const publicRow = {
         id: userId,
         auth_user_id: userId, // ✅ 追加（紐付けを明確化）
-        user_id: userId,      // ✅ 追加（互換のため）
-        handle_name: handle,  // ✅ 正規化済み
+        user_id: userId, // ✅ 追加（互換のため）
+        handle_name: handle, // ✅ 正規化済み
         avatar_url: formData.avatar_url || DEFAULT_AVATAR,
         address: formData.address || '未設定',
         is_admin: false,
         is_active: true,
-        is_deleted: false,    // ✅ 明示
+        is_deleted: false, // ✅ 明示
         ranking_points: RATING_DEFAULT,
         handicap: HANDICAP_DEFAULT,
         matches_played: 0,
         wins: 0,
         losses: 0,
       };
+
       {
-        const { error } = await supabase.from('players').insert(publicRow as any);
+        // ✅ never 回避（書き込みのみ）
+        const { error } = await fromAny('players').insert(publicRow);
         if (error) throw error;
         insertedPlayers = true;
       }
 
-      // 3) 非公開 players_private（主キー候補を順に試行）
-      const tryKeys: Array<'player_id' | 'id' | 'user_id' | 'auth_user_id'> = ['player_id', 'id', 'user_id', 'auth_user_id'];
-      let saved = false, lastErr: any = null;
-      for (const key of tryKeys) {
-        const base: Record<string, any> = {
-          [key]: userId,
-          full_name: formData.full_name,
-          email,
-          phone: formData.phone.trim(),
-        };
-        const { error } = await supabase.from('players_private').upsert(base, { onConflict: key } as any);
-        if (!error) { saved = true; break; }
-        lastErr = error;
-        if (!/does not exist|no unique|exclusion|schema cache/i.test(String(error?.message))) {
-          break;
-        }
-      }
-      if (!saved && lastErr) throw lastErr;
+      // 3) 非公開 players_private（player_id が必須）
+      const playerId = (publicRow as any).id ?? userId;
+
+      const privateRow: TablesInsert<'players_private'> = {
+        player_id: playerId,
+        full_name: formData.full_name,
+        email,
+        phone: formData.phone.trim(),
+      };
+
+      // ✅ never 回避（書き込みのみ）
+      const { error: privateErr } = await fromAny('players_private').upsert(privateRow, {
+        onConflict: 'player_id',
+      });
+      if (privateErr) throw privateErr;
 
       // ★対面登録: 管理者セッションへ戻す（自動ログインが発生した場合の対策）
       if (formData.adminAssisted && adminTokens) {
@@ -429,8 +446,10 @@ export default function RegisterPage() {
       }
 
       let hint = '';
-      if (/row-level security|RLS/i.test(msg)) hint = '\n（Supabase の RLS で INSERT/UPDATE 許可ポリシーを確認してください）';
-      if (/does not exist|schema|relation .* does not exist|column .* does not exist/i.test(msg)) hint = '\n（テーブル/カラム名がスキーマと一致しているか確認してください）';
+      if (/row-level security|RLS/i.test(msg))
+        hint = '\n（Supabase の RLS で INSERT/UPDATE 許可ポリシーを確認してください）';
+      if (/does not exist|schema|relation .* does not exist|column .* does not exist/i.test(msg))
+        hint = '\n（テーブル/カラム名がスキーマと一致しているか確認してください）';
       alert(`登録中にエラーが発生しました。\n詳細: ${msg}${hint}`);
       console.error('[register] submit error:', err);
     } finally {
@@ -509,7 +528,9 @@ export default function RegisterPage() {
                       value={formData.handle_name}
                       onChange={(e) => setFormData({ ...formData, handle_name: e.target.value })}
                       className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all ${
-                        handleNameError ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
+                        handleNameError
+                          ? 'border-red-500'
+                          : 'border-purple-500/30 focus:border-purple-400'
                       }`}
                       placeholder="例: シャッフル太郎"
                     />
@@ -520,7 +541,11 @@ export default function RegisterPage() {
                     )}
                     {!checkingHandleName && formData.handle_name && (
                       <div className="absolute right-3 top-3.5">
-                        {handleNameError ? <FaExclamationCircle className="text-red-400" /> : <FaCheckCircle className="text-green-400" />}
+                        {handleNameError ? (
+                          <FaExclamationCircle className="text-red-400" />
+                        ) : (
+                          <FaCheckCircle className="text-green-400" />
+                        )}
                       </div>
                     )}
                   </div>
@@ -559,9 +584,7 @@ export default function RegisterPage() {
                           ...v,
                           adminAssisted: e.target.checked,
                           // 対面ONにしたら入力不要項目を一旦クリア（UIはそのまま）
-                          ...(e.target.checked
-                            ? { email: '', password: '', passwordConfirm: '' }
-                            : {}),
+                          ...(e.target.checked ? { email: '', password: '', passwordConfirm: '' } : {}),
                         }))
                       }
                       className="mt-1 w-5 h-5 bg-gray-800 border-purple-500 text-purple-600 rounded focus:ring-purple-500 disabled:opacity-50"
@@ -604,7 +627,9 @@ export default function RegisterPage() {
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 disabled:opacity-50"
-                    placeholder={formData.adminAssisted ? '（対面登録モードでは自動生成されます）' : '例: example@email.com'}
+                    placeholder={
+                      formData.adminAssisted ? '（対面登録モードでは自動生成されます）' : '例: example@email.com'
+                    }
                   />
                 </div>
 
@@ -620,7 +645,9 @@ export default function RegisterPage() {
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all disabled:opacity-50 ${
-                      passwordError && formData.password ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
+                      passwordError && formData.password
+                        ? 'border-red-500'
+                        : 'border-purple-500/30 focus:border-purple-400'
                     }`}
                     placeholder={formData.adminAssisted ? '（自動生成）' : 'パスワードを入力'}
                   />
@@ -638,11 +665,15 @@ export default function RegisterPage() {
                     value={formData.passwordConfirm}
                     onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
                     className={`w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border rounded-lg text白 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all disabled:opacity-50 ${
-                      passwordError && formData.passwordConfirm ? 'border-red-500' : 'border-purple-500/30 focus:border-purple-400'
+                      passwordError && formData.passwordConfirm
+                        ? 'border-red-500'
+                        : 'border-purple-500/30 focus:border-purple-400'
                     }`}
                     placeholder={formData.adminAssisted ? '（自動生成）' : 'パスワードを再入力'}
                   />
-                  {!formData.adminAssisted && passwordError && <p className="mt-1 text-sm text-red-400">{passwordError}</p>}
+                  {!formData.adminAssisted && passwordError && (
+                    <p className="mt-1 text-sm text-red-400">{passwordError}</p>
+                  )}
                 </div>
 
                 {/* ★対面登録で作った資格情報を表示 */}
@@ -650,7 +681,9 @@ export default function RegisterPage() {
                   <div className="p-3 rounded-xl border border-green-500/30 bg-green-500/10 text-sm text-gray-200">
                     <div className="font-semibold text-green-200 mb-1">対面登録のログイン情報（記録用）</div>
                     <div className="text-xs text-gray-300 break-all">Email: {createdCreds.email}</div>
-                    <div className="text-xs text-gray-300 break-all">Password: {createdCreds.password}</div>
+                    <div className="text-xs text-gray-300 break-all">
+                      Password: {createdCreds.password}
+                    </div>
                   </div>
                 )}
               </div>
@@ -688,9 +721,13 @@ export default function RegisterPage() {
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                     className="w-full px-3 sm:px-4 py-2.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text白 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400"
                   >
-                    <option value="" className="bg-gray-800">選択してください</option>
+                    <option value="" className="bg-gray-800">
+                      選択してください
+                    </option>
                     {addressOptions.map((a) => (
-                      <option key={a} value={a} className="bg-gray-800">{a}</option>
+                      <option key={a} value={a} className="bg-gray-800">
+                        {a}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -717,10 +754,14 @@ export default function RegisterPage() {
                   <input
                     type="checkbox"
                     checked={formData.isHighSchoolOrAbove}
-                    onChange={(e) => setFormData({ ...formData, isHighSchoolOrAbove: e.target.checked })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, isHighSchoolOrAbove: e.target.checked })
+                    }
                     className="mr-3 mt-0.5 w-5 h-5 bg-gray-800 border-purple-500 text-purple-600 rounded focus:ring-purple-500"
                   />
-                  <span className="text-sm sm:text-base text-gray-300 group-hover:text-white">私は高校生以上です</span>
+                  <span className="text-sm sm:text-base text-gray-300 group-hover:text-white">
+                    私は高校生以上です
+                  </span>
                 </label>
 
                 <label className="flex items-start cursor-pointer group">
@@ -731,7 +772,14 @@ export default function RegisterPage() {
                     className="mr-3 mt-0.5 w-5 h-5 bg-gray-800 border-purple-500 text-purple-600 rounded focus:ring-purple-500"
                   />
                   <span className="text-sm sm:text-base text-gray-300 group-hover:text-white">
-                    <Link href="/terms" target="_blank" className="text-purple-400 hover:text-purple-300 underline">利用規約</Link> に同意する
+                    <Link
+                      href="/terms"
+                      target="_blank"
+                      className="text-purple-400 hover:text-purple-300 underline"
+                    >
+                      利用規約
+                    </Link>{' '}
+                    に同意する
                   </span>
                 </label>
               </div>
@@ -757,7 +805,15 @@ export default function RegisterPage() {
                   }
                   className="px-6 sm:px-8 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text白 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {loading ? (<><FaSpinner className="animate-spin" /> 登録中...</>) : (<><FaUserPlus /> 登録する</>)}
+                  {loading ? (
+                    <>
+                      <FaSpinner className="animate-spin" /> 登録中...
+                    </>
+                  ) : (
+                    <>
+                      <FaUserPlus /> 登録する
+                    </>
+                  )}
                 </button>
               </div>
             </form>

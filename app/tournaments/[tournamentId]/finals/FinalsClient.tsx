@@ -48,6 +48,9 @@ type Player = {
   handicap: number | null;
 };
 
+type SeriesMode = '2-0' | '2-1';
+type BaseReason = 'normal' | 'time_limit' | 'forfeit';
+
 const toInt = (v: any): number | null => {
   if (v == null) return null;
   if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -55,15 +58,50 @@ const toInt = (v: any): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+// ===== reason encode/decode（DBスキーマ変更なしで adv 情報を保持）=====
+// 例: adv_def:<DEF勝ち上がりplayerId>|normal
+const ADV_PREFIX = 'adv_def:';
+
 const normalizeReason = (m: { finish_reason?: any; end_reason?: any } | null | undefined) =>
   String(m?.finish_reason ?? m?.end_reason ?? 'normal').trim().toLowerCase();
 
-const reasonLabel = (r: string) => {
+const decodeReason = (rawReason: string): { base: BaseReason; advDefPlayerId: string | null } => {
+  const r = String(rawReason || 'normal').trim().toLowerCase();
+  if (r.startsWith(ADV_PREFIX)) {
+    const rest = r.slice(ADV_PREFIX.length);
+    const [idPart, basePart] = rest.split('|');
+    const advId = String(idPart || '').trim() || null;
+    const base = (String(basePart || 'normal').trim().toLowerCase() as BaseReason) || 'normal';
+    const safeBase: BaseReason =
+      base === 'normal' || base === 'time_limit' || base === 'forfeit' ? base : 'normal';
+    return { base: safeBase, advDefPlayerId: advId };
+  }
+  const base = (r as BaseReason) || 'normal';
+  const safeBase: BaseReason =
+    base === 'normal' || base === 'time_limit' || base === 'forfeit' ? base : 'normal';
+  return { base: safeBase, advDefPlayerId: null };
+};
+
+const encodeReason = (base: BaseReason, advDefPlayerId: string | null) => {
+  const b: BaseReason =
+    base === 'normal' || base === 'time_limit' || base === 'forfeit' ? base : 'normal';
+  const id = String(advDefPlayerId || '').trim();
+  if (!id) return b;
+  return `${ADV_PREFIX}${id}|${b}`;
+};
+
+const baseReasonLabel = (r: BaseReason) => {
   const v = String(r || 'normal').toLowerCase();
   if (v === 'normal') return '通常';
   if (v === 'time_limit') return '時間切れ';
   if (v === 'forfeit') return '棄権/不戦';
   return v;
+};
+
+const reasonLabel = (raw: string) => {
+  const { base, advDefPlayerId } = decodeReason(String(raw || 'normal'));
+  if (advDefPlayerId) return `アド(予選DEF)/${baseReasonLabel(base)}`;
+  return baseReasonLabel(base);
 };
 
 // ✅ end_reason / finish_reason 列差異を吸収（最小）
@@ -95,6 +133,87 @@ function PlayerCardMini({ p }: { p?: Player }) {
   );
 }
 
+// key helpers
+const advKey = (roundNo: number, matchNo: number) => `${roundNo}:${matchNo}`;
+
+// ✅ 安全化：advDefPlayerId が対戦ペア以外なら無効扱い
+const sanitizeAdvDefId = (pidA: string | null, pidB: string | null, advDefPlayerId: string | null) => {
+  const id = String(advDefPlayerId || '').trim();
+  if (!id || !pidA || !pidB) return null;
+  if (id !== pidA && id !== pidB) return null;
+  return id;
+};
+
+// adv計算：advDefPlayerId（予選DEF勝ち上がり）に対して、相手（通常側）が1勝アド（第1試合DEF勝ち固定）
+const computeAdvNormalId = (pidA: string, pidB: string, advDefPlayerId: string | null) => {
+  if (!advDefPlayerId) return null;
+  if (pidA === advDefPlayerId) return pidB;
+  if (pidB === advDefPlayerId) return pidA;
+  return null;
+};
+
+// 3試合表示用（勝者手動選択に合わせて「どう並ぶか」を表示するだけ）
+function computeSeriesWithAdv(opts: {
+  pidA: string;
+  pidB: string;
+  winnerId: string;
+  advNormalId: string | null; // 通常側（第1試合 DEF 勝ち固定）
+  mode: SeriesMode;
+}) {
+  const otherId = opts.winnerId === opts.pidA ? opts.pidB : opts.pidA;
+
+  if (!opts.advNormalId) {
+    // 通常 best-of-3 の並び（表示用）
+    const w = 2;
+    const l = opts.mode === '2-1' ? 1 : 0;
+    return {
+      winner_score: w,
+      loser_score: l,
+      games: [
+        { label: '第1試合', winner: opts.winnerId, note: '' },
+        { label: '第2試合', winner: opts.winnerId, note: '' },
+        {
+          label: '第3試合',
+          winner: opts.mode === '2-1' ? otherId : null,
+          note: opts.mode === '2-0' ? '未実施' : '',
+        },
+      ],
+    };
+  }
+
+  // アドあり：第1試合は advNormalId の DEF勝ち固定
+  if (opts.winnerId === opts.advNormalId) {
+    // 通常側が勝つ：2-0 or 2-1
+    const w = 2;
+    const l = opts.mode === '2-1' ? 1 : 0;
+
+    const defSide = otherId; // 通常側の相手（予選DEF勝ち上がり側）
+    const game2Winner = opts.mode === '2-0' ? opts.advNormalId : defSide;
+    const game3Winner = opts.mode === '2-0' ? null : opts.advNormalId;
+
+    return {
+      winner_score: w,
+      loser_score: l,
+      games: [
+        { label: '第1試合', winner: opts.advNormalId, note: 'DEF（アドバンテージ）' },
+        { label: '第2試合', winner: game2Winner, note: '' },
+        { label: '第3試合', winner: game3Winner, note: game3Winner ? '' : '未実施' },
+      ],
+    };
+  } else {
+    // 予選DEF勝ち上がり側が勝つ：残り2試合を両方勝つ必要 → 常に 2-1
+    return {
+      winner_score: 2,
+      loser_score: 1,
+      games: [
+        { label: '第1試合', winner: opts.advNormalId, note: 'DEF（アドバンテージ）' },
+        { label: '第2試合', winner: opts.winnerId, note: '' },
+        { label: '第3試合', winner: opts.winnerId, note: '' },
+      ],
+    };
+  }
+}
+
 export default function AdminTournamentFinalsClient({ tournamentId }: { tournamentId: string }) {
   const router = useRouter();
 
@@ -112,6 +231,27 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ✅ 予選DEF勝ち上がりプレイヤーID（round:match → playerId）
+  const [advDefMap, setAdvDefMap] = useState<Record<string, string>>({});
+  // ✅ best-of-3 の 2-0 / 2-1（round:match → mode）
+  const [seriesModeMap, setSeriesModeMap] = useState<Record<string, SeriesMode>>({});
+
+  // 入力状態（R1=2試合、R2=1試合）
+  const [r1Reason, setR1Reason] = useState<Record<number, BaseReason>>({ 1: 'normal', 2: 'normal' });
+  const [r1Winner, setR1Winner] = useState<Record<number, string>>({ 1: '', 2: '' });
+  const [r1WScore, setR1WScore] = useState<Record<number, string>>({ 1: '15', 2: '15' });
+  const [r1LScore, setR1LScore] = useState<Record<number, string>>({ 1: '0', 2: '0' });
+
+  const [r2Reason, setR2Reason] = useState<BaseReason>('normal');
+  const [r2Winner, setR2Winner] = useState<string>(''); // ✅ 勝者は手動選択
+  const [r2SetA, setR2SetA] = useState<{ s1: string; s2: string; s3: string }>({ s1: '', s2: '', s3: '' });
+  const [r2SetB, setR2SetB] = useState<{ s1: string; s2: string; s3: string }>({ s1: '', s2: '', s3: '' });
+
+  const playerName = (id: string | null | undefined) => {
+    if (!id) return '—';
+    return players[id]?.handle_name ?? id.slice(0, 8);
+  };
 
   // 20秒で “詰まった” 判定（UIは維持したまま復帰導線だけ追加）
   const loadingTimer = useRef<number | null>(null);
@@ -217,15 +357,13 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     return map;
   }, [matches]);
 
-  // 入力状態（R1=2試合、R2=1試合）
-  const [r1Reason, setR1Reason] = useState<Record<number, string>>({ 1: 'normal', 2: 'normal' });
-  const [r1Winner, setR1Winner] = useState<Record<number, string>>({ 1: '', 2: '' });
-  const [r1WScore, setR1WScore] = useState<Record<number, string>>({ 1: '15', 2: '15' });
-  const [r1LScore, setR1LScore] = useState<Record<number, string>>({ 1: '0', 2: '0' });
-
-  const [r2Reason, setR2Reason] = useState<string>('normal');
-  const [r2SetA, setR2SetA] = useState<{ s1: string; s2: string; s3: string }>({ s1: '', s2: '', s3: '' });
-  const [r2SetB, setR2SetB] = useState<{ s1: string; s2: string; s3: string }>({ s1: '', s2: '', s3: '' });
+  const getPair = (roundNo: number, matchNo: number) => {
+    const slotA = matchNo * 2 - 1;
+    const slotB = matchNo * 2;
+    const pidA = entryMap.get(`${roundNo}:${slotA}`)?.player_id ?? null;
+    const pidB = entryMap.get(`${roundNo}:${slotB}`)?.player_id ?? null;
+    return { pidA, pidB };
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -242,6 +380,12 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
 
       if (bErr) throw bErr;
       if (!bRows || bRows.length === 0) {
+        setBracket(null);
+        setEntries([]);
+        setMatches([]);
+        setPlayers({});
+        setAdvDefMap({});
+        setSeriesModeMap({});
         setError('決勝トーナメントが見つかりませんでした');
         return;
       }
@@ -294,36 +438,70 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
       }
       console.log('[admin/finals] players ok');
 
-      // 入力欄へ反映（既存分）
+      // ===== 入力欄へ反映（既存分）=====
+      const nextAdv: Record<string, string> = {};
+      const nextSeries: Record<string, SeriesMode> = {};
+
+      const nextR1Reason: Record<number, BaseReason> = { 1: 'normal', 2: 'normal' };
+      const nextR1Winner: Record<number, string> = { 1: '', 2: '' };
+      const nextR1WScore: Record<number, string> = { 1: '15', 2: '15' };
+      const nextR1LScore: Record<number, string> = { 1: '0', 2: '0' };
+
+      let nextR2Reason: BaseReason = 'normal';
+      let nextR2Winner = '';
+
+      // R1-1 / R1-2
       [1, 2].forEach((no) => {
-        const m =
-          ms.find((x) => Number(x.round_no) === 1 && Number(x.match_no ?? x.match_index ?? 0) === no) || null;
+        const m = ms.find((x) => Number(x.round_no) === 1 && Number(x.match_no ?? x.match_index ?? 0) === no) || null;
         if (!m) return;
 
-        setR1Reason((prev) => ({ ...prev, [no]: normalizeReason(m) }));
-        if (m.winner_id) setR1Winner((prev) => ({ ...prev, [no]: String(m.winner_id) }));
-        if (m.winner_score != null) setR1WScore((prev) => ({ ...prev, [no]: String(m.winner_score) }));
-        if (m.loser_score != null) setR1LScore((prev) => ({ ...prev, [no]: String(m.loser_score) }));
+        const dec = decodeReason(normalizeReason(m));
+        nextR1Reason[no] = dec.base;
+
+        if (dec.advDefPlayerId) nextAdv[advKey(1, no)] = dec.advDefPlayerId;
+
+        if (m.winner_id) nextR1Winner[no] = String(m.winner_id);
+        if (m.winner_score != null) nextR1WScore[no] = String(m.winner_score);
+        if (m.loser_score != null) nextR1LScore[no] = String(m.loser_score);
+
+        // ✅ mode復元（R1でシリーズ化してるケース用）
+        const ws = Number(m.winner_score ?? 0);
+        const ls = Number(m.loser_score ?? 0);
+        if ((ws === 2 && ls === 1) || (ws === 1 && ls === 2)) nextSeries[advKey(1, no)] = '2-1';
+        if ((ws === 2 && ls === 0) || (ws === 0 && ls === 2)) nextSeries[advKey(1, no)] = '2-0';
       });
 
-      const mFinal =
-        ms.find((x) => Number(x.round_no) === 2 && Number(x.match_no ?? x.match_index ?? 0) === 1) || null;
-      if (mFinal) setR2Reason(normalizeReason(mFinal));
+      // R2-1（決勝）
+      const mFinal = ms.find((x) => Number(x.round_no) === 2 && Number(x.match_no ?? x.match_index ?? 0) === 1) || null;
+      if (mFinal) {
+        const dec = decodeReason(normalizeReason(mFinal));
+        nextR2Reason = dec.base;
+        if (dec.advDefPlayerId) nextAdv[advKey(2, 1)] = dec.advDefPlayerId;
+        if (mFinal.winner_id) nextR2Winner = String(mFinal.winner_id);
+
+        // ✅ mode復元（adv有無に関わらず、2-0/2-1が入ってるなら復元）
+        const ws = Number(mFinal.winner_score ?? 0);
+        const ls = Number(mFinal.loser_score ?? 0);
+        if ((ws === 2 && ls === 1) || (ws === 1 && ls === 2)) nextSeries[advKey(2, 1)] = '2-1';
+        if ((ws === 2 && ls === 0) || (ws === 0 && ls === 2)) nextSeries[advKey(2, 1)] = '2-0';
+      }
+
+      setAdvDefMap(nextAdv);
+      setSeriesModeMap(nextSeries);
+
+      setR1Reason(nextR1Reason);
+      setR1Winner(nextR1Winner);
+      setR1WScore(nextR1WScore);
+      setR1LScore(nextR1LScore);
+
+      setR2Reason(nextR2Reason);
+      setR2Winner(nextR2Winner);
     } catch (e: any) {
       console.error('[admin/finals] loadAll error:', e);
       setError(`決勝トーナメントの取得に失敗しました: ${e?.message || 'unknown error'}`);
     } finally {
-      // ✅ ここが重要：詰まらず必ず解除
       setLoading(false);
     }
-  };
-
-  const getPair = (roundNo: number, matchNo: number) => {
-    const slotA = matchNo * 2 - 1;
-    const slotB = matchNo * 2;
-    const pidA = entryMap.get(`${roundNo}:${slotA}`)?.player_id ?? null;
-    const pidB = entryMap.get(`${roundNo}:${slotB}`)?.player_id ?? null;
-    return { pidA, pidB };
   };
 
   // ✅ end_reason / finish_reason のどちらでも動く upsert（最小）
@@ -371,7 +549,6 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     if (fErr) throw fErr;
 
     if (found?.id) {
-      // update
       const tryUpdate = async (payload: any) => {
         const { error } = await db.from('final_matches').update(payload).eq('id', found.id);
         if (error) throw error;
@@ -388,7 +565,6 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
       }
       return String(found.id);
     } else {
-      // insert
       const tryInsert = async (payload: any) => {
         const { data: ins, error } = await db.from('final_matches').insert(payload).select('id').single();
         if (error) throw error;
@@ -415,9 +591,31 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
 
     const loserId = winnerId === pidA ? pidB : pidA;
 
-    const w = toInt(r1WScore[matchNo]);
-    const l = toInt(r1LScore[matchNo]);
-    if (w == null || l == null) return alert('スコアが不正です。');
+    const key = advKey(1, matchNo);
+    const rawAdv = String(advDefMap[key] || '').trim() || null;
+    const advDefPlayerId = sanitizeAdvDefId(pidA, pidB, rawAdv);
+    const advNormalId = computeAdvNormalId(pidA, pidB, advDefPlayerId);
+
+    const baseR: BaseReason = r1Reason[matchNo] || 'normal';
+    const encoded = encodeReason(baseR, advDefPlayerId);
+
+    let winner_score: number | null = null;
+    let loser_score: number | null = null;
+
+    if (advNormalId) {
+      const rawMode = seriesModeMap[key] ?? '2-0';
+      const mode: SeriesMode = winnerId === advNormalId ? rawMode : '2-1';
+      const s = computeSeriesWithAdv({ pidA, pidB, winnerId, advNormalId, mode });
+      winner_score = s.winner_score;
+      loser_score = s.loser_score;
+    } else {
+      // 従来通り（1試合スコア）
+      const w = toInt(r1WScore[matchNo]);
+      const l = toInt(r1LScore[matchNo]);
+      if (w == null || l == null) return alert('スコアが不正です。');
+      winner_score = w;
+      loser_score = l;
+    }
 
     setSavingKey(`r1:${matchNo}`);
     try {
@@ -427,9 +625,9 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
         match_no: matchNo,
         winner_id: winnerId,
         loser_id: loserId,
-        winner_score: w,
-        loser_score: l,
-        end_reason: r1Reason[matchNo] || 'normal',
+        winner_score,
+        loser_score,
+        end_reason: encoded,
       });
       await loadAll();
     } catch (e: any) {
@@ -440,12 +638,34 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     }
   };
 
-  const computeBestOf3 = () => {
+  // R2（表示用：セット勝利数）
+  const computeBestOf3Wins = (pidA: string, pidB: string) => {
+    const rawAdv = String(advDefMap[advKey(2, 1)] || '').trim() || null;
+    const advDefPlayerId = sanitizeAdvDefId(pidA, pidB, rawAdv);
+    const advNormalId = computeAdvNormalId(pidA, pidB, advDefPlayerId);
+
     const a = [toInt(r2SetA.s1), toInt(r2SetA.s2), toInt(r2SetA.s3)];
     const b = [toInt(r2SetB.s1), toInt(r2SetB.s2), toInt(r2SetB.s3)];
+
     let wonA = 0;
     let wonB = 0;
-    for (let i = 0; i < 3; i++) {
+
+    // アドがある場合：第1試合は通常側のDEF勝ち固定（セット入力が空でもカウント）
+    if (advNormalId) {
+      if (advNormalId === pidA) wonA += 1;
+      else if (advNormalId === pidB) wonB += 1;
+    } else {
+      // 通常の場合のみ Set1 を入力で判定
+      const av = a[0];
+      const bv = b[0];
+      if (av != null && bv != null && av !== bv) {
+        if (av > bv) wonA++;
+        else wonB++;
+      }
+    }
+
+    // Set2/3 は入力で判定
+    for (let i = 1; i < 3; i++) {
       const av = a[i];
       const bv = b[i];
       if (av == null || bv == null) continue;
@@ -453,7 +673,8 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
       if (av > bv) wonA++;
       else wonB++;
     }
-    return { wonA, wonB };
+
+    return { wonA, wonB, advDefPlayerId, advNormalId };
   };
 
   const saveR2Final = async () => {
@@ -461,12 +682,33 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
     const { pidA, pidB } = getPair(2, 1);
     if (!pidA || !pidB) return alert('R2の参加者が未設定です。');
 
-    const { wonA, wonB } = computeBestOf3();
-    if (wonA === wonB) return alert('勝敗が確定していません（セット入力を確認してください）。');
-    if (wonA < 2 && wonB < 2) return alert('best of 3 なので 2セット先取が必要です。');
+    const winnerId = String(r2Winner || '').trim();
+    if (!winnerId) return alert('勝者を選択してください。');
+    if (winnerId !== pidA && winnerId !== pidB) return alert('勝者が不正です。');
 
-    const winnerId = wonA > wonB ? pidA : pidB;
     const loserId = winnerId === pidA ? pidB : pidA;
+
+    const key = advKey(2, 1);
+    const rawAdv = String(advDefMap[key] || '').trim() || null;
+    const advDefPlayerId = sanitizeAdvDefId(pidA, pidB, rawAdv);
+    const advNormalId = computeAdvNormalId(pidA, pidB, advDefPlayerId);
+
+    const baseR: BaseReason = r2Reason || 'normal';
+    const encoded = encodeReason(baseR, advDefPlayerId);
+
+    // 最終スコア（2-0 / 2-1）は「勝者手動 + ルール」で整形
+    let mode: SeriesMode = seriesModeMap[key] ?? '2-0';
+    if (advNormalId) {
+      mode = winnerId === advNormalId ? mode : '2-1'; // 予選DEF側が勝つなら必ず2-1
+    }
+
+    const s = computeSeriesWithAdv({
+      pidA,
+      pidB,
+      winnerId,
+      advNormalId,
+      mode,
+    });
 
     setSavingKey('r2:1');
     try {
@@ -476,9 +718,9 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
         match_no: 1,
         winner_id: winnerId,
         loser_id: loserId,
-        winner_score: Math.max(wonA, wonB),
-        loser_score: Math.min(wonA, wonB),
-        end_reason: r2Reason || 'normal',
+        winner_score: s.winner_score,
+        loser_score: s.loser_score,
+        end_reason: encoded,
       });
       await loadAll();
     } catch (e: any) {
@@ -511,7 +753,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
           <div>
             <div className="text-xs text-purple-200">ADMIN</div>
             <h1 className="text-2xl font-bold">決勝トーナメント管理</h1>
-            <div className="text-xs text-gray-300 mt-1">R1は通常1試合 / 決勝(R2)は best_of_3（2セット先取）</div>
+            <div className="text-xs text-gray-300 mt-1">R1は通常1試合 / 決勝(R2)は best_of_3（2勝先取）</div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -567,6 +809,26 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
 
                 const cur = matchMap.get(`1:${matchNo}`) || null;
 
+                const key = advKey(1, matchNo);
+                const rawAdv = String(advDefMap[key] || '').trim() || null;
+                const advDefPlayerId = sanitizeAdvDefId(pidA, pidB, rawAdv);
+                const advNormalId = pidA && pidB ? computeAdvNormalId(pidA, pidB, advDefPlayerId) : null;
+
+                const selectedWinnerId = String(r1Winner[matchNo] || '').trim();
+                const rawMode = seriesModeMap[key] ?? '2-0';
+                const mode: SeriesMode =
+                  advNormalId && selectedWinnerId && selectedWinnerId !== advNormalId ? '2-1' : rawMode;
+
+                const series =
+                  pidA && pidB && selectedWinnerId
+                    ? computeSeriesWithAdv({ pidA, pidB, winnerId: selectedWinnerId, advNormalId, mode })
+                    : null;
+
+                // ✅ 自動スコアは「adv + 勝者選択済」のときだけ
+                const autoScore = Boolean(advNormalId && selectedWinnerId);
+                const wScoreDisplay = autoScore ? String(series?.winner_score ?? '') : r1WScore[matchNo] || '';
+                const lScoreDisplay = autoScore ? String(series?.loser_score ?? '') : r1LScore[matchNo] || '';
+
                 return (
                   <div key={`r1-${matchNo}`} className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-3">
                     <div className="text-sm font-semibold">R1-{matchNo}</div>
@@ -587,9 +849,12 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
                         <div className="text-xs text-gray-300">結果入力</div>
 
                         <div className="flex flex-wrap gap-2 items-center">
+                          {/* 種別（通常/時間切れ/棄権） */}
                           <select
                             value={r1Reason[matchNo] || 'normal'}
-                            onChange={(e) => setR1Reason((prev) => ({ ...prev, [matchNo]: e.target.value }))}
+                            onChange={(e) =>
+                              setR1Reason((prev) => ({ ...prev, [matchNo]: e.target.value as BaseReason }))
+                            }
                             className="text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2"
                           >
                             <option value="normal">通常</option>
@@ -597,6 +862,32 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
                             <option value="forfeit">棄権/不戦</option>
                           </select>
 
+                          {/* 予選DEF勝ち上がり指定（最小UI追加） */}
+                          <select
+                            value={advDefPlayerId ?? ''}
+                            onChange={(e) => {
+                              const v = String(e.target.value || '');
+                              setAdvDefMap((p) => {
+                                const next = { ...p };
+                                if (!v) delete next[key];
+                                else next[key] = v;
+                                return next;
+                              });
+                            }}
+                            className="text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2"
+                            disabled={!pidA || !pidB}
+                            title="予選でDEF勝ち上がりの選手を指定（該当しない場合は空）"
+                          >
+                            <option value="">予選DEF：なし</option>
+                            {pidA ? (
+                              <option value={pidA}>予選DEF：{players[pidA]?.handle_name ?? 'playerA'}</option>
+                            ) : null}
+                            {pidB ? (
+                              <option value={pidB}>予選DEF：{players[pidB]?.handle_name ?? 'playerB'}</option>
+                            ) : null}
+                          </select>
+
+                          {/* 勝者（手動） */}
                           <select
                             value={r1Winner[matchNo] || ''}
                             onChange={(e) => setR1Winner((prev) => ({ ...prev, [matchNo]: e.target.value }))}
@@ -607,19 +898,28 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
                             {pidB ? <option value={pidB}>{players[pidB]?.handle_name ?? 'playerB'}</option> : null}
                           </select>
 
+                          {/* スコア */}
                           <div className="flex items-center gap-2">
                             <div className="text-xs text-gray-300">勝者</div>
                             <input
-                              value={r1WScore[matchNo] || ''}
-                              onChange={(e) => setR1WScore((prev) => ({ ...prev, [matchNo]: e.target.value }))}
-                              className="w-20 text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2"
+                              value={wScoreDisplay}
+                              onChange={(e) => {
+                                if (autoScore) return;
+                                setR1WScore((prev) => ({ ...prev, [matchNo]: e.target.value }));
+                              }}
+                              disabled={autoScore}
+                              className="w-20 text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2 disabled:opacity-60"
                               inputMode="numeric"
                             />
                             <div className="text-xs text-gray-300">敗者</div>
                             <input
-                              value={r1LScore[matchNo] || ''}
-                              onChange={(e) => setR1LScore((prev) => ({ ...prev, [matchNo]: e.target.value }))}
-                              className="w-20 text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2"
+                              value={lScoreDisplay}
+                              onChange={(e) => {
+                                if (autoScore) return;
+                                setR1LScore((prev) => ({ ...prev, [matchNo]: e.target.value }));
+                              }}
+                              disabled={autoScore}
+                              className="w-20 text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2 disabled:opacity-60"
                               inputMode="numeric"
                             />
                           </div>
@@ -633,6 +933,47 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
                             {savingKey === `r1:${matchNo}` ? '保存中...' : cur?.winner_id ? '更新' : '保存'}
                           </button>
                         </div>
+
+                        {/* アドあり：3試合表示 + 2-0/2-1選択（通常側が勝つ時のみ） */}
+                        {advNormalId && pidA && pidB ? (
+                          <div className="mt-1 rounded-xl border border-white/10 bg-black/10 p-3 text-xs">
+                            <div className="text-yellow-200/90">
+                              ※ 第1試合は <span className="font-semibold">{playerName(advNormalId)}</span> の DEF勝ち（1勝アド）
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <div className="text-gray-300">最終結果:</div>
+                              <select
+                                className="px-2 py-1 rounded bg-black/30 border border-white/10"
+                                value={mode}
+                                onChange={(e) => setSeriesModeMap((p) => ({ ...p, [key]: e.target.value as SeriesMode }))}
+                                disabled={!!selectedWinnerId && selectedWinnerId !== advNormalId} // DEF側が勝者なら2-1固定
+                              >
+                                <option value="2-0">2-0</option>
+                                <option value="2-1">2-1</option>
+                              </select>
+                              {selectedWinnerId && selectedWinnerId !== advNormalId ? (
+                                <span className="text-gray-400">（予選DEF側が勝つ場合は 2-1 固定）</span>
+                              ) : null}
+                            </div>
+
+                            {series ? (
+                              <div className="mt-2 space-y-1 text-gray-200">
+                                {series.games.map((g) => (
+                                  <div key={g.label} className="flex items-center justify-between gap-2">
+                                    <span className="text-gray-400">{g.label}</span>
+                                    <span>
+                                      {g.winner ? playerName(g.winner) : '—'}{' '}
+                                      {g.note ? <span className="text-gray-400">({g.note})</span> : null}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="mt-2 text-gray-400">※ 勝者を選択すると、3試合の表示が出ます</div>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -647,7 +988,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
                   <div className="text-xs text-gray-300">ROUND</div>
                   <div className="text-lg font-bold">R2（決勝）</div>
                 </div>
-                <div className="text-xs text-gray-400">best_of_3（2セット先取）</div>
+                <div className="text-xs text-gray-400">best_of_3（2勝先取）</div>
               </div>
 
               {(() => {
@@ -657,7 +998,31 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
 
                 const cur = matchMap.get(`2:1`) || null;
 
-                const { wonA, wonB } = computeBestOf3();
+                if (!pidA || !pidB) {
+                  return (
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="text-sm text-gray-300">R2の参加者が未設定です。</div>
+                    </div>
+                  );
+                }
+
+                const key = advKey(2, 1);
+                const rawAdv = String(advDefMap[key] || '').trim() || null;
+                const advDefPlayerId = sanitizeAdvDefId(pidA, pidB, rawAdv);
+                const advNormalId = computeAdvNormalId(pidA, pidB, advDefPlayerId);
+
+                const rawMode = seriesModeMap[key] ?? '2-0';
+                const mode: SeriesMode = advNormalId && r2Winner && r2Winner !== advNormalId ? '2-1' : rawMode;
+
+                const series = r2Winner
+                  ? computeSeriesWithAdv({ pidA, pidB, winnerId: r2Winner, advNormalId, mode })
+                  : null;
+
+                const { wonA, wonB } = computeBestOf3Wins(pidA, pidB);
+
+                // Set1 表示（アドありなら固定表示）
+                const set1A = advNormalId ? (advNormalId === pidA ? '15' : '0') : r2SetA.s1;
+                const set1B = advNormalId ? (advNormalId === pidB ? '15' : '0') : r2SetB.s1;
 
                 return (
                   <div className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-4">
@@ -682,7 +1047,7 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
                           <div className="text-xs text-gray-300">種別</div>
                           <select
                             value={r2Reason}
-                            onChange={(e) => setR2Reason(e.target.value)}
+                            onChange={(e) => setR2Reason(e.target.value as BaseReason)}
                             className="text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2"
                           >
                             <option value="normal">通常</option>
@@ -690,43 +1055,163 @@ export default function AdminTournamentFinalsClient({ tournamentId }: { tourname
                             <option value="forfeit">棄権/不戦</option>
                           </select>
 
+                          {/* 予選DEF勝ち上がり指定 */}
+                          <select
+                            value={advDefPlayerId ?? ''}
+                            onChange={(e) => {
+                              const v = String(e.target.value || '');
+                              setAdvDefMap((p) => {
+                                const next = { ...p };
+                                if (!v) delete next[key];
+                                else next[key] = v;
+                                return next;
+                              });
+                            }}
+                            className="text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2"
+                            title="予選でDEF勝ち上がりの選手を指定（該当しない場合は空）"
+                          >
+                            <option value="">予選DEF：なし</option>
+                            <option value={pidA}>予選DEF：{playerName(pidA)}</option>
+                            <option value={pidB}>予選DEF：{playerName(pidB)}</option>
+                          </select>
+
+                          {/* 勝者（手動） */}
+                          <select
+                            value={r2Winner}
+                            onChange={(e) => setR2Winner(e.target.value)}
+                            className="text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2 min-w-[220px]"
+                          >
+                            <option value="">勝者を選択</option>
+                            <option value={pidA}>{playerName(pidA)}</option>
+                            <option value={pidB}>{playerName(pidB)}</option>
+                          </select>
+
                           <div className="ml-auto text-xs text-gray-300">
-                            セット勝利：A {wonA} - {wonB} B
+                            セット勝利（参考）：A {wonA} - {wonB} B
                           </div>
                         </div>
 
+                        {/* アドあり：第1試合DEF固定 + 2-0/2-1選択 */}
+                        {advNormalId ? (
+                          <div className="rounded-xl border border-white/10 bg-black/10 p-3 text-xs">
+                            <div className="text-yellow-200/90">
+                              ※ 第1試合は <span className="font-semibold">{playerName(advNormalId)}</span> の DEF勝ち（1勝アド）
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <div className="text-gray-300">最終結果:</div>
+                              <select
+                                className="px-2 py-1 rounded bg-black/30 border border-white/10"
+                                value={mode}
+                                onChange={(e) => setSeriesModeMap((p) => ({ ...p, [key]: e.target.value as SeriesMode }))}
+                                disabled={!!r2Winner && r2Winner !== advNormalId}
+                              >
+                                <option value="2-0">2-0</option>
+                                <option value="2-1">2-1</option>
+                              </select>
+                              {r2Winner && r2Winner !== advNormalId ? (
+                                <span className="text-gray-400">（予選DEF側が勝つ場合は 2-1 固定）</span>
+                              ) : null}
+                            </div>
+
+                            {series ? (
+                              <div className="mt-2 space-y-1 text-gray-200">
+                                {series.games.map((g) => (
+                                  <div key={g.label} className="flex items-center justify-between gap-2">
+                                    <span className="text-gray-400">{g.label}</span>
+                                    <span>
+                                      {g.winner ? playerName(g.winner) : '—'}{' '}
+                                      {g.note ? <span className="text-gray-400">({g.note})</span> : null}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="mt-2 text-gray-400">※ 勝者を選択すると、3試合の表示が出ます</div>
+                            )}
+                          </div>
+                        ) : (
+                          // 通常 best-of-3 でも 2-0/2-1 を指定できる（勝者手動に統一）
+                          <div className="rounded-xl border border-white/10 bg-black/10 p-3 text-xs">
+                            <div className="text-gray-300">最終結果（勝者手動）:</div>
+                            <div className="mt-2 flex items-center gap-2">
+                              <select
+                                className="px-2 py-1 rounded bg-black/30 border border-white/10"
+                                value={mode}
+                                onChange={(e) => setSeriesModeMap((p) => ({ ...p, [key]: e.target.value as SeriesMode }))}
+                              >
+                                <option value="2-0">2-0</option>
+                                <option value="2-1">2-1</option>
+                              </select>
+                              <span className="text-gray-400">（セット入力は参考表示のまま）</span>
+                            </div>
+
+                            {series ? (
+                              <div className="mt-2 space-y-1 text-gray-200">
+                                {series.games.map((g) => (
+                                  <div key={g.label} className="flex items-center justify-between gap-2">
+                                    <span className="text-gray-400">{g.label}</span>
+                                    <span>
+                                      {g.winner ? playerName(g.winner) : '—'}{' '}
+                                      {g.note ? <span className="text-gray-400">({g.note})</span> : null}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="mt-2 text-gray-400">※ 勝者を選択すると、3試合の表示が出ます</div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* set入力（表示維持） */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                           {[
                             { key: 's1', label: 'Set1' },
                             { key: 's2', label: 'Set2' },
                             { key: 's3', label: 'Set3' },
-                          ].map((s) => (
-                            <div key={s.key} className="rounded-xl border border-white/10 bg-black/20 p-3">
-                              <div className="text-xs text-gray-300 mb-2">{s.label}</div>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  value={(r2SetA as any)[s.key]}
-                                  onChange={(e) => setR2SetA((prev) => ({ ...prev, [s.key]: e.target.value }))}
-                                  className="w-full text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2"
-                                  inputMode="numeric"
-                                  placeholder="A"
-                                />
-                                <div className="text-gray-400">-</div>
-                                <input
-                                  value={(r2SetB as any)[s.key]}
-                                  onChange={(e) => setR2SetB((prev) => ({ ...prev, [s.key]: e.target.value }))}
-                                  className="w-full text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2"
-                                  inputMode="numeric"
-                                  placeholder="B"
-                                />
+                          ].map((s) => {
+                            const isSet1 = s.key === 's1';
+                            const disableSet1 = !!advNormalId && isSet1;
+                            const valA = isSet1 ? set1A : (r2SetA as any)[s.key];
+                            const valB = isSet1 ? set1B : (r2SetB as any)[s.key];
+
+                            return (
+                              <div key={s.key} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                <div className="text-xs text-gray-300 mb-2">{s.label}</div>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    value={valA}
+                                    onChange={(e) => {
+                                      if (disableSet1) return;
+                                      setR2SetA((prev) => ({ ...prev, [s.key]: e.target.value }));
+                                    }}
+                                    disabled={disableSet1}
+                                    className="w-full text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2 disabled:opacity-60"
+                                    inputMode="numeric"
+                                    placeholder="A"
+                                  />
+                                  <div className="text-gray-400">-</div>
+                                  <input
+                                    value={valB}
+                                    onChange={(e) => {
+                                      if (disableSet1) return;
+                                      setR2SetB((prev) => ({ ...prev, [s.key]: e.target.value }));
+                                    }}
+                                    disabled={disableSet1}
+                                    className="w-full text-sm rounded-lg bg-black/40 border border-white/15 px-3 py-2 disabled:opacity-60"
+                                    inputMode="numeric"
+                                    placeholder="B"
+                                  />
+                                </div>
+                                {disableSet1 ? <div className="mt-1 text-[11px] text-gray-400">※ アドのため Set1 は固定</div> : null}
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
 
                         <button
                           onClick={saveR2Final}
-                          disabled={savingKey === 'r2:1' || !pidA || !pidB}
+                          disabled={savingKey === 'r2:1' || !pidA || !pidB || !r2Winner}
                           className="w-full md:w-auto md:ml-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50"
                         >
                           <FaSave />

@@ -2,18 +2,12 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import Link from 'next/link';
+
 import AuthCookieSync from './AuthCookieSync';
 import LoginStatusIcon from './LoginStatusIcon';
-import {
-  FaHome,
-  FaTrophy,
-  FaUsers,
-  FaFlagCheckered,
-  FaIdBadge,
-} from 'react-icons/fa';
 
+import { FaHome, FaTrophy, FaUsers, FaFlagCheckered, FaIdBadge } from 'react-icons/fa';
 import InteractionRecovery from '@/components/system/InteractionRecovery';
-
 
 export const metadata: Metadata = {
   title: 'Toyoura Shufflers Club',
@@ -35,7 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ja" suppressHydrationWarning>
       <body className="min-h-screen bg-[#2a2a3e] text-gray-100 antialiased">
-        {/* クライアント側で Supabase セッション→Cookie 同期 */}
+        {/* クライアント側で Supabase セッション→Cookie 同期（軽量） */}
         <AuthCookieSync />
 
         {/* ヘッダー（アイコンのみ） */}
@@ -105,6 +99,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         {/* 本文 */}
         <main className="pt-20 sm:pt-24">{children}</main>
+
+        {/* Interaction recovery（既存挙動維持） */}
+        <InteractionRecovery />
 
         {/* Portals */}
         <div id="modal-root" />

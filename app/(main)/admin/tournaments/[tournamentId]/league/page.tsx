@@ -52,15 +52,17 @@ const isModeCheckError = (err: any) => {
 
 // ===== Helper: def ダミーを 1 回だけ取得してキャッシュ =====
 type DefDummy = { id: string; handle_name: string };
+
 let _defCache: DefDummy | null = null;
 
 async function getDefDummy(): Promise<DefDummy> {
   if (_defCache) return _defCache;
 
-  // players に def(is_dummy=true) がいる前提（ここは “関数内” にする：トップレベル await 禁止）
+  // ✅ eq は select の後ろにチェーンする（from() 直後に eq はできない）
   const { data, error } = await db
-    .from('players').eq('is_active', true)
+    .from('players')
     .select('id, handle_name')
+    .eq('is_active', true)
     .eq('handle_name', 'def')
     .eq('is_dummy', true)
     .maybeSingle();
@@ -77,6 +79,7 @@ async function getDefDummy(): Promise<DefDummy> {
   _defCache = { id: String(row.id), handle_name: String(row.handle_name ?? 'def') };
   return _defCache;
 }
+
 
 // ===== Helper: safe insert for matches (schema差分・制約差分に強くする) =====
 async function insertMatchesWithFallback(rows: AnyObj[]) {
