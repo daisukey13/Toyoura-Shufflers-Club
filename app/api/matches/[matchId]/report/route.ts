@@ -7,6 +7,16 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+export async function GET(_req: NextRequest, ctx: { params: { matchId: string } }) {
+  return NextResponse.json({
+    ok: true,
+    route: '/api/matches/[matchId]/report',
+    matchId: String(ctx?.params?.matchId ?? ''),
+  });
+}
+
+
+
 type AnyBody = Record<string, any>;
 type EndReason = 'normal' | 'time_limit' | 'walkover' | 'forfeit';
 
