@@ -10,17 +10,9 @@ export const dynamic = 'force-dynamic';
 type AnyBody = Record<string, any>;
 type EndReason = 'normal' | 'time_limit' | 'walkover' | 'forfeit';
 
-// ✅ Next.js 15 対応：params が Promise になるケースがあるので必ず await してから使う
-async function getMatchIdFromCtx(ctx: any): Promise<string> {
-  const p = ctx?.params;
-  const params = p && typeof p.then === 'function' ? await p : p; // Promise なら await
-  return String(params?.matchId ?? '').trim();
-}
-
-const respond = (body: any, init?: number | ResponseInit) => {
-  if (typeof init === 'number') return NextResponse.json(body, { status: init });
-  return NextResponse.json(body, init);
-};
+// ✅ Next.js 15: params は Promise になり得るので await する
+type Params = Promise<{ matchId: string }>;
+type Ctx = { params: Params };
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 const toInt = (v: unknown, fallback = 0) => {
@@ -182,24 +174,26 @@ async function getParticipants(matchRow: any, matchId: string) {
   return { ok: true as const, aId: ids[0], bId: ids[1] };
 }
 
-export async function GET(_req: NextRequest, ctx: any) {
-  const matchId = await getMatchIdFromCtx(ctx);
-  return respond({
+export async function GET(_req: NextRequest, { params }: Ctx) {
+  const { matchId } = await params;
+  return NextResponse.json({
     ok: true,
     route: '/api/matches/[matchId]/report',
-    matchId,
+    matchId: String(matchId ?? ''),
   });
 }
 
-export async function POST(req: NextRequest, ctx: any) {
+export async function POST(req: NextRequest, { params }: Ctx) {
   try {
+    const { matchId: rawMatchId } = await params;
+    const matchId = String(rawMatchId ?? '').trim();
+    if (!matchId) return NextResponse.json({ ok: false, message: 'matchId が不正です。' }, { status: 400 });
+
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !anon) return respond({ ok: false, message: 'Supabase 環境変数が未設定です。' }, 500);
-
-    // ✅ ここが本題：params を await してから matchId を読む
-    const matchId = await getMatchIdFromCtx(ctx);
-    if (!matchId) return respond({ ok: false, message: 'matchId が不正です。' }, 400);
+    if (!url || !anon) {
+      return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
+    }
 
     const cookieStore = await cookies();
 
@@ -221,23 +215,27 @@ export async function POST(req: NextRequest, ctx: any) {
     });
 
     const { data: userData, error: userErr } = await supa.auth.getUser();
-    if (userErr || !userData?.user) return respond({ ok: false, message: '認証が必要です。' }, 401);
-
+    if (userErr || !userData?.user) {
+      return NextResponse.json({ ok: false, message: '認証が必要です。' }, { status: 401 });
+    }
     const reporter_id = userData.user.id;
 
-    // 管理画面想定：管理者のみ
     const admin = await isAdminPlayer(reporter_id);
-    if (!admin) return respond({ ok: false, message: '管理者のみ実行できます。' }, 403);
+    if (!admin) {
+      return NextResponse.json({ ok: false, message: '管理者のみ実行できます。' }, { status: 403 });
+    }
 
     const body = (await req.json().catch(() => null)) as AnyBody | null;
-    if (!body) return respond({ ok: false, message: '不正なリクエストです。' }, 400);
+    if (!body) return NextResponse.json({ ok: false, message: '不正なリクエストです。' }, { status: 400 });
 
     const winner_id = String(body.winner_id ?? '').trim();
-    if (!winner_id) return respond({ ok: false, message: '勝者を選択してください。' }, 400);
+    if (!winner_id) return NextResponse.json({ ok: false, message: '勝者を選択してください。' }, { status: 400 });
 
     const winner_score = clamp(toInt(body.winner_score, 15), 0, 99);
     const loser_score = clamp(toInt(body.loser_score, 0), 0, 99);
-    if (winner_score <= loser_score) return respond({ ok: false, message: 'スコアが不正です（勝者 > 敗者）。' }, 400);
+    if (winner_score <= loser_score) {
+      return NextResponse.json({ ok: false, message: 'スコアが不正です（勝者 > 敗者）。' }, { status: 400 });
+    }
 
     const end_reason = normalizeEndReason(body.end_reason ?? body.finish_reason ?? 'normal');
     const affects_rating = (() => {
@@ -246,43 +244,37 @@ export async function POST(req: NextRequest, ctx: any) {
       return shouldAffectRating(end_reason);
     })();
 
-    // ── 試合を取得（列が無くても落ちない） ──
     const sel = await safeSelectMatch(matchId);
-    if (!sel.ok) return respond({ ok: false, message: `試合取得に失敗しました: ${sel.message}` }, 500);
+    if (!sel.ok) return NextResponse.json({ ok: false, message: `試合取得に失敗しました: ${sel.message}` }, { status: 500 });
 
     const m0 = sel.data;
-    if (!m0) return respond({ ok: false, message: '試合が見つかりません。' }, 404);
+    if (!m0) return NextResponse.json({ ok: false, message: '試合が見つかりません。' }, { status: 404 });
 
-    // ── 対戦者特定（a/b が無ければ match_entries） ──
     const part = await getParticipants(m0, matchId);
-    if (!part.ok) return respond({ ok: false, message: part.message }, 400);
+    if (!part.ok) return NextResponse.json({ ok: false, message: part.message }, { status: 400 });
 
     const aId = part.aId;
     const bId = part.bId;
 
     if (winner_id !== aId && winner_id !== bId) {
-      return respond({ ok: false, message: '勝者がこの試合の対戦者に含まれていません。' }, 400);
+      return NextResponse.json({ ok: false, message: '勝者がこの試合の対戦者に含まれていません。' }, { status: 400 });
     }
     const loser_id = winner_id === aId ? bId : aId;
 
     const oldWinnerId = (m0 as any).winner_id as string | null;
     const oldLoserId = (m0 as any).loser_id as string | null;
 
-    // ── プレイヤー取得 ──
     const ids = uniq([winner_id, loser_id, oldWinnerId, oldLoserId]);
     const { data: pRows, error: pErr } = await supabaseAdmin
       .from('players')
       .select('id, ranking_points, handicap, matches_played, wins, losses')
       .in('id', ids);
 
-    if (pErr) return respond({ ok: false, message: `プレイヤー取得に失敗しました: ${pErr.message}` }, 500);
+    if (pErr) return NextResponse.json({ ok: false, message: `プレイヤー取得に失敗しました: ${pErr.message}` }, { status: 500 });
 
     const pMap = new Map<string, any>();
     (pRows ?? []).forEach((p: any) => pMap.set(p.id, p));
 
-    // ─────────────────────────────────────────────
-    // 二重計算防止：前回分を巻き戻す（存在する場合）
-    // ─────────────────────────────────────────────
     const hasOld = !!oldWinnerId && !!oldLoserId;
     if (hasOld) {
       const oldAffects = Boolean((m0 as any).affects_rating);
@@ -328,12 +320,9 @@ export async function POST(req: NextRequest, ctx: any) {
       (pRows2 ?? []).forEach((p: any) => pMap.set(p.id, p));
     }
 
-    // ─────────────────────────────────────────────
-    // 今回分を計算
-    // ─────────────────────────────────────────────
     const w = pMap.get(winner_id);
     const l = pMap.get(loser_id);
-    if (!w || !l) return respond({ ok: false, message: 'プレイヤーが見つかりません。' }, 400);
+    if (!w || !l) return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
 
     const scoreDiff = Math.max(1, winner_score - loser_score);
 
@@ -398,20 +387,25 @@ export async function POST(req: NextRequest, ctx: any) {
     };
 
     const up = await safeUpdateMatches(matchId, patch);
-    if (!up.ok) return respond({ ok: false, message: `試合更新に失敗しました: ${up.message}` }, 500);
+    if (!up.ok) {
+      return NextResponse.json({ ok: false, message: `試合更新に失敗しました: ${up.message}` }, { status: 500 });
+    }
 
-    return respond({
-      ok: true,
-      match_id: matchId,
-      end_reason,
-      affects_rating,
-      winner_points_change: delta.winnerPointsChange,
-      loser_points_change: delta.loserPointsChange,
-      winner_handicap_change: delta.winnerHandicapChange,
-      loser_handicap_change: delta.loserHandicapChange,
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        match_id: matchId,
+        end_reason,
+        affects_rating,
+        winner_points_change: delta.winnerPointsChange,
+        loser_points_change: delta.loserPointsChange,
+        winner_handicap_change: delta.winnerHandicapChange,
+        loser_handicap_change: delta.loserHandicapChange,
+      },
+      { status: 200 },
+    );
   } catch (e: any) {
     console.error('[api/matches/[matchId]/report] fatal:', e);
-    return respond({ ok: false, message: e?.message || 'サーバエラーが発生しました。' }, 500);
+    return NextResponse.json({ ok: false, message: e?.message || 'サーバエラーが発生しました。' }, { status: 500 });
   }
 }
