@@ -12,13 +12,20 @@ function carryCookies(from: NextResponse, to: NextResponse) {
 export default clerkMiddleware(async (auth, req: NextRequest) => {
   const { pathname, searchParams } = req.nextUrl;
 
+  // ✅ 重要：/api と /trpc は middleware 対象外にする
+  // ここを通すと Clerk の signed-out 判定や内部処理が絡んで /_not-found になることがあります。
+  // API は各 route.ts 側で Supabase cookie を読めるので問題ありません。
+  if (pathname.startsWith('/api') || pathname.startsWith('/trpc')) {
+    return NextResponse.next();
+  }
+
   // ここで1度だけレスポンスを作り、この res に Cookie を蓄積
   const res = NextResponse.next({
     request: { headers: new Headers(req.headers) },
   });
 
   // ─────────────────────────────────────────────
-  // 1) Clerk でログイン判定（最優先）
+  // 1) Clerk でログイン判定（既存維持）
   // ─────────────────────────────────────────────
   let clerkUserId: string | null = null;
   try {
@@ -30,9 +37,7 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
   const clerkAuthed = !!clerkUserId;
 
   // ─────────────────────────────────────────────
-  // 2) Supabase セッション更新（重要）
-  //    ✅ トップページなど「保護ルート以外」でも refresh が必要
-  //    ✅ getAll / setAll で cookie を更新できるのは middleware のみ
+  // 2) Supabase セッション更新（既存維持）
   // ─────────────────────────────────────────────
   let supabaseUser: any = null;
 
@@ -48,14 +53,13 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
           },
           setAll(cookiesToSet) {
             cookiesToSet.forEach(({ name, value, options }) => {
-              // options は Supabase 側の CookieOptions 互換
               res.cookies.set({ name, value, ...(options ?? {}) });
             });
           },
         },
       });
 
-      // ✅ これが refresh を走らせ、必要なら res に Set-Cookie を載せる
+      // refresh を走らせ、必要なら res に Set-Cookie を載せる
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -66,10 +70,14 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
     }
   }
 
-  const authed = clerkAuthed || !!supabaseUser;
+  // ✅ Supabase の cookie があるのに getUser が失敗した場合でも、
+  // ルーティング上は「ログイン済み扱い」にして余計な not-found/redirect を避ける（最小の保険）
+  const hasSupabaseCookie = Boolean(req.cookies.get('tsc-auth')?.value);
+
+  const authed = clerkAuthed || !!supabaseUser || hasSupabaseCookie;
 
   // ─────────────────────────────────────────────
-  // ルーティング規約（既存の挙動維持）
+  // ルーティング規約（既存の挙動維持 + 404潰し）
   // ─────────────────────────────────────────────
 
   // /admin → /admin/dashboard に正規化
@@ -77,11 +85,22 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
     return carryCookies(res, NextResponse.redirect(new URL('/admin/dashboard', req.url)));
   }
 
-  // /admin/league/<...> を公開 URL /league/<...> にリダイレクト
+  // /admin/league/<...> を公開 URL /league/<...> にリダイレクト（既存維持）
   if (pathname === '/admin/league' || pathname === '/admin/league/') {
     return carryCookies(res, NextResponse.redirect(new URL('/league', req.url)));
   }
   if (pathname.startsWith('/admin/league/')) {
+    const publicPath = pathname.replace(/^\/admin/, '');
+    const url = new URL(publicPath + req.nextUrl.search, req.url);
+    return carryCookies(res, NextResponse.redirect(url));
+  }
+
+  // ✅ 追加：/admin/matches/register/* を /matches/register/* に寄せて 404 を消す
+  // （ログに出ていた /admin/matches/register/singles 404 対策）
+  if (pathname === '/admin/matches/register' || pathname === '/admin/matches/register/') {
+    return carryCookies(res, NextResponse.redirect(new URL('/matches/register/singles', req.url)));
+  }
+  if (pathname.startsWith('/admin/matches/register/')) {
     const publicPath = pathname.replace(/^\/admin/, '');
     const url = new URL(publicPath + req.nextUrl.search, req.url);
     return carryCookies(res, NextResponse.redirect(url));
@@ -116,7 +135,8 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
   return res;
 });
 
-// ✅ 重要：_next/static / _next/image / 拡張子付きファイルは絶対に除外（ここが崩れると今の症状になります）
+// ✅ 重要：_next/static / _next/image / 拡張子付きファイルは除外
+// ✅ さらに重要：api / trpc も matcher から除外（ここが今回の 핵）
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)'],
+  matcher: ['/((?!api|trpc|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)'],
 };
