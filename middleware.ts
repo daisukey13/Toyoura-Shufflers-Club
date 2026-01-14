@@ -137,6 +137,8 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
 
 // ✅ 重要：_next/static / _next/image / 拡張子付きファイルは除外
 // ✅ さらに重要：api / trpc も matcher から除外（ここが今回の 핵）
+
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)'],
+  matcher: ['/((?!api(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)'],
 };
+
