@@ -96,7 +96,6 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
   }
 
   // ✅ 追加：/admin/matches/register/* を /matches/register/* に寄せて 404 を消す
-  // （ログに出ていた /admin/matches/register/singles 404 対策）
   if (pathname === '/admin/matches/register' || pathname === '/admin/matches/register/') {
     return carryCookies(res, NextResponse.redirect(new URL('/matches/register/singles', req.url)));
   }
@@ -137,8 +136,6 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
 
 // ✅ 重要：_next/static / _next/image / 拡張子付きファイルは除外
 // ✅ さらに重要：api / trpc も matcher から除外（ここが今回の 핵）
-
 export const config = {
-  matcher: ['/((?!api(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)'],
+  matcher: ['/((?!api(?:/|$)|trpc(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)'],
 };
-
