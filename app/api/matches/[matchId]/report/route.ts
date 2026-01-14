@@ -10,10 +10,6 @@ export const dynamic = 'force-dynamic';
 type AnyBody = Record<string, any>;
 type EndReason = 'normal' | 'time_limit' | 'walkover' | 'forfeit';
 
-// ✅ Next.js 15: params は Promise になり得るので await する
-type Params = Promise<{ matchId: string }>;
-type Ctx = { params: Params };
-
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 const toInt = (v: unknown, fallback = 0) => {
   const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
@@ -31,7 +27,7 @@ const toBool = (v: unknown): boolean | null => {
 
 function normalizeEndReason(v: unknown): EndReason {
   const s = String(v ?? '').trim().toLowerCase();
-  if (s === 'time_limit' || s === 'walkover' || s === 'forfeit') return s as EndReason;
+  if (s === 'time_limit' || s === 'walkover' || s === 'forfeit') return s;
   return 'normal';
 }
 
@@ -76,6 +72,21 @@ async function isAdminPlayer(playerId: string): Promise<boolean> {
 
 function uniq(xs: (string | null | undefined)[]) {
   return Array.from(new Set(xs.filter(Boolean))) as string[];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Next.js 15: params は await が必要（ここが本番404の原因）
+// ─────────────────────────────────────────────────────────────
+type Ctx = { params: Promise<{ matchId: string }> } | { params: { matchId: string } };
+
+async function readMatchId(ctx: Ctx): Promise<string> {
+  try {
+    // object でも promise でも await で安全に扱える
+    const p: any = await (ctx as any).params;
+    return String(p?.matchId ?? '').trim();
+  } catch {
+    return '';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -174,26 +185,25 @@ async function getParticipants(matchRow: any, matchId: string) {
   return { ok: true as const, aId: ids[0], bId: ids[1] };
 }
 
-export async function GET(_req: NextRequest, { params }: Ctx) {
-  const { matchId } = await params;
+export async function GET(_req: NextRequest, ctx: Ctx) {
+  const matchId = await readMatchId(ctx);
   return NextResponse.json({
     ok: true,
     route: '/api/matches/[matchId]/report',
-    matchId: String(matchId ?? ''),
+    matchId,
   });
 }
 
-export async function POST(req: NextRequest, { params }: Ctx) {
+export async function POST(req: NextRequest, ctx: Ctx) {
   try {
-    const { matchId: rawMatchId } = await params;
-    const matchId = String(rawMatchId ?? '').trim();
-    if (!matchId) return NextResponse.json({ ok: false, message: 'matchId が不正です。' }, { status: 400 });
-
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!url || !anon) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
+
+    const matchId = await readMatchId(ctx);
+    if (!matchId) return NextResponse.json({ ok: false, message: 'matchId が不正です。' }, { status: 400 });
 
     const cookieStore = await cookies();
 
@@ -220,6 +230,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     }
     const reporter_id = userData.user.id;
 
+    // 管理画面想定：管理者のみ
     const admin = await isAdminPlayer(reporter_id);
     if (!admin) {
       return NextResponse.json({ ok: false, message: '管理者のみ実行できます。' }, { status: 403 });
@@ -244,12 +255,14 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       return shouldAffectRating(end_reason);
     })();
 
+    // ── 試合を取得（列が無くても落ちない） ──
     const sel = await safeSelectMatch(matchId);
     if (!sel.ok) return NextResponse.json({ ok: false, message: `試合取得に失敗しました: ${sel.message}` }, { status: 500 });
 
     const m0 = sel.data;
     if (!m0) return NextResponse.json({ ok: false, message: '試合が見つかりません。' }, { status: 404 });
 
+    // ── 対戦者特定（a/b が無ければ match_entries） ──
     const part = await getParticipants(m0, matchId);
     if (!part.ok) return NextResponse.json({ ok: false, message: part.message }, { status: 400 });
 
@@ -264,6 +277,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     const oldWinnerId = (m0 as any).winner_id as string | null;
     const oldLoserId = (m0 as any).loser_id as string | null;
 
+    // ── プレイヤー取得 ──
     const ids = uniq([winner_id, loser_id, oldWinnerId, oldLoserId]);
     const { data: pRows, error: pErr } = await supabaseAdmin
       .from('players')
@@ -275,6 +289,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     const pMap = new Map<string, any>();
     (pRows ?? []).forEach((p: any) => pMap.set(p.id, p));
 
+    // ─────────────────────────────────────────────
+    // 二重計算防止：前回分を巻き戻す（存在する場合）
+    // ─────────────────────────────────────────────
     const hasOld = !!oldWinnerId && !!oldLoserId;
     if (hasOld) {
       const oldAffects = Boolean((m0 as any).affects_rating);
@@ -320,6 +337,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       (pRows2 ?? []).forEach((p: any) => pMap.set(p.id, p));
     }
 
+    // ─────────────────────────────────────────────
+    // 今回分を計算
+    // ─────────────────────────────────────────────
     const w = pMap.get(winner_id);
     const l = pMap.get(loser_id);
     if (!w || !l) return NextResponse.json({ ok: false, message: 'プレイヤーが見つかりません。' }, { status: 400 });
