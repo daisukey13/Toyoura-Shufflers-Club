@@ -372,9 +372,7 @@ export default function PlayerProfilePage() {
           return;
         }
 
-        const { data: teamRows, error: tErr } = await (supabase.from('teams') as any)
-          .select('id, name, avatar_url')
-          .in('id', ids);
+        const { data: teamRows, error: tErr } = await (supabase.from('teams') as any).select('id, name, avatar_url').in('id', ids);
         if (tErr) throw tErr;
 
         const teamsRaw = (teamRows ?? []) as Team[];
@@ -832,6 +830,15 @@ export default function PlayerProfilePage() {
                     const delta = pointsChangeOf(m, isWin);
                     const hcDelta = handicapChangeOf(m, isWin);
 
+                    // ✅ 最小追加：大会判定＆表示（UI構成は維持）
+                    const isTournament = m?.is_tournament === true;
+                    const tName = (m?.tournament_name ?? '').toString().trim();
+                    const isFinal =
+                      m?.is_final === true ||
+                      m?.is_finals === true ||
+                      m?.result_type === 'final' ||
+                      m?.kind === 'final';
+
                     return (
                       <div
                         key={m.id}
@@ -851,17 +858,33 @@ export default function PlayerProfilePage() {
                                   })
                                 : '—'}
                             </div>
+
+                            {isTournament && (
+                              <div className="mt-1 flex items-center gap-2 text-xs text-yellow-200/90">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-500/15 border border-yellow-500/25">
+                                  🏆 大会
+                                </span>
+                                {tName && <span className="font-semibold text-yellow-100 truncate">{tName}</span>}
+                                {isFinal && (
+                                  <span className="px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/25 text-purple-200">
+                                    Finals
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
                             <div className="font-semibold text-yellow-100 truncate">
                               {isWin ? '勝利' : '敗北'}：{oppName}
                             </div>
                           </div>
 
+                          {/* ✅ ここだけが今回の修正ポイント（括弧事故防止） */}
                           <div className="text-right">
                             <div className="text-lg sm:text-xl font-extrabold text-white">
                               15 - {m.loser_score ?? 0}
                             </div>
 
-                            {showDelta && (
+                            {showDelta ? (
                               <>
                                 <div className={`text-xs sm:text-sm ${isWin ? 'text-green-300' : 'text-red-300'}`}>
                                   {delta > 0 ? '+' : ''}
@@ -873,6 +896,8 @@ export default function PlayerProfilePage() {
                                   {hcDelta}
                                 </div>
                               </>
+                            ) : (
+                              <div className="text-xs text-gray-400 mt-1">※ ランキング反映なし</div>
                             )}
                           </div>
                         </div>

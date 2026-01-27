@@ -751,6 +751,300 @@ function normalizeMyDeltas(m: any, playerId: string) {
   };
 }
 
+// ✅ 400になったら select を切り替えて再試行（final_matches の列差吸収用）
+async function fetchJsonWithSelectFallback(
+  baseUrlWithoutSelect: string,
+  headers: Record<string, string>,
+  selectCandidates: string[],
+): Promise<any[]> {
+  let lastErr: any = null;
+
+  for (const sel of selectCandidates) {
+    const url = `${baseUrlWithoutSelect}&select=${encodeURIComponent(sel)}`;
+    const res = await fetch(url, { headers, cache: 'no-store' });
+
+    if (res.ok) {
+      const json = (await res.json()) as any[];
+      return Array.isArray(json) ? json : [];
+    }
+
+    const text = await res.text().catch(() => '');
+    lastErr = new Error(`HTTP ${res.status}: ${text}`);
+
+    // ✅ 列がない等の 400 は次の select を試す
+    if (res.status === 400) continue;
+
+    // 401/403/404 は打ち切り
+    if ([401, 403, 404].includes(res.status)) break;
+
+    throw lastErr;
+  }
+
+  console.warn('[fetchJsonWithSelectFallback] failed:', lastErr);
+  return [];
+}
+
+function pickStr(v: any): string | null {
+  return typeof v === 'string' && v.trim() ? v : null;
+}
+function pickBool(v: any): boolean | null {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+  }
+  return null;
+}
+
+async function fetchTournamentMatchesFromMatchesTable(playerId: string, token: string) {
+  const headers = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+
+  // ✅ winner/loser が入っている finalized を拾う
+  // ※ match_date が null の行もあるので nullslast で安全に
+  const base =
+    `${SUPABASE_URL}/rest/v1/matches?` +
+    `or=(${encodeURIComponent(`winner_id.eq.${playerId},loser_id.eq.${playerId}`)})` +
+    `&status=eq.finalized` +
+    `&order=match_date.desc.nullslast` +
+    `&limit=200`;
+
+  // ✅ delta 列がある環境/ない環境の両方で動くよう select をフォールバック
+  const selects = [
+    [
+      'id',
+      'match_date',
+      'created_at',
+      'mode',
+      'status',
+      'winner_id',
+      'loser_id',
+      'winner_score',
+      'loser_score',
+      'tournament_id',
+      'is_tournament',
+      'venue',
+      'notes',
+      'finish_reason',
+      'end_reason',
+      'affects_rating',
+      'winner_points_delta',
+      'loser_points_delta',
+      'winner_handicap_delta',
+      'loser_handicap_delta',
+      'winner_points_change',
+      'loser_points_change',
+      'winner_handicap_change',
+      'loser_handicap_change',
+    ].join(','),
+    [
+      'id',
+      'match_date',
+      'created_at',
+      'mode',
+      'status',
+      'winner_id',
+      'loser_id',
+      'winner_score',
+      'loser_score',
+      'tournament_id',
+      'is_tournament',
+      'venue',
+      'notes',
+      'finish_reason',
+      'end_reason',
+      'affects_rating',
+    ].join(','),
+  ];
+
+  const rows = await fetchJsonWithSelectFallback(base, headers, selects);
+
+  // ✅ tournament 名補完（最低限）
+  const tIds = Array.from(
+    new Set((rows ?? []).map((r) => String(r?.tournament_id ?? '')).filter((s) => s.length > 0)),
+  );
+  const tMap = new Map<string, any>();
+  if (tIds.length > 0) {
+    const inT = tIds.map((id) => `"${id}"`).join(',');
+    const tUrl = `${SUPABASE_URL}/rest/v1/tournaments?id=in.(${encodeURIComponent(inT)})&select=id,name`;
+    const tRes = await fetch(tUrl, { headers, cache: 'no-store' });
+    const tJson = tRes.ok ? ((await tRes.json()) as any[]) : [];
+    for (const t of tJson ?? []) tMap.set(String(t?.id ?? ''), t);
+  }
+
+  // ✅ players 名/アバター補完（最低限）
+  const pIds = Array.from(
+    new Set(
+      (rows ?? [])
+        .flatMap((r) => [r?.winner_id, r?.loser_id])
+        .map((x) => String(x ?? ''))
+        .filter((s) => s.length > 0),
+    ),
+  );
+  const pMap = new Map<string, any>();
+  if (pIds.length > 0) {
+    const inP = pIds.map((id) => `"${id}"`).join(',');
+    const pUrl = `${SUPABASE_URL}/rest/v1/players?id=in.(${encodeURIComponent(inP)})&select=id,handle_name,avatar_url`;
+    const pRes = await fetch(pUrl, { headers, cache: 'no-store' });
+    const pJson = pRes.ok ? ((await pRes.json()) as any[]) : [];
+    for (const p of pJson ?? []) pMap.set(String(p?.id ?? ''), p);
+  }
+
+  // ✅ match_details 風に整形（UIを壊さない）
+  return (rows ?? []).map((r: any) => {
+    const wid = pickStr(r?.winner_id);
+    const lid = pickStr(r?.loser_id);
+
+    const wp = wid ? pMap.get(wid) : null;
+    const lp = lid ? pMap.get(lid) : null;
+
+    const t = r?.tournament_id ? tMap.get(String(r.tournament_id)) : null;
+
+    return normalizeMatchRow({
+      id: String(r?.id ?? ''),
+      match_date: pickStr(r?.match_date) ?? pickStr(r?.created_at) ?? new Date().toISOString(),
+      mode: pickStr(r?.mode) ?? null,
+      status: pickStr(r?.status) ?? null,
+
+      winner_id: wid,
+      loser_id: lid,
+      winner_name: pickStr(wp?.handle_name) ?? null,
+      loser_name: pickStr(lp?.handle_name) ?? null,
+      winner_avatar_url: pickStr(wp?.avatar_url) ?? null,
+      loser_avatar_url: pickStr(lp?.avatar_url) ?? null,
+
+      winner_score: toNumber(r?.winner_score),
+      loser_score: toNumber(r?.loser_score),
+
+      // delta / change は normalizeMatchRow と normalizeMyDeltas が拾うのでそのまま渡す
+      winner_points_delta: toNumber(r?.winner_points_delta),
+      loser_points_delta: toNumber(r?.loser_points_delta),
+      winner_handicap_delta: toNumber(r?.winner_handicap_delta),
+      loser_handicap_delta: toNumber(r?.loser_handicap_delta),
+      winner_points_change: toNumber(r?.winner_points_change),
+      loser_points_change: toNumber(r?.loser_points_change),
+      winner_handicap_change: toNumber(r?.winner_handicap_change),
+      loser_handicap_change: toNumber(r?.loser_handicap_change),
+
+      finish_reason: pickStr(r?.finish_reason) ?? pickStr(r?.end_reason) ?? null,
+      affects_rating: pickBool(r?.affects_rating),
+
+      is_tournament: typeof r?.is_tournament === 'boolean' ? r.is_tournament : !!r?.tournament_id,
+      tournament_name: pickStr(t?.name) ?? null,
+      venue: pickStr(r?.venue) ?? null,
+      notes: pickStr(r?.notes) ?? null,
+    });
+  });
+}
+
+
+
+async function fetchFinalMatchesForPlayer(playerId: string, token: string) {
+  const headers = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+
+  const base =
+    `${SUPABASE_URL}/rest/v1/final_matches?` +
+    `or=(${encodeURIComponent(`winner_id.eq.${playerId},loser_id.eq.${playerId}`)})` +
+    `&order=created_at.desc` +
+    `&limit=200`;
+
+  // ✅ あなたの環境で delta 列が無いと 400 になるのでフォールバック
+  const selects = [
+    [
+      'id',
+      'created_at',
+      'winner_id',
+      'loser_id',
+      'winner_score',
+      'loser_score',
+      'finish_reason',
+      'end_reason',
+      'affects_rating',
+      'winner_points_delta',
+      'loser_points_delta',
+      'winner_handicap_delta',
+      'loser_handicap_delta',
+    ].join(','),
+    [
+      'id',
+      'created_at',
+      'winner_id',
+      'loser_id',
+      'winner_score',
+      'loser_score',
+      'finish_reason',
+      'end_reason',
+      'affects_rating',
+    ].join(','),
+    ['id', 'created_at', 'winner_id', 'loser_id', 'winner_score', 'loser_score'].join(','),
+  ];
+
+  const rows = await fetchJsonWithSelectFallback(base, headers, selects);
+
+  // ✅ players 名/アバター補完
+  const pIds = Array.from(
+    new Set(
+      (rows ?? [])
+        .flatMap((r) => [r?.winner_id, r?.loser_id])
+        .map((x) => String(x ?? ''))
+        .filter((s) => s.length > 0),
+    ),
+  );
+  const pMap = new Map<string, any>();
+  if (pIds.length > 0) {
+    const inP = pIds.map((id) => `"${id}"`).join(',');
+    const pUrl = `${SUPABASE_URL}/rest/v1/players?id=in.(${encodeURIComponent(inP)})&select=id,handle_name,avatar_url`;
+    const pRes = await fetch(pUrl, { headers, cache: 'no-store' });
+    const pJson = pRes.ok ? ((await pRes.json()) as any[]) : [];
+    for (const p of pJson ?? []) pMap.set(String(p?.id ?? ''), p);
+  }
+
+  return (rows ?? []).map((r: any) => {
+    const wid = pickStr(r?.winner_id);
+    const lid = pickStr(r?.loser_id);
+
+    const wp = wid ? pMap.get(wid) : null;
+    const lp = lid ? pMap.get(lid) : null;
+
+    return normalizeMatchRow({
+      id: String(r?.id ?? ''),
+      match_date: pickStr(r?.created_at) ?? new Date().toISOString(),
+      mode: 'singles',
+      status: 'finalized',
+
+      winner_id: wid,
+      loser_id: lid,
+      winner_name: pickStr(wp?.handle_name) ?? null,
+      loser_name: pickStr(lp?.handle_name) ?? null,
+      winner_avatar_url: pickStr(wp?.avatar_url) ?? null,
+      loser_avatar_url: pickStr(lp?.avatar_url) ?? null,
+
+      winner_score: toNumber(r?.winner_score),
+      loser_score: toNumber(r?.loser_score),
+
+      winner_points_delta: toNumber(r?.winner_points_delta),
+      loser_points_delta: toNumber(r?.loser_points_delta),
+      winner_handicap_delta: toNumber(r?.winner_handicap_delta),
+      loser_handicap_delta: toNumber(r?.loser_handicap_delta),
+
+      finish_reason: pickStr(r?.finish_reason) ?? pickStr(r?.end_reason) ?? null,
+      affects_rating: pickBool(r?.affects_rating),
+
+      is_tournament: true,
+      tournament_name: 'Finals',
+    });
+  });
+}
+
+
 async function fetchMatchDetailsForPlayer(playerId: string, token: string, requireAuth: boolean) {
   const tables = resolveTableCandidates('match_details', requireAuth);
 
@@ -858,18 +1152,58 @@ export function useFetchPlayerDetail(playerId: string, opts?: { enabled?: boolea
         if (!playerData?.[0]) throw new Error('Player not found');
         if (cancelled) return;
 
-        // 試合履歴（match_details_public/mv に自動フォールバック + order フォールバック）
-        const matchesData = await fetchMatchDetailsForPlayer(playerId, token, requireAuth);
-        if (cancelled) return;
+       /// 試合履歴（match_details_public/mv に自動フォールバック + order フォールバック）
+const matchesData = await fetchMatchDetailsForPlayer(playerId, token, requireAuth);
+if (cancelled) return;
 
-        setPlayer(playerData[0]);
+// ✅ 追加：大会（matchesテーブルから拾う）と finals も混ぜる
+let tournamentFromMatches: any[] = [];
+let finalsFromFinalMatches: any[] = [];
 
-        const enriched = (matchesData || []).map((m: any) => ({
-          ...m,
-          ...normalizeMyDeltas(m, playerId),
-        }));
+try {
+  [tournamentFromMatches, finalsFromFinalMatches] = await Promise.all([
+    fetchTournamentMatchesFromMatchesTable(playerId, token),
+    fetchFinalMatchesForPlayer(playerId, token),
+  ]);
+} catch {
+  // 取れなくてもプロフィールは表示したいので黙って続行
+}
 
-        setMatches(enriched);
+if (cancelled) return;
+
+setPlayer(playerData[0]);
+
+// ✅ 結合（idで重複排除：match_details側を優先）
+const byId = new Map<string, any>();
+
+for (const m of (matchesData ?? [])) {
+  const id = String(m?.id ?? '');
+  if (id) byId.set(id, m);
+}
+for (const m of (tournamentFromMatches ?? [])) {
+  const id = String(m?.id ?? '');
+  if (id && !byId.has(id)) byId.set(id, m);
+}
+for (const m of (finalsFromFinalMatches ?? [])) {
+  const id = String(m?.id ?? '');
+  if (id && !byId.has(id)) byId.set(id, m);
+}
+
+const combined = Array.from(byId.values()).sort((a: any, b: any) => {
+  const at = new Date(String(a?.match_date ?? '')).getTime();
+  const bt = new Date(String(b?.match_date ?? '')).getTime();
+  return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
+});
+
+// ✅ 最後に「自分視点のdelta」を付与（既存UI維持）
+const enriched = combined.slice(0, 50).map((m: any) => ({
+  ...m,
+  ...normalizeMyDeltas(m, playerId),
+}));
+
+setMatches(enriched);
+
+
       } catch (e: any) {
         if (!cancelled) setError(e?.message || '読み込みに失敗しました');
       } finally {

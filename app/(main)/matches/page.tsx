@@ -553,20 +553,22 @@ export default function MatchesPage() {
       const typeHit =
         filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
 
-      // ✅ 日付フィルタも安全化（match_dateが壊れていても落ちない）
-      const ms = getMatchTimeMs(m);
-      let dateHit = true;
-      if (dateFilter !== 'all') {
-        if (!ms) {
-          dateHit = false;
-        } else if (dateFilter === 'today') {
-          dateHit = isSameDay(new Date(ms), now);
-        } else if (dateFilter === 'week') {
-          dateHit = ms >= nowMs - 7 * 24 * 60 * 60 * 1000;
-        } else if (dateFilter === 'month') {
-          dateHit = ms >= nowMs - 30 * 24 * 60 * 60 * 1000;
-        }
-      }
+     // ✅ 日付フィルタも安全化（match_dateが壊れていても落ちない）
+const ms = getMatchTimeMs(m);
+let dateHit = true;
+
+if (dateFilter !== 'all') {
+  if (!ms) {
+    dateHit = false;
+  } else if (dateFilter === 'today') {
+    dateHit = isSameDay(new Date(ms), now);
+  } else if (dateFilter === 'week') {
+    dateHit = ms >= nowMs - 7 * 24 * 60 * 60 * 1000;
+  } else if (dateFilter === 'month') {
+    dateHit = ms >= nowMs - 30 * 24 * 60 * 60 * 1000;
+  }
+}
+
 
       return searchHit && typeHit && dateHit;
     });

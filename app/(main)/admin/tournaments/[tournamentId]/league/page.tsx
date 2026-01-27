@@ -52,34 +52,59 @@ const isModeCheckError = (err: any) => {
 
 // ===== Helper: def ダミーを 1 回だけ取得してキャッシュ =====
 type DefDummy = { id: string; handle_name: string };
-
 let _defCache: DefDummy | null = null;
 
 async function getDefDummy(): Promise<DefDummy> {
   if (_defCache) return _defCache;
 
-  // ✅ eq は select の後ろにチェーンする（from() 直後に eq はできない）
-  const { data, error } = await db
-    .from('players')
-    .select('id, handle_name')
-    .eq('is_active', true)
-    .eq('handle_name', 'def')
-    .eq('is_dummy', true)
-    .maybeSingle();
+  // まずは「最も厳密な条件」で探す → 列が無ければ条件を落として再試行
+  const tries: (() => Promise<{ data: any; error: any }>)[] = [
+    () =>
+      db
+        .from('players')
+        .select('id, handle_name')
+        .eq('is_active', true)
+        .eq('handle_name', 'def')
+        .eq('is_dummy', true)
+        .limit(1)
+        .maybeSingle(),
+    () =>
+      db
+        .from('players')
+        .select('id, handle_name')
+        .eq('handle_name', 'def')
+        .eq('is_dummy', true)
+        .limit(1)
+        .maybeSingle(),
+    () =>
+      db
+        .from('players')
+        .select('id, handle_name')
+        .eq('handle_name', 'def')
+        .limit(1)
+        .maybeSingle(),
+  ];
 
-  // Supabase の型推論崩れ対策（never/null回避）
-  const row = (data ?? null) as { id?: string | null; handle_name?: string | null } | null;
+  let lastErr: any = null;
+  for (const fn of tries) {
+    const { data, error } = await fn();
+    const row = (data ?? null) as { id?: string | null; handle_name?: string | null } | null;
 
-  if (error || !row?.id) {
-    throw new Error(
-      "ダミープレイヤー(def)が見つかりません。players に handle_name='def', is_dummy=true を用意してください。"
-    );
+    if (!error && row?.id) {
+      _defCache = { id: String(row.id), handle_name: String(row.handle_name ?? 'def') };
+      return _defCache;
+    }
+
+    lastErr = error;
+
+    // 列なし系なら次の緩い条件へ
+    if (error && isMissingColumnError(error)) continue;
+    // それ以外のエラーはそのまま打ち切り
+    break;
   }
 
-  _defCache = { id: String(row.id), handle_name: String(row.handle_name ?? 'def') };
-  return _defCache;
+  throw new Error("ダミープレイヤー(def)が見つかりません。players に handle_name='def'（可能なら is_dummy=true）を用意してください。");
 }
-
 
 // ===== Helper: safe insert for matches (schema差分・制約差分に強くする) =====
 async function insertMatchesWithFallback(rows: AnyObj[]) {
@@ -223,10 +248,50 @@ async function finalizeDefMatches(blockId: string, tournamentId: string, defId: 
   }
 }
 
+// ===== Helper: リーグに使うプレーヤー一覧を「列差分に強く」取得 =====
+async function fetchLeaguePlayers(): Promise<PlayerOption[]> {
+  // 1) active_players を優先（存在しない/列差分なら players にフォールバック）
+  const r1 = await db
+    .from('active_players')
+    .select('id, handle_name, ranking_points')
+    .order('ranking_points', { ascending: false });
+
+  if (!r1.error) {
+    return ((r1.data ?? []) as any[]).map((p) => ({
+      id: String(p.id),
+      handle_name: p.handle_name ?? null,
+    }));
+  }
+
+  // active_players の列差分で落ちることがあるので、ここで players に落とす
+  if (!isMissingColumnError(r1.error)) {
+    // それ以外のエラーはそのまま投げる
+    throw r1.error;
+  }
+
+  const r2 = await db
+    .from('players')
+    .select('id, handle_name, ranking_points, is_admin, is_active, is_deleted')
+    .eq('is_admin', false)
+    .order('ranking_points', { ascending: false });
+
+  if (r2.error) throw r2.error;
+
+  // is_active が無い/NULL の場合もあるので「false 以外は active 扱い」
+  const isActive = (p: any) => p?.is_active !== false && p?.is_deleted !== true;
+
+  return ((r2.data ?? []) as any[])
+    .filter(isActive)
+    .map((p) => ({ id: String(p.id), handle_name: p.handle_name ?? null }));
+}
+
 // ===== Page Component =====
 export default function AdminTournamentLeaguePage() {
   const params = useParams();
-  const tournamentId = typeof params?.tournamentId === 'string' ? (params.tournamentId as string) : '';
+
+  // ✅ tournamentId が string[] になる環境にも対応（空になると /admin/tournaments/league の誤遷移が起きやすい）
+  const rawTid: any = (params as any)?.tournamentId;
+  const tournamentId = typeof rawTid === 'string' ? rawTid : Array.isArray(rawTid) ? String(rawTid[0] ?? '') : '';
 
   const [tournament, setTournament] = useState<TournamentInfo | null>(null);
   const [blocks, setBlocks] = useState<LeagueBlockRow[]>([]);
@@ -235,6 +300,9 @@ export default function AdminTournamentLeaguePage() {
 
   const [loading, setLoading] = useState(true);
   const [busyBlock, setBusyBlock] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [resetting, setResetting] = useState(false); // ✅追加：全削除処理中
+
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -243,7 +311,6 @@ export default function AdminTournamentLeaguePage() {
   const [p1, setP1] = useState('');
   const [p2, setP2] = useState('');
   const [p3, setP3] = useState('');
-  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     if (!tournamentId) return;
@@ -256,86 +323,126 @@ export default function AdminTournamentLeaguePage() {
     setError(null);
     setMessage(null);
 
-    // 1) 大会情報
-    const { data: t, error: tErr } = await db.from('tournaments').select('id, name').eq('id', tournamentId).maybeSingle();
-
-    if (tErr || !t) {
-      console.error(tErr);
-      setError('大会情報の取得に失敗しました');
-      setLoading(false);
-      return;
-    }
-    setTournament(t as TournamentInfo);
-
-    // 2) ブロック一覧
-    const { data: blocksData, error: blocksErr } = await db
-      .from('league_blocks')
-      .select('id, label, status, winner_player_id, ranking_json')
-      .eq('tournament_id', tournamentId)
-      .order('label', { ascending: true });
-
-    if (blocksErr) {
-      console.error(blocksErr);
-      setError('リーグブロック一覧の取得に失敗しました');
-      setLoading(false);
-      return;
-    }
-
-    const list: LeagueBlockRow[] = (blocksData ?? []) as LeagueBlockRow[];
-    setBlocks(list);
-
-    // 優勝者プレーヤー情報
-    const winnerIds = list.map((b) => b.winner_player_id).filter((id): id is string => !!id);
-
-    if (winnerIds.length > 0) {
-      const { data: playersData, error: playersErr } = await db.from('players').select('id, handle_name').in('id', winnerIds);
-
-      if (playersErr) {
-        console.error(playersErr);
-        setWinners(new Map());
-      } else {
-        const map = new Map<string, WinnerInfo>();
-        (playersData ?? []).forEach((p: any) => {
-          map.set(String(p.id), { id: String(p.id), handle_name: p.handle_name ?? null });
-        });
-        setWinners(map);
-      }
-    } else {
-      setWinners(new Map());
-    }
-
-    // 3) リーグに使えるプレーヤー一覧（active_players）
-    const { data: active, error: activeErr } = await db
-      .from('active_players')
-      .select('id, handle_name')
-      .eq('is_active', true)
-      .order('ranking_points', { ascending: false });
-
-    if (activeErr) {
-      console.error(activeErr);
-      setError('プレーヤー一覧の取得に失敗しました');
-      setLoading(false);
-      return;
-    }
-
-    // def(dummy) を候補に入れる（active_players にいなくても追加）
-    let def: { id: string; handle_name: string } | null = null;
     try {
-      def = await getDefDummy();
+      // 1) 大会情報
+      const { data: t, error: tErr } = await db.from('tournaments').select('id, name').eq('id', tournamentId).maybeSingle();
+
+      if (tErr || !t) {
+        console.error(tErr);
+        setError('大会情報の取得に失敗しました');
+        setLoading(false);
+        return;
+      }
+      setTournament(t as TournamentInfo);
+
+      // 2) ブロック一覧
+      const { data: blocksData, error: blocksErr } = await db
+        .from('league_blocks')
+        .select('id, label, status, winner_player_id, ranking_json')
+        .eq('tournament_id', tournamentId)
+        .order('label', { ascending: true });
+
+      if (blocksErr) {
+        console.error(blocksErr);
+        setError('リーグブロック一覧の取得に失敗しました');
+        setLoading(false);
+        return;
+      }
+
+      const list: LeagueBlockRow[] = (blocksData ?? []) as LeagueBlockRow[];
+      setBlocks(list);
+
+      // 優勝者プレーヤー情報
+      const winnerIds = list.map((b) => b.winner_player_id).filter((id): id is string => !!id);
+
+      if (winnerIds.length > 0) {
+        const { data: playersData, error: playersErr } = await db.from('players').select('id, handle_name').in('id', winnerIds);
+
+        if (playersErr) {
+          console.error(playersErr);
+          setWinners(new Map());
+        } else {
+          const map = new Map<string, WinnerInfo>();
+          (playersData ?? []).forEach((p: any) => {
+            map.set(String(p.id), { id: String(p.id), handle_name: p.handle_name ?? null });
+          });
+          setWinners(map);
+        }
+      } else {
+        setWinners(new Map());
+      }
+
+      // 3) リーグに使えるプレーヤー一覧（active_players → players フォールバック）
+      let base: PlayerOption[] = [];
+      try {
+        base = await fetchLeaguePlayers();
+      } catch (e) {
+        console.error(e);
+        setError('プレーヤー一覧の取得に失敗しました');
+        setLoading(false);
+        return;
+      }
+
+      // def(dummy) を候補に入れる（active_players にいなくても追加）
+      let def: { id: string; handle_name: string } | null = null;
+      try {
+        def = await getDefDummy();
+      } catch (e) {
+        console.warn('[admin/league] def dummy missing:', e);
+        def = null;
+      }
+
+      const appendDef: PlayerOption[] = def && !base.some((p) => String(p.id) === def!.id) ? [{ id: def.id, handle_name: def.handle_name }] : [];
+
+      // 50音順ソート
+      const sorted = [...base, ...appendDef].slice().sort((a, b) => (a.handle_name ?? '').localeCompare(b.handle_name ?? '', 'ja'));
+
+      setPlayers(sorted);
+      setLoading(false);
     } catch (e) {
-      console.warn('[admin/league] def dummy missing:', e);
-      def = null;
+      console.error('[admin/league] loadAll fatal:', e);
+      setError('読み込み中にエラーが発生しました');
+      setLoading(false);
     }
+  };
 
-    const base = (active ?? []) as PlayerOption[];
-    const appendDef: PlayerOption[] =
-      def && !base.some((p) => String(p.id) === def!.id) ? [{ id: def.id, handle_name: def.handle_name }] : [];
+  // ✅追加：この大会のリーグを全削除（ブロック/メンバー/試合）
+  const handleResetLeague = async () => {
+    if (!tournamentId) return;
 
-    // 50音順ソート
-    const sorted = [...base, ...appendDef].slice().sort((a, b) => (a.handle_name ?? '').localeCompare(b.handle_name ?? '', 'ja'));
+    setError(null);
+    setMessage(null);
 
-    setPlayers(sorted);
-    setLoading(false);
+    const ok = window.confirm(
+      'この大会のリーグ（ブロック・メンバー・試合）を全て削除します。\n同じ大会IDで作り直せますが、元に戻せません。\n実行しますか？',
+    );
+    if (!ok) return;
+
+    setResetting(true);
+    try {
+      const res = await fetch(`/api/admin/tournaments/${tournamentId}/league/reset`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+
+      const json = (await res.json().catch(() => null)) as any;
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.message || `削除に失敗しました（HTTP ${res.status}）`);
+        setResetting(false);
+        return;
+      }
+
+      await loadAll();
+      setMessage('この大会のリーグ（ブロック/メンバー/試合）を全削除しました。必要なら同じ大会IDで作り直してください。');
+    } catch (e) {
+      console.error('[admin/league] reset fatal:', e);
+      setError('削除中にエラーが発生しました');
+    } finally {
+      setResetting(false);
+    }
   };
 
   // ブロック集計
@@ -496,11 +603,7 @@ export default function AdminTournamentLeaguePage() {
       setP2('');
       setP3('');
       await loadAll();
-      setMessage(
-        finalIds.includes(def.id)
-          ? '新しいリーグブロック（def補充）と3試合を作成しました'
-          : '新しいリーグブロックと3試合を作成しました'
-      );
+      setMessage(finalIds.includes(def.id) ? '新しいリーグブロック（def補充）と3試合を作成しました' : '新しいリーグブロックと3試合を作成しました');
     } finally {
       setCreating(false);
     }
@@ -513,6 +616,8 @@ export default function AdminTournamentLeaguePage() {
   if (loading) {
     return <div className="p-4">読み込み中...</div>;
   }
+
+  const disableAll = creating || resetting || !!busyBlock;
 
   return (
     <div className="p-4 space-y-6">
@@ -527,14 +632,28 @@ export default function AdminTournamentLeaguePage() {
           </h1>
           <div className="text-xs text-gray-400">tournament_id: {tournamentId}</div>
         </div>
-        <Link
-          href={`/tournaments/${tournamentId}/league`}
-          className="text-xs text-blue-400 underline"
-          target="_blank"
-          rel="noreferrer"
-        >
-          一般公開のリーグ一覧ページを開く
-        </Link>
+
+        <div className="flex items-center gap-3">
+          <Link
+            href={`/tournaments/${tournamentId}/league`}
+            className="text-xs text-blue-400 underline"
+            target="_blank"
+            rel="noreferrer"
+          >
+            一般公開のリーグ一覧ページを開く
+          </Link>
+
+          {/* ✅追加：全削除ボタン（UI構成を崩さず右上に追加） */}
+          <button
+            type="button"
+            onClick={handleResetLeague}
+            disabled={resetting}
+            className="rounded bg-red-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            title="この大会のリーグ（ブロック・メンバー・試合）を全て削除します"
+          >
+            {resetting ? '削除中…' : 'リーグを全削除'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="text-sm text-red-500">{error}</div>}
@@ -559,6 +678,7 @@ export default function AdminTournamentLeaguePage() {
                 value={blockLabel}
                 onChange={(e) => setBlockLabel(e.target.value)}
                 placeholder="A など"
+                disabled={disableAll}
               />
             </div>
 
@@ -576,6 +696,7 @@ export default function AdminTournamentLeaguePage() {
                       else if (idx === 1) setP2(v);
                       else setP3(v);
                     }}
+                    disabled={disableAll}
                   >
                     <option value="">未選択</option>
                     {players.map((pl) => (
@@ -591,7 +712,7 @@ export default function AdminTournamentLeaguePage() {
 
           <button
             type="submit"
-            disabled={creating}
+            disabled={disableAll}
             className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
             {creating ? '作成中…' : 'ブロックと3試合を作成する'}
@@ -630,7 +751,12 @@ export default function AdminTournamentLeaguePage() {
                       <td className="border px-2 py-1">{statusLabel}</td>
                       <td className="border px-2 py-1">{winner?.handle_name ?? '---'}</td>
                       <td className="border px-2 py-1">
-                        <Link href={`/league/${b.id}`} className="text-xs text-blue-400 underline" target="_blank" rel="noreferrer">
+                        <Link
+                          href={`/league/${b.id}`}
+                          className="text-xs text-blue-400 underline"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
                           公開ページを開く
                         </Link>
                       </td>
@@ -638,7 +764,7 @@ export default function AdminTournamentLeaguePage() {
                         <button
                           type="button"
                           onClick={() => handleFinalize(b.id)}
-                          disabled={!!busyBlock}
+                          disabled={disableAll}
                           className="px-3 py-1 text-xs rounded bg-purple-600 text-white disabled:opacity-50"
                         >
                           {busyBlock === b.id ? '集計中…' : '順位を集計する'}

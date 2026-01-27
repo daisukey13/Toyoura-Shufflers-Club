@@ -424,6 +424,7 @@ async function postFinalReport(payload: {
   end_reason?: string | null;
   finish_reason?: string | null;
   reason?: string | null;
+  affects_rating?: boolean | null;
   sets?: any;
 }) {
   const res = await fetch('/api/finals/report', {
@@ -526,6 +527,7 @@ async function upsertFinalMatchSafe(
     winner_score: number | null;
     loser_score: number | null;
     reason: string; // normal/time_limit/forfeit
+    affects_rating?: boolean | null;
     sets?: any;
   }
 ) {
@@ -560,9 +562,38 @@ async function upsertFinalMatchSafe(
     loser_id: row.loser_id,
     winner_score: row.winner_score,
     loser_score: row.loser_score,
+    affects_rating: row.affects_rating ?? null,
   };
 
+    const isSpecial = row.reason !== "normal";
+
+  const ratingSafeExtras: any = isSpecial
+    ? {
+        // ✅ CHECK制約対策：通常以外はレーティングに影響させない
+        affects_rating: false,
+
+        // 環境差分吸収：delta / change 両対応（無い列は後続で落とす）
+        winner_points_delta: 0,
+        loser_points_delta: 0,
+        winner_handicap_delta: 0,
+        loser_handicap_delta: 0,
+        winner_points_change: 0,
+        loser_points_change: 0,
+        winner_handicap_change: 0,
+        loser_handicap_change: 0,
+      }
+    : {};
+
   const payloads: any[] = [
+    // まずは全部入りで当てる（列が無ければ missing column fallback）
+    { ...basePayload, end_reason: row.reason, sets: row.sets ?? null, ...ratingSafeExtras },
+    { ...basePayload, finish_reason: row.reason, sets: row.sets ?? null, ...ratingSafeExtras },
+
+    // 以降は段階的に落とす
+    { ...basePayload, end_reason: row.reason, ...ratingSafeExtras },
+    { ...basePayload, finish_reason: row.reason, ...ratingSafeExtras },
+
+    // affects_rating 等が無い環境もあるので、最後はそれも落とす
     { ...basePayload, end_reason: row.reason, sets: row.sets ?? null },
     { ...basePayload, finish_reason: row.reason, sets: row.sets ?? null },
     { ...basePayload, end_reason: row.reason },
@@ -570,6 +601,7 @@ async function upsertFinalMatchSafe(
     { ...basePayload, sets: row.sets ?? null },
     { ...basePayload },
   ];
+
 
   const tryUpdate = async (id: string, payload: any) => {
     const { error } = await (db.from('final_matches') as any).update(payload).eq('id', id);
@@ -897,28 +929,32 @@ export default function AdminTournamentFinalsPage() {
     return s;
   }, [players]);
 
-  const hadDefByeBefore = (playerId: string, beforeRound: number) => {
-    if (!playerId) return false;
-    if (beforeRound <= 1) return false;
+  const hadDefByeInPrevRound = (playerId: string, currentRound: number) => {
+  if (!playerId) return false;
+  if (currentRound <= 1) return false;
 
-    for (let r = 1; r < beforeRound; r++) {
-      const maxSlot = entries.filter((e) => e.round_no === r).reduce((mx, e) => Math.max(mx, e.slot_no), 0);
-      const mc = Math.max(1, Math.floor(maxSlot / 2));
-      for (let m = 1; m <= mc; m++) {
-        const pidA = entryMap.get(`${r}:${m * 2 - 1}`)?.player_id ?? null;
-        const pidB = entryMap.get(`${r}:${m * 2}`)?.player_id ?? null;
-        if (!pidA || !pidB) continue;
+  const prev = currentRound - 1;
 
-        const aDef = defIds.has(pidA);
-        const bDef = defIds.has(pidB);
-        if (aDef === bDef) continue;
+  const maxSlot = entries.filter((e) => e.round_no === prev).reduce((mx, e) => Math.max(mx, e.slot_no), 0);
+  const mc = Math.max(1, Math.floor(maxSlot / 2));
 
-        const real = aDef ? pidB : pidA;
-        if (real === playerId) return true;
-      }
-    }
-    return false;
-  };
+  for (let m = 1; m <= mc; m++) {
+    const pidA = entryMap.get(`${prev}:${m * 2 - 1}`)?.player_id ?? null;
+    const pidB = entryMap.get(`${prev}:${m * 2}`)?.player_id ?? null;
+    if (!pidA || !pidB) continue;
+
+    const aDef = defIds.has(pidA);
+    const bDef = defIds.has(pidB);
+    if (aDef === bDef) continue;
+
+    const real = aDef ? pidB : pidA;
+    if (real === playerId) return true;
+  }
+
+  return false;
+};
+
+
 
   const computeAdvantage = (roundNo: number, pidA: string | null, pidB: string | null) => {
     if (!pidA || !pidB) return { advA: 0, advB: 0, forcedBo3: false, aHadBye: false, bHadBye: false };
@@ -926,8 +962,10 @@ export default function AdminTournamentFinalsPage() {
       return { advA: 0, advB: 0, forcedBo3: false, aHadBye: false, bHadBye: false };
     }
 
-    const aHadBye = hadDefByeBefore(pidA, roundNo);
-    const bHadBye = hadDefByeBefore(pidB, roundNo);
+   const aHadBye = hadDefByeInPrevRound(pidA, roundNo);
+const bHadBye = hadDefByeInPrevRound(pidB, roundNo);
+
+
 
     let advA = 0;
     let advB = 0;
@@ -1209,6 +1247,8 @@ export default function AdminTournamentFinalsPage() {
     const end_reason = String((form.elements.namedItem('end_reason') as HTMLSelectElement)?.value || 'normal')
       .trim()
       .toLowerCase();
+    const affects_rating = end_reason === 'normal';
+
 
     const winner_id = String((form.elements.namedItem('winner_id') as HTMLSelectElement)?.value || '').trim();
     if (!winner_id) {
@@ -1230,9 +1270,12 @@ export default function AdminTournamentFinalsPage() {
     }
 
     const saveKey = `match:${roundNo}:${matchNo}`;
-    setSavingKey(saveKey);
+setSavingKey(saveKey);
 
-    try {
+// ✅ sets（BO3等が無い単発入力では null を送る）
+const setsPayload = null;
+
+try {
       // まずはAPI（既存運用を維持）
       try {
         await postFinalReport({
@@ -1244,7 +1287,8 @@ export default function AdminTournamentFinalsPage() {
           winner_score,
           loser_score,
           end_reason,
-          sets: { format: 'single' },
+          affects_rating,
+          sets: setsPayload,
         });
       } catch (apiErr: any) {
         // APIが無い/落ちる場合はフォールバック
@@ -1258,7 +1302,8 @@ export default function AdminTournamentFinalsPage() {
           winner_score,
           loser_score,
           reason: end_reason,
-          sets: { format: 'single' },
+          affects_rating,
+          sets: setsPayload,
         });
       }
 
@@ -1298,6 +1343,8 @@ export default function AdminTournamentFinalsPage() {
     const end_reason = String((form.elements.namedItem('end_reason') as HTMLSelectElement)?.value || 'normal')
       .trim()
       .toLowerCase();
+    const affects_rating = end_reason === 'normal';
+
 
     const s1a = clampInt((form.elements.namedItem('set1_a') as HTMLInputElement)?.value, 0, 99, -1);
     const s1b = clampInt((form.elements.namedItem('set1_b') as HTMLInputElement)?.value, 0, 99, -1);
@@ -1360,6 +1407,7 @@ export default function AdminTournamentFinalsPage() {
           winner_score,
           loser_score,
           end_reason,
+          affects_rating,
           sets: setsPayload,
         });
       } catch (apiErr: any) {
@@ -1373,6 +1421,7 @@ export default function AdminTournamentFinalsPage() {
           winner_score,
           loser_score,
           reason: end_reason,
+          affects_rating,
           sets: setsPayload,
         });
       }

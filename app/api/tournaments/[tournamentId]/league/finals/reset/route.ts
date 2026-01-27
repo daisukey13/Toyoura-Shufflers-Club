@@ -23,48 +23,11 @@ async function isAdminPlayer(playerId: string): Promise<boolean> {
   return Boolean(data?.is_admin);
 }
 
-function looksMissingColumn(err: any) {
-  const msg = String(err?.message ?? '').toLowerCase();
-  return msg.includes('schema cache') || (msg.includes('column') && msg.includes('does not exist'));
-}
-
-function looksMissingTable(err: any) {
-  // Supabase/PostgREST: undefined_table は 42P01 が多い
+function isMissingRelationOrColumn(err: any) {
   const code = String(err?.code ?? '');
   const msg = String(err?.message ?? '').toLowerCase();
-  return code === '42P01' || msg.includes('relation') && msg.includes('does not exist');
-}
-
-// finals の matches を「なるべく正確に」拾う（列差分があっても動くように段階フォールバック）
-async function selectFinalMatchIds(tournamentId: string): Promise<string[]> {
-  // 1) stage='finals' がある環境
-  {
-    const r = await supabaseAdmin.from('matches').select('id').eq('tournament_id', tournamentId).eq('stage', 'finals');
-    if (!r.error) return (r.data ?? []).map((x: any) => String(x.id));
-    if (r.error && !looksMissingColumn(r.error)) {
-      // stage列以外の理由で落ちてるならそのまま諦めて次へ
-    }
-  }
-
-  // 2) kind='finals' / match_type='finals' などがある環境（どれか当たればOK）
-  for (const col of ['kind', 'match_type', 'bracket_type', 'phase']) {
-    const r = await supabaseAdmin.from('matches').select('id').eq('tournament_id', tournamentId).eq(col as any, 'finals');
-    if (!r.error) return (r.data ?? []).map((x: any) => String(x.id));
-    if (r.error && looksMissingColumn(r.error)) continue;
-  }
-
-  // 3) 最終フォールバック：リーグは league_block_id が入る前提なので、NULL のものを finals 扱い
-  {
-    const r = await supabaseAdmin
-      .from('matches')
-      .select('id')
-      .eq('tournament_id', tournamentId)
-      .is('league_block_id', null);
-
-    if (!r.error) return (r.data ?? []).map((x: any) => String(x.id));
-  }
-
-  return [];
+  // 42P01: relation does not exist / 42703: column does not exist など
+  return code === '42P01' || code === '42703' || msg.includes('does not exist') || msg.includes('schema cache');
 }
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
@@ -82,13 +45,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       return NextResponse.json({ ok: false, message: 'tournamentId が不正です。' }, { status: 400 });
     }
 
-    // cookie auth（管理者チェック用）
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!url || !anon) {
       return NextResponse.json({ ok: false, message: 'Supabase 環境変数が未設定です。' }, { status: 500 });
     }
 
+    // ✅ 認証（ブラウザのCookieが必要。curlだと401になるのは正常）
     const cookieStore = await cookies();
     const supa = createServerClient(url, anon, {
       cookies: {
@@ -110,52 +73,67 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       return NextResponse.json({ ok: false, message: '認証が必要です。' }, { status: 401 });
     }
 
-    const requesterId = userData.user.id;
-    const admin = await isAdminPlayer(requesterId);
+    // ✅ 管理者のみ
+    const me = userData.user.id;
+    const admin = await isAdminPlayer(me);
     if (!admin) {
       return NextResponse.json({ ok: false, message: '管理者のみ実行できます。' }, { status: 403 });
     }
 
-    // 1) finals の matchIds を拾う
-    const matchIds = await selectFinalMatchIds(tournamentId);
+    // --- ここから削除本体（Service Role = supabaseAdmin） ---
+    // 1) まず bracket を拾う
+    let bracketIds: string[] = [];
+    {
+      const r = await supabaseAdmin.from('final_brackets').select('id').eq('tournament_id', tournamentId);
+      if (r.error) {
+        if (isMissingRelationOrColumn(r.error)) {
+          // テーブルが無い環境なら「削除対象なし」でOK返す
+          return NextResponse.json(
+            { ok: true, message: 'final_brackets が存在しないため、削除対象はありません。', deleted: { brackets: 0, entries: 0 } },
+            { status: 200 },
+          );
+        }
+        throw r.error;
+      }
+      bracketIds = (r.data ?? []).map((x: any) => String(x.id));
+    }
 
-    // 2) match_entries を先に削除（存在しない環境でも止めない）
-    if (matchIds.length > 0) {
-      const me = await supabaseAdmin.from('match_entries').delete().in('match_id', matchIds);
-      if (me.error && !looksMissingTable(me.error)) {
-        return NextResponse.json({ ok: false, message: `match_entries 削除に失敗: ${me.error.message}` }, { status: 500 });
+    if (bracketIds.length === 0) {
+      return NextResponse.json(
+        { ok: true, message: '決勝トーナメントは存在しません（削除対象なし）。', deleted: { brackets: 0, entries: 0 } },
+        { status: 200 },
+      );
+    }
+
+    // 2) entries（子）を先に消す
+    let deletedEntries = 0;
+    {
+      const r = await supabaseAdmin.from('final_round_entries').delete().in('bracket_id', bracketIds).select('id');
+      if (r.error) {
+        if (!isMissingRelationOrColumn(r.error)) throw r.error;
+      } else {
+        deletedEntries = (r.data ?? []).length;
       }
     }
 
-    // 3) matches を削除
-    if (matchIds.length > 0) {
-      const md = await supabaseAdmin.from('matches').delete().in('id', matchIds);
-      if (md.error) {
-        return NextResponse.json({ ok: false, message: `matches 削除に失敗: ${md.error.message}` }, { status: 500 });
-      }
-    }
-
-    // 4) finals 専用テーブルがある環境も考慮（あれば消す。無ければ無視）
-    //    409 の原因が「finals header テーブル」なことが多いので、ここが効きます。
-    for (const table of ['tournament_finals', 'finals', 'tournament_final_brackets', 'tournament_brackets']) {
-      const r = await supabaseAdmin.from(table as any).delete().eq('tournament_id', tournamentId);
-      if (r.error && !looksMissingTable(r.error)) {
-        // 存在するテーブルで削除に失敗した場合だけ止める
-        return NextResponse.json({ ok: false, message: `${table} 削除に失敗: ${r.error.message}` }, { status: 500 });
-      }
+    // 3) bracket（親）を消す
+    let deletedBrackets = 0;
+    {
+      const r = await supabaseAdmin.from('final_brackets').delete().eq('tournament_id', tournamentId).select('id');
+      if (r.error) throw r.error;
+      deletedBrackets = (r.data ?? []).length;
     }
 
     return NextResponse.json(
       {
         ok: true,
         message: '決勝トーナメント関連データを全削除しました。',
-        deleted: { matches: matchIds.length },
+        deleted: { brackets: deletedBrackets, entries: deletedEntries },
       },
       { status: 200 },
     );
   } catch (e: any) {
-    console.error('[finals/reset] fatal:', e);
-    return NextResponse.json({ ok: false, message: e?.message || 'サーバエラーが発生しました。' }, { status: 500 });
+    console.error('[league/finals/reset] error', e);
+    return NextResponse.json({ ok: false, message: e?.message ?? 'unknown error' }, { status: 500 });
   }
 }
-
