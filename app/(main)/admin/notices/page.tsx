@@ -16,7 +16,7 @@ type Notice = {
   id: string;
   title: string;
   content: string;
-  date: string | null;          // YYYY-MM-DD or null
+  date: string | null; // YYYY-MM-DD or null
   is_published: boolean;
   created_by?: string | null;
   created_at?: string | null;
@@ -27,6 +27,30 @@ function asTime(v?: string | null) {
   if (!v) return 0;
   const t = new Date(v).getTime();
   return Number.isFinite(t) ? t : 0;
+}
+
+function fmtUpdated(iso?: string | null) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  return d.toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function fmtDateLong(v?: string | null) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (!Number.isFinite(d.getTime())) return '';
+  return d.toLocaleDateString('ja-JP', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
 }
 
 export default function AdminNoticesPage() {
@@ -50,17 +74,20 @@ export default function AdminNoticesPage() {
           router.replace('/');
           return;
         }
+
         // 管理者判定（from の型は緩め、結果をローカル型で受ける）
         const { data: pRow, error: plErr } = await (supabase.from('players') as any)
           .select('is_admin')
           .eq('id', user.id)
           .maybeSingle();
         if (plErr) throw plErr;
+
         const player = (pRow ?? null) as PlayerFlagRow | null;
         if (!player?.is_admin) {
           router.replace('/');
           return;
         }
+
         setIsAdmin(true);
         await fetchNotices();
       } catch (e) {
@@ -84,9 +111,9 @@ export default function AdminNoticesPage() {
       const list = (data ?? []) as Notice[];
 
       const sorted = list.sort((a, b) => {
-        // 優先キー: date（YYYY-MM-DD）→ 次点: created_at
-        const at = asTime(a.date ?? a.created_at ?? null);
-        const bt = asTime(b.date ?? b.created_at ?? null);
+        // ✅ 優先キー: updated_at → 次点: date（YYYY-MM-DD）→ 次点: created_at
+        const at = asTime(a.updated_at ?? a.date ?? a.created_at ?? null);
+        const bt = asTime(b.updated_at ?? b.date ?? b.created_at ?? null);
         return bt - at; // 降順
       });
 
@@ -101,17 +128,24 @@ export default function AdminNoticesPage() {
 
   const togglePublish = async (target: Notice) => {
     const next = !target.is_published;
-    // 楽観的更新
+
+    // 楽観的更新（表示だけ先に切り替える）
     setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: next } : n)));
+
     try {
       const { error } = await (supabase.from('notices') as any)
         .update({ is_published: next } as any)
         .eq('id', target.id);
       if (error) throw error;
+
+      // ✅ updated_at をDBトリガーで更新しているので、成功後に再取得して表示も最新にする
+      await fetchNotices();
     } catch (e) {
       console.error('[admin/notices] toggle publish error:', e);
+
       // ロールバック
       setNotices((prev) => prev.map((n) => (n.id === target.id ? { ...n, is_published: !next } : n)));
+
       const msg = String((e as any)?.message || e);
       let hint = '';
       if (/row-level security|RLS/i.test(msg)) {
@@ -123,15 +157,19 @@ export default function AdminNoticesPage() {
 
   const deleteNotice = async (id: string) => {
     if (!confirm('このお知らせを削除してもよろしいですか？')) return;
+
     const snapshot = notices;
+
     // 楽観的
     setNotices((prev) => prev.filter((n) => n.id !== id));
+
     try {
       const { error } = await (supabase.from('notices') as any).delete().eq('id', id);
       if (error) throw error;
     } catch (e) {
       console.error('[admin/notices] delete error:', e);
       setNotices(snapshot);
+
       const msg = String((e as any)?.message || e);
       let hint = '';
       if (/row-level security|RLS/i.test(msg)) {
@@ -171,84 +209,76 @@ export default function AdminNoticesPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {notices.map((notice) => (
-              <div key={notice.id} className="glass-card rounded-xl p-6">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-3 mb-2">
-                      <h3 className="text-xl font-semibold text-yellow-100 break-all">
-                        {notice.title}
-                      </h3>
-                      <span
-                        className={`px-3 py-1 rounded-full text-sm whitespace-nowrap ${
-                          notice.is_published
-                            ? 'bg-green-500/20 text-green-400'
-                            : 'bg-gray-500/20 text-gray-300'
-                        }`}
+            {notices.map((notice) => {
+              const base = notice.date || notice.created_at || null;
+              const baseLabel = base ? fmtDateLong(base) : '日付なし';
+              const updatedLabel = fmtUpdated(notice.updated_at);
+
+              return (
+                <div key={notice.id} className="glass-card rounded-xl p-6">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-3 mb-2">
+                        <h3 className="text-xl font-semibold text-yellow-100 break-all">{notice.title}</h3>
+                        <span
+                          className={`px-3 py-1 rounded-full text-sm whitespace-nowrap ${
+                            notice.is_published ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-300'
+                          }`}
+                        >
+                          {notice.is_published ? '公開中' : '非公開'}
+                        </span>
+                      </div>
+
+                      <p className="text-gray-400 mb-2">
+                        {baseLabel}
+                        {updatedLabel ? (
+                          <span className="text-[11px] text-gray-500">（最終更新: {updatedLabel}）</span>
+                        ) : null}
+                      </p>
+
+                      <p
+                        className="text-gray-300 overflow-hidden text-ellipsis"
+                        style={{
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          whiteSpace: 'normal',
+                        }}
+                        title={notice.content}
                       >
-                        {notice.is_published ? '公開中' : '非公開'}
-                      </span>
+                        {notice.content}
+                      </p>
                     </div>
 
-                    <p className="text-gray-400 mb-2">
-                      {(() => {
-                        const base = notice.date || notice.created_at || '';
-                        return base
-                          ? new Date(base).toLocaleDateString('ja-JP', {
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric',
-                            })
-                          : '日付なし';
-                      })()}
-                    </p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => togglePublish(notice)}
+                        className="p-2 rounded-lg hover:bg-purple-900/20 transition-colors"
+                        title={notice.is_published ? '非公開にする' : '公開する'}
+                      >
+                        {notice.is_published ? <FaEyeSlash className="text-gray-400" /> : <FaEye className="text-purple-400" />}
+                      </button>
 
-                    <p
-                      className="text-gray-300 overflow-hidden text-ellipsis"
-                      style={{
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        whiteSpace: 'normal',
-                      }}
-                      title={notice.content}
-                    >
-                      {notice.content}
-                    </p>
-                  </div>
+                      <Link
+                        href={`/admin/notices/${notice.id}/edit`}
+                        className="p-2 rounded-lg hover:bg-purple-900/20 transition-colors"
+                        title="編集"
+                      >
+                        <FaEdit className="text-purple-400" />
+                      </Link>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => togglePublish(notice)}
-                      className="p-2 rounded-lg hover:bg-purple-900/20 transition-colors"
-                      title={notice.is_published ? '非公開にする' : '公開する'}
-                    >
-                      {notice.is_published ? (
-                        <FaEyeSlash className="text-gray-400" />
-                      ) : (
-                        <FaEye className="text-purple-400" />
-                      )}
-                    </button>
-
-                    <Link
-                      href={`/admin/notices/${notice.id}/edit`}
-                      className="p-2 rounded-lg hover:bg紫-900/20 transition-colors"
-                      title="編集"
-                    >
-                      <FaEdit className="text-purple-400" />
-                    </Link>
-
-                    <button
-                      onClick={() => deleteNotice(notice.id)}
-                      className="p-2 rounded-lg hover:bg-red-900/20 transition-colors"
-                      title="削除"
-                    >
-                      <FaTrash className="text-red-400" />
-                    </button>
+                      <button
+                        onClick={() => deleteNotice(notice.id)}
+                        className="p-2 rounded-lg hover:bg-red-900/20 transition-colors"
+                        title="削除"
+                      >
+                        <FaTrash className="text-red-400" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

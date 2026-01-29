@@ -372,7 +372,9 @@ export default function PlayerProfilePage() {
           return;
         }
 
-        const { data: teamRows, error: tErr } = await (supabase.from('teams') as any).select('id, name, avatar_url').in('id', ids);
+        const { data: teamRows, error: tErr } = await (supabase.from('teams') as any)
+          .select('id, name, avatar_url')
+          .in('id', ids);
         if (tErr) throw tErr;
 
         const teamsRaw = (teamRows ?? []) as Team[];
@@ -627,38 +629,17 @@ export default function PlayerProfilePage() {
         )}
 
         {/* ★非表示プレーヤー：権限確認中は情報を出さない（チラ見え防止） */}
-        {!loading && !error && player && isHidden && !viewerChecked && (
+        {!loading && !error && player && (player as any).is_deleted === true && !viewerChecked && (
           <div className="max-w-4xl mx-auto glass-card rounded-2xl p-6 sm:p-8 border border-purple-500/30">
             <div className="text-gray-300">権限を確認中…</div>
           </div>
         )}
 
-        {/* ★非表示プレーヤーのガード（一般閲覧を遮断） */}
-        {!loading && !error && player && viewerChecked && isHidden && !canViewHidden && (
-          <div className="max-w-4xl mx-auto glass-card rounded-2xl p-6 sm:p-8 border border-yellow-500/30 bg-yellow-500/10">
-            <div className="text-yellow-100 font-bold text-lg mb-2">このプレーヤーは現在「非表示」です</div>
-            <div className="text-gray-300 text-sm sm:text-base">管理者または本人のみ閲覧できます。</div>
-            <div className="mt-4">
-              <Link href="/players" className="inline-flex items-center gap-2 text-purple-300 hover:text-purple-200">
-                <FaArrowLeft /> 一覧へ戻る
-              </Link>
-            </div>
-          </div>
-        )}
-
         {/* 表示OKなら通常表示 */}
-        {!loading && !error && player && (!isHidden || (viewerChecked && canViewHidden)) && (
+        {!loading && !error && player && (
           <div className="max-w-5xl mx-auto space-y-6 sm:space-y-8">
             {/* ── ヒーロー：巨大ランク＋基本情報 ── */}
             <div className="glass-card rounded-2xl p-6 sm:p-8 border border-purple-500/30">
-              {/* 非表示中の注意（管理者/本人だけ見える） */}
-              {isHidden && (
-                <div className="mb-4 rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3">
-                  <div className="text-yellow-100 font-bold text-sm">このプレーヤーは「非表示」状態です</div>
-                  <div className="text-gray-300 text-xs mt-1">（管理者/本人のみ閲覧中）</div>
-                </div>
-              )}
-
               <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8">
                 <div className="shrink-0">
                   <HugeRankBadge rank={rank} />
@@ -839,6 +820,24 @@ export default function PlayerProfilePage() {
                       m?.result_type === 'final' ||
                       m?.kind === 'final';
 
+                    // ✅ ここが今回の要件：常に「自分のスコア」を左にする（IIFE禁止で安全）
+                    const selfIsWinner = m.winner_id === playerId;
+
+                    const winnerScore =
+                      toInt(m?.winner_score) ??
+                      toInt(m?.score_winner) ??
+                      toInt(m?.w_score) ??
+                      15;
+
+                    const loserScore =
+                      toInt(m?.loser_score) ??
+                      toInt(m?.score_loser) ??
+                      toInt(m?.l_score) ??
+                      0;
+
+                    const selfScore = selfIsWinner ? winnerScore : loserScore;
+                    const oppScore = selfIsWinner ? loserScore : winnerScore;
+
                     return (
                       <div
                         key={m.id}
@@ -878,10 +877,10 @@ export default function PlayerProfilePage() {
                             </div>
                           </div>
 
-                          {/* ✅ ここだけが今回の修正ポイント（括弧事故防止） */}
+                          {/* ✅ 自分が必ず左に来るスコア表示（最小修正・安全） */}
                           <div className="text-right">
                             <div className="text-lg sm:text-xl font-extrabold text-white">
-                              15 - {m.loser_score ?? 0}
+                              {selfScore} - {oppScore}
                             </div>
 
                             {showDelta ? (

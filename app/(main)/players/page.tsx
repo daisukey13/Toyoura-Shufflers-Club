@@ -29,6 +29,12 @@ interface Player {
 function safeLower(s?: string | null) {
   return (s ?? '').toLowerCase();
 }
+
+// ✅ 追加（最小）：def 判定（大文字小文字/前後空白を吸収）
+function isDefName(name: any) {
+  return String(name ?? '').trim().toLowerCase() === 'def';
+}
+
 function winRateOf(p: Player) {
   const w = p.wins ?? 0;
   const l = p.losses ?? 0;
@@ -160,12 +166,8 @@ const PlayerCard = memo(function PlayerCard({
           </div>
 
           <div className="min-w-0 flex-1">
-            <h3 className="text-base sm:text-lg font-bold text-yellow-100 truncate">
-              {player.handle_name}
-            </h3>
-            <p className="text-xs sm:text-sm text-gray-400 truncate">
-              {player.address || '—'}
-            </p>
+            <h3 className="text-base sm:text-lg font-bold text-yellow-100 truncate">{player.handle_name}</h3>
+            <p className="text-xs sm:text-sm text-gray-400 truncate">{player.address || '—'}</p>
           </div>
         </div>
 
@@ -178,9 +180,7 @@ const PlayerCard = memo(function PlayerCard({
             <div className="text-xs text-gray-400">ポイント</div>
           </div>
           <div className="text-center">
-            <div className="text-xl sm:text-2xl font-extrabold text-purple-300">
-              {player.handicap ?? 0}
-            </div>
+            <div className="text-xl sm:text-2xl font-extrabold text-purple-300">{player.handicap ?? 0}</div>
             <div className="text-xs text-gray-400">ハンディ</div>
           </div>
         </div>
@@ -277,14 +277,29 @@ export default function PlayersPage() {
 
   const addressOptions = useMemo(
     () => [
-      '豊浦町','洞爺湖町','壮瞥町','伊達市','室蘭市','登別市','倶知安町','ニセコ町','札幌市','その他道内','内地','外国（Visitor)',
+      '豊浦町',
+      '洞爺湖町',
+      '壮瞥町',
+      '伊達市',
+      '室蘭市',
+      '登別市',
+      '倶知安町',
+      'ニセコ町',
+      '札幌市',
+      'その他道内',
+      '内地',
+      '外国（Visitor)',
     ],
     []
   );
 
-  // フィルタ & ソート
+  // フィルタ & ソート（✅ def を一覧から除外：最小修正）
   const filteredAndSortedPlayers = useMemo(() => {
-    const list = (players as Player[]).filter((p) => {
+    const src = (players as Player[]) ?? [];
+    const list = src.filter((p) => {
+      // ✅ 追加：def は一覧に出さない（試合登録プルダウンには影響しない）
+      if (isDefName(p?.handle_name)) return false;
+
       const matchesSearch = safeLower(p.handle_name).includes(safeLower(searchTerm));
       const matchesAddress = filterAddress === 'all' || (p.address ?? '') === filterAddress;
 
@@ -337,7 +352,9 @@ export default function PlayersPage() {
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
             プレーヤー一覧
           </h1>
-          <p className="text-gray-300 text-sm sm:text-base">総勢 {players.length} 名のシャッフラーズ</p>
+
+          {/* ✅ 表示している人数に合わせる（UIは同じ、数字だけ自然に） */}
+          <p className="text-gray-300 text-sm sm:text-base">総勢 {filteredAndSortedPlayers.length} 名のシャッフラーズ</p>
         </div>
 
         <MobileLoadingState
@@ -378,7 +395,9 @@ export default function PlayersPage() {
                   >
                     <option value="all">すべての地域</option>
                     {addressOptions.map((address) => (
-                      <option key={address} value={address}>{address}</option>
+                      <option key={address} value={address}>
+                        {address}
+                      </option>
                     ))}
                   </select>
                 </div>

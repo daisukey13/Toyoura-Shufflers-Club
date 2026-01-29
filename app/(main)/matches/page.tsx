@@ -1,7 +1,7 @@
 // app/(main)/matches/page.tsx
 'use client';
 
-import { useState, useMemo, memo, useCallback, lazy, Suspense, useEffect } from 'react';
+import { useState, useMemo, memo, useCallback, useEffect } from 'react';
 import {
   FaTrophy,
   FaCalendar,
@@ -18,7 +18,8 @@ import { useFetchMatchesData as useMatchesData } from '@/lib/hooks/useFetchMatch
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 import { useRouter } from 'next/navigation';
 
-const VirtualList = lazy(() => import('@/components/VirtualList'));
+// ✅ 最小修正：lazy をやめて通常 import（chunk load 不整合を回避）
+import VirtualList from '@/components/VirtualList';
 
 const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -142,9 +143,7 @@ function pickString(m: any, keys: string[]): string | null {
  * match_date が無い/壊れているデータが混ざっても並びが崩れないようにする（UIは維持）
  */
 function getMatchDateValue(m: any): string | null {
-  return (
-    pickString(m, ['match_date', 'played_at', 'match_datetime', 'game_date', 'created_at', 'updated_at']) ?? null
-  );
+  return pickString(m, ['match_date', 'played_at', 'match_datetime', 'game_date', 'created_at', 'updated_at']) ?? null;
 }
 function getMatchTimeMs(m: any): number {
   const v = getMatchDateValue(m);
@@ -188,11 +187,7 @@ const FinishReasonChip = ({ reason }: { reason?: string | null }) => {
 
 const ScoreDiffPill = ({ diff, highlight }: { diff: number; highlight?: 'upset' }) => {
   const color =
-    diff >= 10
-      ? 'from-red-500 to-red-600'
-      : diff >= 5
-      ? 'from-orange-500 to-orange-600'
-      : 'from-blue-500 to-blue-600';
+    diff >= 10 ? 'from-red-500 to-red-600' : diff >= 5 ? 'from-orange-500 to-orange-600' : 'from-blue-500 to-blue-600';
   return (
     <div
       className={`inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 rounded-full shadow-lg ${
@@ -218,15 +213,7 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
     }
     return date.toLocaleString();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    // 代表的な候補を依存に含める（UI維持、無駄な再計算も抑える）
-    (m as any).match_date,
-    (m as any).played_at,
-    (m as any).match_datetime,
-    (m as any).game_date,
-    (m as any).created_at,
-    (m as any).updated_at,
-  ]);
+  }, [(m as any).match_date, (m as any).played_at, (m as any).match_datetime, (m as any).game_date, (m as any).created_at, (m as any).updated_at]);
 
   return (
     <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 sm:mb-4 text-xs sm:text-sm">
@@ -298,26 +285,20 @@ const SinglesCard = memo(function SinglesCard({
     wProfile?.ranking_points ??
     0;
   const wHC =
-    pickNumber(m, ['winner_current_handicap', 'winner_handicap', 'winner_hc']) ??
-    wProfile?.handicap ??
-    0;
+    pickNumber(m, ['winner_current_handicap', 'winner_handicap', 'winner_hc']) ?? wProfile?.handicap ?? 0;
   const lRP =
     pickNumber(m, ['loser_current_points', 'loser_ranking_points', 'loser_points', 'loser_rp']) ??
     lProfile?.ranking_points ??
     0;
   const lHC =
-    pickNumber(m, ['loser_current_handicap', 'loser_handicap', 'loser_hc']) ??
-    lProfile?.handicap ??
-    0;
+    pickNumber(m, ['loser_current_handicap', 'loser_handicap', 'loser_hc']) ?? lProfile?.handicap ?? 0;
 
   const isUpset = useMemo(() => wRP < lRP - 100 || wHC > lHC + 5, [wRP, lRP, wHC, lHC]);
 
   return (
     <div
       className={`bg-gray-900/60 backdrop-blur-md rounded-xl p-4 sm:p-6 border transition-all relative ${
-        isUpset
-          ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10'
-          : 'border-purple-500/30 hover:border-purple-400/50'
+        isUpset ? 'border-yellow-500/50 shadow-lg shadow-yellow-500/10' : 'border-purple-500/30 hover:border-purple-400/50'
       }`}
     >
       {isUpset && (
@@ -344,9 +325,7 @@ const SinglesCard = memo(function SinglesCard({
               <LazyImage
                 src={wAvatar}
                 alt={wName || ''}
-                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${
-                  isUpset ? 'border-yellow-500/50' : 'border-green-500/50'
-                }`}
+                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${isUpset ? 'border-yellow-500/50' : 'border-green-500/50'}`}
               />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{wName}</p>
@@ -379,11 +358,7 @@ const SinglesCard = memo(function SinglesCard({
 
           <Link href={`/players/${lid}`} prefetch={false} className="group">
             <div className="flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 group-hover:border-red-400/50 transition-all">
-              <LazyImage
-                src={lAvatar}
-                alt={lName || ''}
-                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-red-500/50"
-              />
+              <LazyImage src={lAvatar} alt={lName || ''} className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-red-500/50" />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{lName}</p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
@@ -450,7 +425,9 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
           </div>
         )}
       </div>
-      <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">{members.map((m) => m.handle_name).join(' / ')}</div>
+      <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">
+        {members.map((m) => m.handle_name).join(' / ')}
+      </div>
     </div>
   );
 }
@@ -481,9 +458,7 @@ const TeamsCard = memo(function TeamsCard({
                 <FaUsers className="text-yellow-300" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.winner_team_name ?? '—'}
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.winner_team_name ?? '—'}</p>
                 <p className="text-xs sm:text-sm text-green-400">勝利</p>
                 <TeamMembersRow members={winnerMembers} />
               </div>
@@ -504,9 +479,7 @@ const TeamsCard = memo(function TeamsCard({
                 <FaUsers className="text-purple-200" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">
-                  {m.loser_team_name ?? '—'}
-                </p>
+                <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{m.loser_team_name ?? '—'}</p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
                 <TeamMembersRow members={loserMembers} />
               </div>
@@ -550,25 +523,23 @@ export default function MatchesPage() {
         (m.venue ?? '').toLowerCase().includes(term) ||
         (m.tournament_name ?? '').toLowerCase().includes(term);
 
-      const typeHit =
-        filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
+      const typeHit = filter === 'all' ? true : filter === 'tournament' ? !!m.is_tournament : !m.is_tournament;
 
-     // ✅ 日付フィルタも安全化（match_dateが壊れていても落ちない）
-const ms = getMatchTimeMs(m);
-let dateHit = true;
+      // ✅ 日付フィルタも安全化（match_dateが壊れていても落ちない）
+      const ms = getMatchTimeMs(m);
+      let dateHit = true;
 
-if (dateFilter !== 'all') {
-  if (!ms) {
-    dateHit = false;
-  } else if (dateFilter === 'today') {
-    dateHit = isSameDay(new Date(ms), now);
-  } else if (dateFilter === 'week') {
-    dateHit = ms >= nowMs - 7 * 24 * 60 * 60 * 1000;
-  } else if (dateFilter === 'month') {
-    dateHit = ms >= nowMs - 30 * 24 * 60 * 60 * 1000;
-  }
-}
-
+      if (dateFilter !== 'all') {
+        if (!ms) {
+          dateHit = false;
+        } else if (dateFilter === 'today') {
+          dateHit = isSameDay(new Date(ms), now);
+        } else if (dateFilter === 'week') {
+          dateHit = ms >= nowMs - 7 * 24 * 60 * 60 * 1000;
+        } else if (dateFilter === 'month') {
+          dateHit = ms >= nowMs - 30 * 24 * 60 * 60 * 1000;
+        }
+      }
 
       return searchHit && typeHit && dateHit;
     });
@@ -601,7 +572,7 @@ if (dateFilter !== 'all') {
       try {
         const inPlayers = visiblePlayerIds.map((id) => `"${id}"`).join(',');
         const rows = await restGet<PlayerLite[]>(
-          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url,ranking_points,handicap`,
+          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url,ranking_points,handicap`
         );
         const dict: Record<string, PlayerLite> = {};
         for (const r of rows ?? []) {
@@ -645,7 +616,7 @@ if (dateFilter !== 'all') {
       try {
         const inTeams = visibleTeamIds.map((id) => `"${id}"`).join(',');
         const tm = await restGet<{ team_id: string; player_id: string }[]>(
-          `/rest/v1/team_members?team_id=in.(${inTeams})&select=team_id,player_id`,
+          `/rest/v1/team_members?team_id=in.(${inTeams})&select=team_id,player_id`
         );
 
         const pids = Array.from(new Set(tm.map((r) => r.player_id)));
@@ -656,7 +627,7 @@ if (dateFilter !== 'all') {
 
         const inPlayers = pids.map((id) => `"${id}"`).join(',');
         const players = await restGet<MemberProfile[]>(
-          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url`,
+          `/rest/v1/players?id=in.(${inPlayers})&select=id,handle_name,avatar_url`
         );
         const pmap = new Map(players.map((p) => [p.id, p]));
 
@@ -713,13 +684,9 @@ if (dateFilter !== 'all') {
       const m = filteredSortedMatches[index];
       if (!m) return null;
       const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
-      return isTeams ? (
-        <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
-      ) : (
-        <SinglesCard key={m.id} m={m} playersById={playersById} />
-      );
+      return isTeams ? <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} /> : <SinglesCard key={m.id} m={m} playersById={playersById} />;
     },
-    [filteredSortedMatches, membersByTeam, playersById],
+    [filteredSortedMatches, membersByTeam, playersById]
   );
 
   return (
@@ -845,15 +812,14 @@ if (dateFilter !== 'all') {
                 })}
               </div>
             ) : (
-              <Suspense fallback={<div className="text-center py-4">読み込み中...</div>}>
-                <VirtualList
-                  items={filteredSortedMatches}
-                  height={720}
-                  itemHeight={virtualItemHeight}
-                  renderItem={renderItem}
-                  className="space-y-3 sm:space-y-4"
-                />
-              </Suspense>
+              // ✅ VirtualList を通常 import にしたので Suspense 不要
+              <VirtualList
+                items={filteredSortedMatches}
+                height={720}
+                itemHeight={virtualItemHeight}
+                renderItem={renderItem}
+                className="space-y-3 sm:space-y-4"
+              />
             )}
           </>
         )}

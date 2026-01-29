@@ -5,12 +5,11 @@ import React, {
   useState,
   useMemo,
   useCallback,
-  lazy,
-  Suspense,
   memo,
   useDeferredValue,
   useTransition,
   useEffect,
+  Suspense,
 } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
@@ -18,6 +17,9 @@ import { FaUsers, FaTrophy, FaPercent, FaSearch } from 'react-icons/fa';
 
 import { useTeamRankings, TeamRankItem } from '@/lib/hooks/useTeamRankings';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
+
+// ✅ 最小修正：lazy をやめて通常 import（chunk load 不整合を回避）
+import VirtualList from '@/components/VirtualList';
 
 /* ---------------- Suspense fallback ---------------- */
 function Fallback() {
@@ -27,9 +29,6 @@ function Fallback() {
     </div>
   );
 }
-
-/* ---------------- Virtual list (for many rows) ---------------- */
-const VirtualList = lazy(() => import('@/components/VirtualList'));
 
 /* ---------------- Rank Badge ---------------- */
 const RankBadge = memo(function RankBadge({ rank }: { rank: number }) {
@@ -118,7 +117,11 @@ const TeamCard = memo(function TeamCard({
           </div>
 
           <div className="text-right flex-shrink-0">
-            <div className={`text-2xl sm:text-3xl font-bold ${isTop3 ? 'text-yellow-100' : 'text-purple-300'}`}>
+            <div
+              className={`text-2xl sm:text-3xl font-bold ${
+                isTop3 ? 'text-yellow-100' : 'text-purple-300'
+              }`}
+            >
               {Math.round(team.avg_rp ?? 0)}
             </div>
             <div className="text-xs sm:text-sm text-gray-400">平均RP</div>
@@ -127,15 +130,21 @@ const TeamCard = memo(function TeamCard({
 
         <div className="mt-3 sm:mt-4 grid grid-cols-4 gap-2 sm:gap-4 text-center">
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-            <div className="text-yellow-300 font-bold text-sm sm:text-base">{team.played ?? 0}</div>
+            <div className="text-yellow-300 font-bold text-sm sm:text-base">
+              {team.played ?? 0}
+            </div>
             <div className="text-xs text-gray-500">試合</div>
           </div>
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-            <div className="text-green-400 font-bold text-sm sm:text-base">{team.wins ?? 0}</div>
+            <div className="text-green-400 font-bold text-sm sm:text-base">
+              {team.wins ?? 0}
+            </div>
             <div className="text-xs text-gray-500">勝</div>
           </div>
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-            <div className="text-red-400 font-bold text-sm sm:text-base">{team.losses ?? 0}</div>
+            <div className="text-red-400 font-bold text-sm sm:text-base">
+              {team.losses ?? 0}
+            </div>
             <div className="text-xs text-gray-500">敗</div>
           </div>
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
@@ -230,7 +239,9 @@ function TeamsInner() {
         <div className="inline-block p-3 sm:p-4 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-purple-400/20 to-pink-600/20">
           <FaUsers className="text-4xl sm:text-5xl text-purple-300" />
         </div>
-        <h1 className="text-3xl sm:text-4xl font-bold mb-2 sm:mb-3 text-yellow-100">チーム一覧</h1>
+        <h1 className="text-3xl sm:text-4xl font-bold mb-2 sm:mb-3 text-yellow-100">
+          チーム一覧
+        </h1>
         <p className="text-gray-400 text-sm sm:text-base">チームの戦績と平均RPをチェック</p>
       </div>
 
@@ -370,15 +381,14 @@ function TeamsInner() {
               ))}
             </div>
           ) : (
-            <Suspense fallback={<div className="text-center py-6">リストを読み込み中…</div>}>
-              <VirtualList
-                items={sorted}
-                height={600}
-                itemHeight={160}
-                renderItem={renderItem}
-                className="space-y-3 sm:space-y-4"
-              />
-            </Suspense>
+            // ✅ VirtualList を通常 import にしたので、ここは Suspense 不要
+            <VirtualList
+              items={sorted}
+              height={600}
+              itemHeight={160}
+              renderItem={renderItem}
+              className="space-y-3 sm:space-y-4"
+            />
           )}
         </>
       )}

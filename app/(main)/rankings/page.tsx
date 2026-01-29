@@ -5,13 +5,12 @@ import React, {
   useState,
   useMemo,
   useCallback,
-  lazy,
-  Suspense,
   memo,
   useDeferredValue,
   useTransition,
   useEffect,
   useRef,
+  Suspense,
 } from 'react';
 import { FaTrophy, FaMedal, FaChartLine, FaFire, FaUsers, FaPercent } from 'react-icons/fa';
 import Link from 'next/link';
@@ -23,6 +22,9 @@ import { MobileLoadingState } from '@/components/MobileLoadingState';
 import { calcWinRate } from '@/lib/stats';
 import { FaArrowUp, FaArrowDown, FaMinus } from 'react-icons/fa';
 
+// ✅ ここが最小修正：lazy をやめて通常 import（chunk load 不整合を回避）
+import VirtualList from '@/components/VirtualList';
+
 /* ─────────────────────────── Fallback (for Suspense wrapper) ─────────────────────────── */
 function Fallback() {
   return (
@@ -31,9 +33,6 @@ function Fallback() {
     </div>
   );
 }
-
-/* ─────────────────────────── Virtual list ─────────────────────────── */
-const VirtualList = lazy(() => import('@/components/VirtualList'));
 
 /* ─────────────────────────── Lazy image ─────────────────────────── */
 const LazyImage = ({
@@ -121,6 +120,11 @@ type Trend = 'up' | 'down' | 'same';
 /* ─────────────────────────── utils ─────────────────────────── */
 function eq(a: any, b: any) {
   return a === b || (Number.isNaN(a) && Number.isNaN(b));
+}
+
+// ✅ 追加（最小）：def 判定（大文字小文字/前後空白を吸収）
+function isDefName(name: any) {
+  return String(name ?? '').trim().toLowerCase() === 'def';
 }
 
 /** points同点は同順位（競技順位: 1,2,2,4...）。同点内はHC昇順。 */
@@ -510,9 +514,16 @@ function RankingsInner() {
   });
 
   // ★PATCH: null はアクティブ扱い（false のみ除外）
+  // ✅ 追加：def も除外（ランキング一覧には出さない）
   const players = useMemo(() => {
     const arr = (rawPlayers ?? []) as Player[];
-    return arr.filter((p) => p?.is_admin !== true && p?.is_deleted !== true && p?.is_active !== false);
+    return arr.filter(
+      (p) =>
+        p?.is_admin !== true &&
+        p?.is_deleted !== true &&
+        p?.is_active !== false &&
+        !isDefName(p?.handle_name)
+    );
   }, [rawPlayers]);
 
   const [sortByPlayers, setSortByPlayers] = useState<'points' | 'handicap'>('points');
@@ -775,15 +786,14 @@ function RankingsInner() {
                   })}
                 </div>
               ) : (
-                <Suspense fallback={<div className="text-center py-6">リストを読み込み中…</div>}>
-                  <VirtualList
-                    items={rankedPlayers}
-                    height={600}
-                    itemHeight={180}
-                    renderItem={renderPlayerItem}
-                    className="space-y-3 sm:space-y-4"
-                  />
-                </Suspense>
+                // ✅ VirtualList を通常 import にしたので、ここは Suspense 不要
+                <VirtualList
+                  items={rankedPlayers}
+                  height={600}
+                  itemHeight={180}
+                  renderItem={renderPlayerItem}
+                  className="space-y-3 sm:space-y-4"
+                />
               )}
             </>
           )}
@@ -842,15 +852,14 @@ function RankingsInner() {
                   ))}
                 </div>
               ) : (
-                <Suspense fallback={<div className="text-center py-6">リストを読み込み中…</div>}>
-                  <VirtualList
-                    items={sortedTeams}
-                    height={600}
-                    itemHeight={160}
-                    renderItem={renderTeamItem}
-                    className="space-y-3 sm:space-y-4"
-                  />
-                </Suspense>
+                // ✅ 同様に Suspense 不要
+                <VirtualList
+                  items={sortedTeams}
+                  height={600}
+                  itemHeight={160}
+                  renderItem={renderTeamItem}
+                  className="space-y-3 sm:space-y-4"
+                />
               )}
             </>
           )}

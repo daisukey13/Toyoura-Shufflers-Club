@@ -1,9 +1,24 @@
+// app/(main)/notices/page.tsx
 'use client';
 
 import { useState } from 'react';
 import Link from 'next/link';
 import { FaBullhorn, FaSearch, FaCalendarAlt } from 'react-icons/fa';
 import { useNotices } from '@/lib/hooks/useNotices';
+
+/* ===== helper ===== */
+function fmtUpdated(iso?: string | null) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  return d.toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 export default function NoticesListPage() {
   const [kw, setKw] = useState('');
@@ -45,6 +60,7 @@ export default function NoticesListPage() {
             読み込み中…
           </div>
         )}
+
         {error && (
           <div className="max-w-3xl mx-auto glass-card rounded-xl p-6 border border-red-500/30 bg-red-500/10">
             <p className="text-red-300">お知らせの取得に失敗しました。</p>
@@ -63,43 +79,59 @@ export default function NoticesListPage() {
               </div>
             ) : (
               <div className="max-w-3xl mx-auto space-y-4">
-                {notices.map((n) => (
-                  <Link
-                    key={n.id}
-                    href={`/notices/${n.id}`}
-                    className="block glass-card rounded-xl p-5 border border-purple-500/30 hover:border-purple-400/50 transition-colors"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <h3 className="text-lg sm:text-xl font-bold text-yellow-100 break-words">
-                          {n.title || '無題'}
-                        </h3>
-                        <p
-                          className="mt-2 text-sm text-gray-300 overflow-hidden text-ellipsis"
-                          style={{
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            whiteSpace: 'normal',
-                          }}
-                          title={n.content}
-                        >
-                          {n.content}
-                        </p>
+                {notices.map((n) => {
+                  const updated = fmtUpdated(n.updated_at);
+
+                  return (
+                    <Link
+                      key={n.id}
+                      href={`/notices/${n.id}`}
+                      className="block glass-card rounded-xl p-5 border border-purple-500/30 hover:border-purple-400/50 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <h3 className="text-lg sm:text-xl font-bold text-yellow-100 break-words">
+                            {n.title || '無題'}
+                          </h3>
+
+                          <p
+                            className="mt-2 text-sm text-gray-300 overflow-hidden text-ellipsis"
+                            style={{
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              whiteSpace: 'normal',
+                            }}
+                            title={n.content}
+                          >
+                            {n.content}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-sm text-gray-400 shrink-0">
+                          <FaCalendarAlt />
+                          <div className="text-right leading-tight">
+                            <div>
+                              {n.date
+                                ? new Date(n.date).toLocaleDateString('ja-JP', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric',
+                                  })
+                                : ''}
+                            </div>
+
+                            {updated && (
+                              <div className="text-[11px] text-gray-500">
+                                （最終更新: {updated}）
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 text-sm text-gray-400 shrink-0">
-                        <FaCalendarAlt />
-                        <span>
-                          {new Date(n.date).toLocaleDateString('ja-JP', {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                          })}
-                        </span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </>
