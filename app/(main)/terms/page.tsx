@@ -31,7 +31,7 @@ export default function TermsPage() {
               <h2 className="text-2xl font-bold text-purple-300">第1条（目的）</h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
-              本規約は、テーブルシャッフルボード日本ランキングシステム（以下「本サービス」といいます）の利用に関する条件を定めるものです。
+              本規約は、テーブルシャッフルボード豊浦ランキングシステム（以下「本サービス」といいます）の利用に関する条件を定めるものです。
               利用者は、本規約に同意した上で本サービスを利用するものとします。
             </p>
           </section>
@@ -45,8 +45,8 @@ export default function TermsPage() {
               <h2 className="text-2xl font-bold text-blue-300">第2条（利用登録）</h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
-              利用登録を希望する者は、本規約に同意の上、当社の定める方法によって利用登録を申請し、
-              当社がこれを承認することによって、利用登録が完了するものとします。
+              利用登録を希望する者は、本規約に同意の上、当クラブの定める方法によって利用登録を申請し、
+              当クラブがこれを承認することによって、利用登録が完了するものとします。
             </p>
           </section>
 
@@ -99,7 +99,7 @@ export default function TermsPage() {
                 '他の利用者になりすます行為',
                 '本サービスの運営を妨害する行為',
                 '他の利用者に対する誹謗中傷行為',
-                'その他、当社が不適切と判断する行為'
+                'その他、当クラブが不適切と判断する行為'
               ].map((item, index) => (
                 <li key={index} className="flex items-center gap-3 text-gray-300 bg-red-900/20 rounded-lg p-2 border border-red-500/20">
                   <span className="text-red-400">✗</span>
@@ -132,8 +132,8 @@ export default function TermsPage() {
               <h2 className="text-2xl font-bold text-orange-300">第6条（免責事項）</h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
-              本サービスの利用により生じた損害について、当社は一切の責任を負いません。
-              ただし、当社に故意または重大な過失がある場合を除きます。
+              本サービスの利用により生じた損害について、当クラブは一切の責任を負いません。
+              ただし、当クラブに故意または重大な過失がある場合を除きます。
             </p>
           </section>
 
@@ -146,7 +146,7 @@ export default function TermsPage() {
               <h2 className="text-2xl font-bold text-cyan-300">第7条（規約の変更）</h2>
             </div>
             <p className="text-gray-300 leading-relaxed">
-              当社は、必要と判断した場合には、利用者に通知することなく本規約を変更することができるものとします。
+              当クラブは、必要と判断した場合には、利用者に通知することなく本規約を変更することができるものとします。
               変更後の規約は、本サービス上に掲示された時点から効力を生じるものとします。
             </p>
           </section>
@@ -161,7 +161,7 @@ export default function TermsPage() {
             </div>
             <p className="text-gray-300 leading-relaxed">
               本規約の解釈にあたっては、日本法を準拠法とします。
-              本サービスに関して紛争が生じた場合には、当社の本店所在地を管轄する裁判所を専属的合意管轄とします。
+              本サービスに関して紛争が生じた場合には、当クラブの所在地を管轄する裁判所を専属的合意管轄とします。
             </p>
           </section>
 
@@ -170,8 +170,8 @@ export default function TermsPage() {
             <div className="flex items-center gap-2 text-sm text-gray-400">
               <FaCalendarAlt className="text-purple-400" />
               <div>
-                <p>制定日：2025年8月1日</p>
-                <p>最終更新日：2025年8月1日</p>
+                <p>制定日：2026年2月9日</p>
+                <p>最終更新日：2026年2月9日</p>
               </div>
             </div>
           </div>

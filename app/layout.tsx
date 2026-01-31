@@ -26,9 +26,12 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const year = new Date().getFullYear();
+
   return (
     <html lang="ja" suppressHydrationWarning>
-      <body className="min-h-screen bg-[#2a2a3e] text-gray-100 antialiased">
+      {/* ✅ footerを最下部に置くため flex-col */}
+      <body className="min-h-screen bg-[#2a2a3e] text-gray-100 antialiased flex flex-col">
         {/* クライアント側で Supabase セッション→Cookie 同期（軽量） */}
         <AuthCookieSync />
 
@@ -98,7 +101,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
 
         {/* 本文 */}
-        <main className="pt-20 sm:pt-24">{children}</main>
+        <main className="pt-20 sm:pt-24 flex-1">{children}</main>
+
+        {/* ✅ フッター（最小：既存デザインに馴染むガラス表現） */}
+        <footer className="border-t border-white/10 bg-black/25 backdrop-blur supports-[backdrop-filter]:bg-black/20">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-8">
+            <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 sm:items-center sm:justify-between">
+              <div className="text-xs sm:text-sm text-gray-300">
+                <div className="font-semibold text-yellow-100">Toyoura Shufflers Club</div>
+                <div className="text-gray-400 mt-1">© {year} Toyoura Shufflers Club</div>
+              </div>
+
+              <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm">
+                <Link href="/terms" prefetch={false} className="text-gray-300 hover:text-yellow-100 transition-colors">
+                  利用規約
+                </Link>
+                <span className="text-white/15">•</span>
+                <Link href="/notices" prefetch={false} className="text-gray-300 hover:text-yellow-100 transition-colors">
+                  お知らせ
+                </Link>
+              </div>
+            </div>
+          </div>
+        </footer>
 
         {/* Interaction recovery（既存挙動維持） */}
         <InteractionRecovery />

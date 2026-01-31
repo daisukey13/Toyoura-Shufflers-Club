@@ -27,23 +27,11 @@ import VirtualList from '@/components/VirtualList';
 
 /* ─────────────────────────── Fallback (for Suspense wrapper) ─────────────────────────── */
 function Fallback() {
-  return (
-    <div className="container mx-auto px-4 py-10 text-center text-gray-300">
-      画面を読み込み中…
-    </div>
-  );
+  return <div className="container mx-auto px-4 py-10 text-center text-gray-300">画面を読み込み中…</div>;
 }
 
 /* ─────────────────────────── Lazy image ─────────────────────────── */
-const LazyImage = ({
-  src,
-  alt,
-  className,
-}: {
-  src: string;
-  alt: string;
-  className: string;
-}) => (
+const LazyImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => (
   // eslint-disable-next-line @next/next/no-img-element
   <img
     src={src}
@@ -172,12 +160,7 @@ function computeTrend(prevRank: number | undefined, curRank: number): Trend {
 
 /* ─────────────────────────── Trend Mark ─────────────────────────── */
 const TrendMark = memo(function TrendMark({ trend }: { trend: Trend }) {
-  const cls =
-    trend === 'up'
-      ? 'text-green-400'
-      : trend === 'down'
-      ? 'text-red-400'
-      : 'text-gray-500';
+  const cls = trend === 'up' ? 'text-green-400' : trend === 'down' ? 'text-red-400' : 'text-gray-500';
 
   return (
     <div
@@ -192,22 +175,11 @@ const TrendMark = memo(function TrendMark({ trend }: { trend: Trend }) {
 
 /* ─────────────────────────── Player Card ─────────────────────────── */
 const PlayerCard = memo(
-  function PlayerCard({
-    player,
-    rank,
-    trend,
-  }: {
-    player: Player;
-    rank: number;
-    trend: Trend;
-  }) {
+  function PlayerCard({ player, rank, trend }: { player: Player; rank: number; trend: Trend }) {
     const isTop3 = rank <= 3;
 
     const games = (player.wins ?? 0) + (player.losses ?? 0);
-    const winRate = useMemo(
-      () => calcWinRate(player.wins, player.losses),
-      [player.wins, player.losses]
-    );
+    const winRate = useMemo(() => calcWinRate(player.wins, player.losses), [player.wins, player.losses]);
 
     const frame = useMemo(() => {
       if (rank === 1) return 'from-yellow-400/50 to-yellow-600/50';
@@ -217,11 +189,7 @@ const PlayerCard = memo(
     }, [rank]);
 
     return (
-      <Link
-        href={`/players/${player.id}`}
-        prefetch={false}
-        aria-label={`${player.handle_name} のプロフィール`}
-      >
+      <Link href={`/players/${player.id}`} prefetch={false} aria-label={`${player.handle_name} のプロフィール`}>
         <div
           className={`glass-card rounded-xl p-4 sm:p-6 hover:scale-[1.02] transition-all cursor-pointer ${
             isTop3 ? 'border-2' : 'border'
@@ -237,11 +205,7 @@ const PlayerCard = memo(
               {isTop3 && (
                 <div
                   className={`absolute -inset-1 rounded-full blur-sm ${
-                    rank === 1
-                      ? 'bg-yellow-400'
-                      : rank === 2
-                      ? 'bg-gray-300'
-                      : 'bg-orange-500'
+                    rank === 1 ? 'bg-yellow-400' : rank === 2 ? 'bg-gray-300' : 'bg-orange-500'
                   }`}
                 />
               )}
@@ -253,9 +217,7 @@ const PlayerCard = memo(
             </div>
 
             <div className="flex-1 min-w-0">
-              <h3 className="text-lg sm:text-xl font-bold text-yellow-100 mb-1 truncate">
-                {player.handle_name}
-              </h3>
+              <h3 className="text-lg sm:text-xl font-bold text-yellow-100 mb-1 truncate">{player.handle_name}</h3>
               <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm text-gray-400">
                 <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300 whitespace-nowrap">
                   ハンディ: {player.handicap ?? 0}
@@ -264,11 +226,7 @@ const PlayerCard = memo(
             </div>
 
             <div className="text-right flex-shrink-0">
-              <div
-                className={`text-2xl sm:text-3xl font-bold ${
-                  isTop3 ? 'text-yellow-100' : 'text-purple-300'
-                }`}
-              >
+              <div className={`text-2xl sm:text-3xl font-bold ${isTop3 ? 'text-yellow-100' : 'text-purple-300'}`}>
                 {player.ranking_points ?? 0}
               </div>
               <div className="text-xs sm:text-sm text-gray-400">ポイント</div>
@@ -277,21 +235,15 @@ const PlayerCard = memo(
 
           <div className="mt-3 sm:mt-4 grid grid-cols-3 gap-2 sm:gap-4 text-center">
             <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-              <div className="text-green-400 font-bold text-sm sm:text-base">
-                {player.wins ?? 0}
-              </div>
+              <div className="text-green-400 font-bold text-sm sm:text-base">{player.wins ?? 0}</div>
               <div className="text-xs text-gray-500">勝利</div>
             </div>
             <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-              <div className="text-red-400 font-bold text-sm sm:text-base">
-                {player.losses ?? 0}
-              </div>
+              <div className="text-red-400 font-bold text-sm sm:text-base">{player.losses ?? 0}</div>
               <div className="text-xs text-gray-500">敗北</div>
             </div>
             <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-              <div className="text-blue-400 font-bold text-sm sm:text-base">
-                {games > 0 ? `${winRate.toFixed(1)}%` : '—'}
-              </div>
+              <div className="text-blue-400 font-bold text-sm sm:text-base">{games > 0 ? `${winRate.toFixed(1)}%` : '—'}</div>
               <div className="text-xs text-gray-500">勝率</div>
             </div>
           </div>
@@ -318,13 +270,7 @@ const PlayerCard = memo(
 );
 
 /* ─────────────────────────── Team Card ─────────────────────────── */
-const TeamCard = memo(function TeamCard({
-  team,
-  rank,
-}: {
-  team: TeamRankItem;
-  rank: number;
-}) {
+const TeamCard = memo(function TeamCard({ team, rank }: { team: TeamRankItem; rank: number }) {
   const isTop3 = rank <= 3;
   const frame =
     rank === 1
@@ -349,25 +295,15 @@ const TeamCard = memo(function TeamCard({
           </div>
 
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg sm:text-xl font-bold text-yellow-100 mb-1 truncate">
-              {team.name}
-            </h3>
+            <h3 className="text-lg sm:text-xl font-bold text-yellow-100 mb-1 truncate">{team.name}</h3>
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-gray-400">
-              <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">
-                メンバー: {team.team_size ?? 0}
-              </span>
-              <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">
-                平均HC: {team.avg_hc ?? 0}
-              </span>
+              <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">メンバー: {team.team_size ?? 0}</span>
+              <span className="px-2 py-1 rounded-full bg-purple-900/30 text-purple-300">平均HC: {team.avg_hc ?? 0}</span>
             </div>
           </div>
 
           <div className="text-right flex-shrink-0">
-            <div
-              className={`text-2xl sm:text-3xl font-bold ${
-                isTop3 ? 'text-yellow-100' : 'text-purple-300'
-              }`}
-            >
+            <div className={`text-2xl sm:text-3xl font-bold ${isTop3 ? 'text-yellow-100' : 'text-purple-300'}`}>
               {Math.round(team.avg_rp ?? 0)}
             </div>
             <div className="text-xs sm:text-sm text-gray-400">平均RP</div>
@@ -376,9 +312,7 @@ const TeamCard = memo(function TeamCard({
 
         <div className="mt-3 sm:mt-4 grid grid-cols-4 gap-2 sm:gap-4 text-center">
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
-            <div className="text-yellow-300 font-bold text-sm sm:text-base">
-              {team.played ?? 0}
-            </div>
+            <div className="text-yellow-300 font-bold text-sm sm:text-base">{team.played ?? 0}</div>
             <div className="text-xs text-gray-500">試合</div>
           </div>
           <div className="bg-purple-900/30 rounded-lg py-1.5 sm:py-2">
@@ -412,25 +346,19 @@ const StatsCardsPlayers = memo(function StatsCardsPlayers({
       <div className="flex gap-4 min-w-max sm:min-w-0 sm:grid sm:grid-cols-3">
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-pink-500/20 min-w-[140px]">
           <FaChartLine className="text-3xl sm:text-4xl text-pink-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
-            {stats.activeCount}
-          </div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.activeCount}</div>
           <div className="text-gray-400 text-xs sm:text-base">アクティブプレーヤー</div>
         </div>
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20 min-w-[140px]">
           <FaFire className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
-            {stats.highestPoints}
-          </div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.highestPoints}</div>
           <div className="text-gray-400 text-xs sm:text-base">最高ポイント</div>
         </div>
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-purple-500/20 min-w-[140px]">
           <FaMedal className="text-3xl sm:text-4xl text-purple-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
-            {stats.averagePoints}
-          </div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.averagePoints}</div>
           <div className="text-gray-400 text-xs sm:text-base">平均ポイント</div>
         </div>
       </div>
@@ -448,25 +376,19 @@ const StatsCardsTeams = memo(function StatsCardsTeams({
       <div className="flex gap-4 min-w-max sm:min-w-0 sm:grid sm:grid-cols-3">
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-pink-500/20 min-w-[140px]">
           <FaUsers className="text-3xl sm:text-4xl text-pink-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
-            {stats.teamCount}
-          </div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.teamCount}</div>
           <div className="text-gray-400 text-xs sm:text-base">登録チーム</div>
         </div>
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-yellow-500/20 min-w-[140px]">
           <FaTrophy className="text-3xl sm:text-4xl text-yellow-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
-            {stats.topAvgRp}
-          </div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.topAvgRp}</div>
           <div className="text-gray-400 text-xs sm:text-base">最高平均RP</div>
         </div>
 
         <div className="glass-card rounded-xl p-4 sm:p-6 text-center border border-purple-500/20 min-w-[140px]">
           <FaPercent className="text-3xl sm:text-4xl text-purple-400 mx-auto mb-2 sm:mb-3" />
-          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">
-            {stats.avgOfAvgRp}
-          </div>
+          <div className="text-2xl sm:text-3xl font-bold text-yellow-100 mb-1">{stats.avgOfAvgRp}</div>
           <div className="text-gray-400 text-xs sm:text-base">平均RPの平均</div>
         </div>
       </div>
@@ -499,19 +421,15 @@ function RankingsInner() {
 
   /* ── Players ── */
   // ★PATCH: 生の players を取得（is_active が null の既存会員も取れる）
-  const {
-    data: rawPlayers,
-    loading: pLoading,
-    error: pError,
-    retrying: pRetrying,
-    refetch: pRefetch,
-  } = useFetchSupabaseData<Player>({
-    tableName: 'players',
-    // 必要カラム + フィルタ用の is_active/is_deleted/is_admin
-    select: 'id,handle_name,avatar_url,ranking_points,handicap,matches_played,wins,losses,is_active,is_deleted,is_admin',
-    orderBy: { columns: ['ranking_points', 'id'], ascending: false },
-    requireAuth: false,
-  });
+  const { data: rawPlayers, loading: pLoading, error: pError, retrying: pRetrying, refetch: pRefetch } =
+    useFetchSupabaseData<Player>({
+      tableName: 'players',
+      // 必要カラム + フィルタ用の is_active/is_deleted/is_admin
+      select:
+        'id,handle_name,avatar_url,ranking_points,handicap,matches_played,wins,losses,is_active,is_deleted,is_admin',
+      orderBy: { columns: ['ranking_points', 'id'], ascending: false },
+      requireAuth: false,
+    });
 
   // ★PATCH: null はアクティブ扱い（false のみ除外）
   // ✅ 追加：def も除外（ランキング一覧には出さない）
@@ -570,10 +488,7 @@ function RankingsInner() {
   }, []);
 
   /* ── ★前回訪問との差分（A方式） ── */
-  const snapshotKeyPlayers = useMemo(
-    () => `rankings_snapshot_players_${sortByPlayers}_v1`,
-    [sortByPlayers]
-  );
+  const snapshotKeyPlayers = useMemo(() => `rankings_snapshot_players_${sortByPlayers}_v1`, [sortByPlayers]);
 
   const prevSnapshotRef = useRef<Record<string, number> | null>(null);
   const latestSnapshotRef = useRef<Record<string, number>>({});
@@ -639,6 +554,24 @@ function RankingsInner() {
     };
   }, [snapshotKeyPlayers, tab]);
 
+  /* ───────────────────────────── Pager (10件ずつ表示) ───────────────────────────── */
+  const PAGE_SIZE = 10;
+
+  const [pagePlayers, setPagePlayers] = useState(0); // 0-based
+  useEffect(() => {
+    setPagePlayers(0);
+  }, [tab, sortByPlayers]); // タブ/ソートが変わったら先頭へ
+
+  const totalPlayers = rankedPlayers.length;
+  const totalPlayersPages = Math.max(1, Math.ceil(totalPlayers / PAGE_SIZE));
+  const safePlayersPage = Math.min(pagePlayers, totalPlayersPages - 1);
+  const playersStart = safePlayersPage * PAGE_SIZE;
+
+  const pagedRankedPlayers = useMemo(() => {
+    return rankedPlayers.slice(playersStart, playersStart + PAGE_SIZE);
+  }, [rankedPlayers, playersStart]);
+  /* ─────────────────────────────────────────────────────────────────────────── */
+
   const renderPlayerItem = useCallback(
     (index: number) => {
       const r = rankedPlayers[index];
@@ -650,13 +583,11 @@ function RankingsInner() {
   );
 
   /* ── Teams ── */
-  const {
-    teams,
-    loading: tLoading,
-    error: tError,
-    retrying: tRetrying,
-    refetch: tRefetch,
-  } = useTeamRankings({ enabled: tab === 'teams', orderBy: 'avg_rp', ascending: false });
+  const { teams, loading: tLoading, error: tError, retrying: tRetrying, refetch: tRefetch } = useTeamRankings({
+    enabled: tab === 'teams',
+    orderBy: 'avg_rp',
+    ascending: false,
+  });
 
   const [sortByTeams, setSortByTeams] = useState<'avg_rp' | 'win_pct'>('avg_rp');
   const [isPendingTeams, startTransitionTeams] = useTransition();
@@ -682,6 +613,22 @@ function RankingsInner() {
     startTransitionTeams(() => setSortByTeams(k));
   }, []);
 
+  /* ───────────────────────────── Pager (10件ずつ表示) ───────────────────────────── */
+  const [pageTeams, setPageTeams] = useState(0); // 0-based
+  useEffect(() => {
+    setPageTeams(0);
+  }, [tab, sortByTeams]); // タブ/ソートが変わったら先頭へ
+
+  const totalTeams = sortedTeams.length;
+  const totalTeamsPages = Math.max(1, Math.ceil(totalTeams / PAGE_SIZE));
+  const safeTeamsPage = Math.min(pageTeams, totalTeamsPages - 1);
+  const teamsStart = safeTeamsPage * PAGE_SIZE;
+
+  const pagedTeams = useMemo(() => {
+    return sortedTeams.slice(teamsStart, teamsStart + PAGE_SIZE);
+  }, [sortedTeams, teamsStart]);
+  /* ─────────────────────────────────────────────────────────────────────────── */
+
   const renderTeamItem = useCallback(
     (index: number) => {
       const t = sortedTeams[index];
@@ -699,9 +646,7 @@ function RankingsInner() {
         <div className="inline-block p-3 sm:p-4 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-yellow-400/20 to-orange-600/20">
           <FaTrophy className="text-4xl sm:text-5xl text-yellow-400" />
         </div>
-        <h1 className="text-3xl sm:text-4xl font-bold mb-2 sm:mb-3 text-yellow-100">
-          🏆 ランキング
-        </h1>
+        <h1 className="text-3xl sm:text-4xl font-bold mb-2 sm:mb-3 text-yellow-100">ランキング</h1>
         <p className="text-gray-400 text-sm sm:text-base">個人・チームのランキングをタブで切替</p>
       </div>
 
@@ -777,16 +722,64 @@ function RankingsInner() {
                 </div>
               </div>
 
-              {/* リスト */}
-              {rankedPlayers.length <= 20 ? (
-                <div className="space-y-3 sm:space-y-4">
-                  {rankedPlayers.map((r) => {
-                    const trend = trendById[r.player.id] ?? 'same';
-                    return <PlayerCard key={r.player.id} player={r.player} rank={r.rank} trend={trend} />;
-                  })}
+              {/* ★ページャ（上） */}
+              <div className="mb-4 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPagePlayers((p) => Math.max(0, p - 1))}
+                  disabled={safePlayersPage <= 0}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  ← 前の10件
+                </button>
+
+                <div className="text-xs sm:text-sm text-gray-300">
+                  {playersStart + 1}–{Math.min(playersStart + PAGE_SIZE, totalPlayers)} / {totalPlayers}
+                  <span className="ml-2 text-gray-500">
+                    （{safePlayersPage + 1}/{totalPlayersPages}）
+                  </span>
                 </div>
-              ) : (
-                // ✅ VirtualList を通常 import にしたので、ここは Suspense 不要
+
+                <button
+                  type="button"
+                  onClick={() => setPagePlayers((p) => Math.min(totalPlayersPages - 1, p + 1))}
+                  disabled={safePlayersPage >= totalPlayersPages - 1}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  次の10件 →
+                </button>
+              </div>
+
+              {/* リスト（10件表示） */}
+              <div className="space-y-3 sm:space-y-4">
+                {pagedRankedPlayers.map((r) => {
+                  const trend = trendById[r.player.id] ?? 'same';
+                  return <PlayerCard key={r.player.id} player={r.player} rank={r.rank} trend={trend} />;
+                })}
+              </div>
+
+              {/* ★ページャ（下） */}
+              <div className="mt-5 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPagePlayers((p) => Math.max(0, p - 1))}
+                  disabled={safePlayersPage <= 0}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  ← 前の10件
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPagePlayers((p) => Math.min(totalPlayersPages - 1, p + 1))}
+                  disabled={safePlayersPage >= totalPlayersPages - 1}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  次の10件 →
+                </button>
+              </div>
+
+              {/* （残しておく：VirtualList が必要になったら使える） */}
+              <div className="hidden">
                 <VirtualList
                   items={rankedPlayers}
                   height={600}
@@ -794,7 +787,7 @@ function RankingsInner() {
                   renderItem={renderPlayerItem}
                   className="space-y-3 sm:space-y-4"
                 />
-              )}
+              </div>
             </>
           )}
         </>
@@ -844,15 +837,63 @@ function RankingsInner() {
                 </div>
               </div>
 
-              {/* リスト */}
-              {sortedTeams.length <= 20 ? (
-                <div className="space-y-3 sm:space-y-4">
-                  {sortedTeams.map((t, i) => (
-                    <TeamCard key={t.id} team={t} rank={i + 1} />
-                  ))}
+              {/* ★ページャ（上） */}
+              <div className="mb-4 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPageTeams((p) => Math.max(0, p - 1))}
+                  disabled={safeTeamsPage <= 0}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  ← 前の10件
+                </button>
+
+                <div className="text-xs sm:text-sm text-gray-300">
+                  {teamsStart + 1}–{Math.min(teamsStart + PAGE_SIZE, totalTeams)} / {totalTeams}
+                  <span className="ml-2 text-gray-500">
+                    （{safeTeamsPage + 1}/{totalTeamsPages}）
+                  </span>
                 </div>
-              ) : (
-                // ✅ 同様に Suspense 不要
+
+                <button
+                  type="button"
+                  onClick={() => setPageTeams((p) => Math.min(totalTeamsPages - 1, p + 1))}
+                  disabled={safeTeamsPage >= totalTeamsPages - 1}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  次の10件 →
+                </button>
+              </div>
+
+              {/* リスト（10件表示） */}
+              <div className="space-y-3 sm:space-y-4">
+                {pagedTeams.map((t, i) => (
+                  <TeamCard key={t.id} team={t} rank={teamsStart + i + 1} />
+                ))}
+              </div>
+
+              {/* ★ページャ（下） */}
+              <div className="mt-5 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPageTeams((p) => Math.max(0, p - 1))}
+                  disabled={safeTeamsPage <= 0}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  ← 前の10件
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPageTeams((p) => Math.min(totalTeamsPages - 1, p + 1))}
+                  disabled={safeTeamsPage >= totalTeamsPages - 1}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  次の10件 →
+                </button>
+              </div>
+
+              {/* （残しておく：VirtualList が必要になったら使える） */}
+              <div className="hidden">
                 <VirtualList
                   items={sortedTeams}
                   height={600}
@@ -860,7 +901,7 @@ function RankingsInner() {
                   renderItem={renderTeamItem}
                   className="space-y-3 sm:space-y-4"
                 />
-              )}
+              </div>
             </>
           )}
         </>

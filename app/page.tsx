@@ -4,7 +4,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import RegisterButtons from '@/components/RegisterButtons';
-import AuthAwareLoginButtonClient from '@/components/client/AuthAwareLoginButton.client';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
@@ -446,7 +445,8 @@ export default function HomePage() {
   return (
     <div className="min-h-screen">
       {/* ヒーローセクション */}
-      <div className="relative py-10 sm:py-20 text-center">
+      <div className="relative pt-[calc(env(safe-area-inset-top)+0.35rem)] pb-8 sm:pt-10 sm:pb-12 text-center">
+
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute -inset-24 bg-[radial-gradient(ellipse_at_top_right,rgba(168,85,247,0.20),transparent_60%)]" />
           <div className="absolute -inset-24 bg-[radial-gradient(ellipse_at_bottom_left,rgba(236,72,153,0.18),transparent_60%)]" />
@@ -455,21 +455,25 @@ export default function HomePage() {
 
         <div className="relative z-10 px-4">
           <div className="mb-6 sm:mb-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 sm:w-20 sm:h-20 mb-3 sm:mb-4 rounded-full bg-gradient-to-br from-yellow-400/20 to-orange-600/20 backdrop-blur-sm border border-yellow-400/30 shadow-lg">
-              <span className="text-2xl sm:text-4xl">🏆</span>
+            {/* ✅ 追加：ロゴ（トップ中央・レスポンシブ・失敗時非表示） */}
+            <div className="flex justify-center mb-4 sm:mb-6">
+              
+              <div className="w-full max-w-[680px]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/logo-toyoura-shufflers.png"
+                  alt="Toyoura Shufflers Club"
+                  className="w-full h-auto object-contain select-none pointer-events-none"
+                  loading="eager"
+                  decoding="async"
+                  onError={(e) => {
+                    // 画像が無い/壊れてる場合でも UI を崩さない
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              </div>
             </div>
 
-            <h1 className="font-bold tracking-tight mb-2">
-              <span className="sm:hidden">
-                <span className="block text-2xl bg-gradient-to-r from-yellow-300 to-orange-400 bg-clip-text text-transparent">
-                  豊浦シャッフラーズ
-                </span>
-                <span className="block text-lg text-yellow-200">CLUB</span>
-              </span>
-              <span className="hidden sm:inline-block text-5xl lg:text-6xl bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
-                豊浦シャッフラーズクラブ
-              </span>
-            </h1>
 
             <div className="flex items-center justify-center gap-1 mb-3">
               <div className="w-8 h-px bg-gradient-to-r from-transparent to-yellow-400/50" />
@@ -478,33 +482,19 @@ export default function HomePage() {
             </div>
 
             <p className="text-sm sm:text-lg text-gray-300 max-w-xs sm:max-w-md mx-auto">
-              みんなで楽しくシャッフルボード！
+              みんなで楽しくテーブルシャッフルボード！
             </p>
           </div>
 
-          {/* CTA */}
-          <div className="flex flex-col sm:flex-row gap-3 justify-center max-w-xs mx-auto sm:max-w-none">
-            <Link
-              href="/register"
-              className="gradient-button px-6 py-2.5 sm:px-8 sm:py-3 rounded-full text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
-            >
-              <FaUserPlus className="text-sm" /> 新規登録
-            </Link>
+        
 
-            <div className="px-0 sm:px-0">
-              <RegisterButtons />
-            </div>
-
-            <AuthAwareLoginButtonClient />
-          </div>
 
           {/* お知らせ */}
           {notices.length > 0 && (
             <div className="mt-8 sm:mt-12 max-w-2xl mx-auto">
               <h3 className="text-base sm:text-lg font-semibold text-yellow-300 mb-3 sm:mb-4 flex items-center justify-center gap-2">
-                <span className="text-lg sm:text-base">📢</span>
-                <span>お知らせ</span>
-              </h3>
+  <span>お知らせ</span>
+</h3>
               <div className="space-y-2">
                 {notices.map((notice) => (
                   <Link
@@ -575,6 +565,74 @@ export default function HomePage() {
             <div className="text-xs sm:text-base text-gray-400">平均pts</div>
           </div>
         </div>
+
+ {/* CTA（Mobile: 2段グリッド / PC: 横並び） */}
+<div className="mt-6 sm:mt-8">
+  {/* Mobile */}
+  <div className="sm:hidden max-w-xs mx-auto space-y-3">
+    {/* 1) Primary: 新規登録（横幅いっぱいで強調） */}
+    <Link
+      href="/register"
+      className="gradient-button w-full px-6 py-3 rounded-2xl text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20"
+    >
+      <FaUserPlus className="text-sm" />
+      メンバー登録
+    </Link>
+
+    {/* 2) Secondary: 試合登録（2列で整理） */}
+    <div className="grid grid-cols-2 gap-3">
+      <Link
+        href="/matches/register/singles"
+        className="w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white
+          bg-gradient-to-r from-purple-600/80 to-pink-600/80
+          border border-white/10 shadow-md shadow-purple-600/10
+          flex items-center justify-center gap-2"
+      >
+        
+        個人戦登録
+      </Link>
+
+      <Link
+        href="/matches/register/teams"
+        className="w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white
+          bg-gradient-to-r from-amber-500/80 to-orange-600/80
+          border border-white/10 shadow-md shadow-orange-600/10
+          flex items-center justify-center gap-2"
+      >
+       
+        チーム戦登録
+      </Link>
+    </div>
+
+    {/* 3) Login（横幅いっぱい・落ち着いた存在感） */}
+    <div className="pt-1">
+   
+    </div>
+
+    {/* 4) 区切り線（お知らせへ自然につなぐ） */}
+    <div className="pt-2">
+      <div className="h-px w-full bg-gradient-to-r from-transparent via-purple-500/30 to-transparent" />
+    </div>
+  </div>
+
+  {/* PC/Tablet（従来どおり横並び） */}
+  <div className="hidden sm:flex flex-row gap-3 justify-center max-w-xs mx-auto sm:max-w-none">
+    <Link
+      href="/register"
+      className="gradient-button px-6 py-2.5 sm:px-8 sm:py-3 rounded-full text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
+    >
+      <FaUserPlus className="text-sm" /> メンバー登録
+    </Link>
+
+    <div className="px-0 sm:px-0">
+      <RegisterButtons />
+    </div>
+
+  </div>
+</div>
+
+
+
 
         {/* トッププレーヤー */}
         <div className="mb-8 sm:mb-12">
@@ -791,7 +849,6 @@ export default function HomePage() {
           <div className="mb-8 sm:mb-10">
             <div className="text-center mb-4">
               <h2 className="text-lg sm:text-xl font-bold text-yellow-100 inline-flex items-center gap-2">
-                <FaTrophy className="text-amber-300" />
                 直近の大会
               </h2>
               <div className="mt-2 flex items-center justify-center gap-1">

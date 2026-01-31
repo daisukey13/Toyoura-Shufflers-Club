@@ -3,7 +3,7 @@
 
 import { useState, useMemo, memo, useCallback, useEffect } from 'react';
 import Link from 'next/link';
-import { FaUsers, FaSearch, FaFilter, FaChartLine, FaCrown } from 'react-icons/fa';
+import { FaUsers, FaSearch, FaFilter, FaChartLine } from 'react-icons/fa';
 import { useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
 import { MobileLoadingState } from '@/components/MobileLoadingState';
 import { createClient } from '@/lib/supabase/client';
@@ -290,7 +290,7 @@ export default function PlayersPage() {
       '内地',
       '外国（Visitor)',
     ],
-    []
+    [],
   );
 
   // フィルタ & ソート（✅ def を一覧から除外：最小修正）
@@ -330,6 +330,25 @@ export default function PlayersPage() {
       }
     });
   }, [players, searchTerm, filterAddress, sortBy, isAdmin, status]);
+
+  /* ───────────────────────────── Pager (10件ずつ) ───────────────────────────── */
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(0); // 0-based
+
+  // 条件が変わったら先頭へ（空ページ事故防止）
+  useEffect(() => {
+    setPage(0);
+  }, [searchTerm, filterAddress, sortBy, status]);
+
+  const total = filteredAndSortedPlayers.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const startIndex = safePage * PAGE_SIZE;
+
+  const pagedPlayers = useMemo(() => {
+    return filteredAndSortedPlayers.slice(startIndex, startIndex + PAGE_SIZE);
+  }, [filteredAndSortedPlayers, startIndex]);
+  /* ─────────────────────────────────────────────────────────────────────────── */
 
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
@@ -448,11 +467,67 @@ export default function PlayersPage() {
                 <p className="text-gray-400 text-sm sm:text-base">該当するプレーヤーが見つかりませんでした</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
-                {filteredAndSortedPlayers.map((player, i) => (
-                  <PlayerCard key={player.id} player={player} rank={i + 1} sortBy={sortBy} />
-                ))}
-              </div>
+              <>
+                {/* ★ページャ（上） */}
+                <div className="mb-4 flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    disabled={safePage <= 0}
+                    className="px-4 py-2 rounded-lg bg-gray-900/60 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                  >
+                    ← 前の10件
+                  </button>
+
+                  <div className="text-xs sm:text-sm text-gray-300">
+                    {startIndex + 1}–{Math.min(startIndex + PAGE_SIZE, total)} / {total}
+                    <span className="ml-2 text-gray-500">
+                      （{safePage + 1}/{totalPages}）
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                    disabled={safePage >= totalPages - 1}
+                    className="px-4 py-2 rounded-lg bg-gray-900/60 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                  >
+                    次の10件 →
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+                  {pagedPlayers.map((player, i) => (
+                    <PlayerCard
+                      key={player.id}
+                      player={player}
+                      // ✅ 全体順位を維持（ページ内で1..10にしない）
+                      rank={startIndex + i + 1}
+                      sortBy={sortBy}
+                    />
+                  ))}
+                </div>
+
+                {/* ★ページャ（下） */}
+                <div className="mt-5 flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    disabled={safePage <= 0}
+                    className="px-4 py-2 rounded-lg bg-gray-900/60 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                  >
+                    ← 前の10件
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                    disabled={safePage >= totalPages - 1}
+                    className="px-4 py-2 rounded-lg bg-gray-900/60 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                  >
+                    次の10件 →
+                  </button>
+                </div>
+              </>
             )}
           </>
         )}

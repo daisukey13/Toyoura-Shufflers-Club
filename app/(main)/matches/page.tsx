@@ -213,7 +213,14 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
     }
     return date.toLocaleString();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [(m as any).match_date, (m as any).played_at, (m as any).match_datetime, (m as any).game_date, (m as any).created_at, (m as any).updated_at]);
+  }, [
+    (m as any).match_date,
+    (m as any).played_at,
+    (m as any).match_datetime,
+    (m as any).game_date,
+    (m as any).created_at,
+    (m as any).updated_at,
+  ]);
 
   return (
     <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 sm:mb-4 text-xs sm:text-sm">
@@ -284,14 +291,12 @@ const SinglesCard = memo(function SinglesCard({
     pickNumber(m, ['winner_current_points', 'winner_ranking_points', 'winner_points', 'winner_rp']) ??
     wProfile?.ranking_points ??
     0;
-  const wHC =
-    pickNumber(m, ['winner_current_handicap', 'winner_handicap', 'winner_hc']) ?? wProfile?.handicap ?? 0;
+  const wHC = pickNumber(m, ['winner_current_handicap', 'winner_handicap', 'winner_hc']) ?? wProfile?.handicap ?? 0;
   const lRP =
     pickNumber(m, ['loser_current_points', 'loser_ranking_points', 'loser_points', 'loser_rp']) ??
     lProfile?.ranking_points ??
     0;
-  const lHC =
-    pickNumber(m, ['loser_current_handicap', 'loser_handicap', 'loser_hc']) ?? lProfile?.handicap ?? 0;
+  const lHC = pickNumber(m, ['loser_current_handicap', 'loser_handicap', 'loser_hc']) ?? lProfile?.handicap ?? 0;
 
   const isUpset = useMemo(() => wRP < lRP - 100 || wHC > lHC + 5, [wRP, lRP, wHC, lHC]);
 
@@ -325,7 +330,9 @@ const SinglesCard = memo(function SinglesCard({
               <LazyImage
                 src={wAvatar}
                 alt={wName || ''}
-                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${isUpset ? 'border-yellow-500/50' : 'border-green-500/50'}`}
+                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 ${
+                  isUpset ? 'border-yellow-500/50' : 'border-green-500/50'
+                }`}
               />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{wName}</p>
@@ -358,7 +365,11 @@ const SinglesCard = memo(function SinglesCard({
 
           <Link href={`/players/${lid}`} prefetch={false} className="group">
             <div className="flex items-center gap-3 p-3 sm:p-4 rounded-lg bg-gradient-to-r from-red-500/10 to-pink-500/10 border border-red-500/30 group-hover:border-red-400/50 transition-all">
-              <LazyImage src={lAvatar} alt={lName || ''} className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-red-500/50" />
+              <LazyImage
+                src={lAvatar}
+                alt={lName || ''}
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-red-500/50"
+              />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white group-hover:text-purple-400 transition-colors truncate">{lName}</p>
                 <p className="text-xs sm:text-sm text-red-400">敗北</p>
@@ -425,9 +436,7 @@ function TeamMembersRow({ members }: { members: MemberProfile[] }) {
           </div>
         )}
       </div>
-      <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">
-        {members.map((m) => m.handle_name).join(' / ')}
-      </div>
+      <div className="text-[11px] text-gray-300 mt-1 line-clamp-1">{members.map((m) => m.handle_name).join(' / ')}</div>
     </div>
   );
 }
@@ -549,18 +558,38 @@ export default function MatchesPage() {
     return filtered;
   }, [matches, searchTerm, filter, dateFilter]);
 
+  /* ───────────────────────────── Pager (10件ずつ表示) ───────────────────────────── */
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(0); // 0-based
+
+  // フィルタ/検索条件が変わったら先頭へ（UXが自然）
+  useEffect(() => {
+    setPage(0);
+  }, [filter, searchTerm, dateFilter]);
+
+  const total = filteredSortedMatches.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const start = safePage * PAGE_SIZE;
+
+  const pagedMatches = useMemo(() => {
+    return filteredSortedMatches.slice(start, start + PAGE_SIZE);
+  }, [filteredSortedMatches, start]);
+  /* ─────────────────────────────────────────────────────────────────────────── */
+
   const [playersById, setPlayersById] = useState<Record<string, PlayerLite>>({});
 
+  // ✅ 10件表示に合わせて「参照するプレイヤーID」も10件分だけに（RESTが軽くなる）
   const visiblePlayerIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const m of filteredSortedMatches) {
+    for (const m of pagedMatches) {
       const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
       if (isTeams) continue;
       if (m.winner_id) ids.add(m.winner_id);
       if (m.loser_id) ids.add(m.loser_id);
     }
     return Array.from(ids);
-  }, [filteredSortedMatches]);
+  }, [pagedMatches]);
 
   useEffect(() => {
     let cancelled = false;
@@ -597,14 +626,15 @@ export default function MatchesPage() {
 
   const [membersByTeam, setMembersByTeam] = useState<Record<string, MemberProfile[]>>({});
 
+  // ✅ 10件表示に合わせて「参照するチームID」も10件分だけに（RESTが軽くなる）
   const visibleTeamIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const m of filteredSortedMatches) {
+    for (const m of pagedMatches) {
       if (m.winner_team_id) ids.add(m.winner_team_id);
       if (m.loser_team_id) ids.add(m.loser_team_id);
     }
     return Array.from(ids);
-  }, [filteredSortedMatches]);
+  }, [pagedMatches]);
 
   useEffect(() => {
     let cancelled = false;
@@ -676,7 +706,8 @@ export default function MatchesPage() {
     return { totalMatches, todayMatches, tournamentMatches, avgScoreDiff };
   }, [matches]);
 
-  const useVirtual = !isSmall && filteredSortedMatches.length > 20;
+  // ★Pager方式では VirtualList 不要。将来戻せるように残すだけ。
+  const useVirtual = false;
   const virtualItemHeight = useMemo(() => 240, []);
 
   const renderItem = useCallback(
@@ -684,7 +715,11 @@ export default function MatchesPage() {
       const m = filteredSortedMatches[index];
       if (!m) return null;
       const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
-      return isTeams ? <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} /> : <SinglesCard key={m.id} m={m} playersById={playersById} />;
+      return isTeams ? (
+        <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
+      ) : (
+        <SinglesCard key={m.id} m={m} playersById={playersById} />
+      );
     },
     [filteredSortedMatches, membersByTeam, playersById]
   );
@@ -795,14 +830,44 @@ export default function MatchesPage() {
               </div>
             </div>
 
+            {/* ★ページャ（上） */}
+            {total > 0 && (
+              <div className="mb-4 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={safePage <= 0}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  ← 前の10件
+                </button>
+
+                <div className="text-xs sm:text-sm text-gray-300">
+                  {start + 1}–{Math.min(start + PAGE_SIZE, total)} / {total}
+                  <span className="ml-2 text-gray-500">
+                    （{safePage + 1}/{totalPages}）
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={safePage >= totalPages - 1}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  次の10件 →
+                </button>
+              </div>
+            )}
+
             {filteredSortedMatches.length === 0 ? (
               <div className="text-center py-12 sm:py-16">
                 <FaGamepad className="text-5xl sm:text-6xl text-gray-600 mx-auto mb-4" />
                 <p className="text-gray-400 text-sm sm:text-base">条件に合う試合が見つかりません</p>
               </div>
-            ) : !useVirtual ? (
+            ) : (
               <div className="space-y-3 sm:space-y-4">
-                {filteredSortedMatches.map((m) => {
+                {pagedMatches.map((m) => {
                   const isTeams = m.mode === 'teams' || !!m.winner_team_name || !!m.loser_team_name;
                   return isTeams ? (
                     <TeamsCard key={m.id} m={m} membersByTeam={membersByTeam} />
@@ -811,15 +876,41 @@ export default function MatchesPage() {
                   );
                 })}
               </div>
-            ) : (
-              // ✅ VirtualList を通常 import にしたので Suspense 不要
-              <VirtualList
-                items={filteredSortedMatches}
-                height={720}
-                itemHeight={virtualItemHeight}
-                renderItem={renderItem}
-                className="space-y-3 sm:space-y-4"
-              />
+            )}
+
+            {/* ★ページャ（下） */}
+            {total > 0 && filteredSortedMatches.length > 0 && (
+              <div className="mt-5 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={safePage <= 0}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  ← 前の10件
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={safePage >= totalPages - 1}
+                  className="px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-500/30 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/5 transition text-sm"
+                >
+                  次の10件 →
+                </button>
+              </div>
+            )}
+
+            {/* （残しておく：VirtualList が必要になったら戻せる） */}
+            {useVirtual && (
+              <div className="hidden">
+                <VirtualList
+                  items={filteredSortedMatches}
+                  height={720}
+                  itemHeight={virtualItemHeight}
+                  renderItem={renderItem}
+                  className="space-y-3 sm:space-y-4"
+                />
+              </div>
             )}
           </>
         )}
