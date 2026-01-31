@@ -85,6 +85,79 @@ function inferChampionFromMatches(ms: FinalMatchMini[]): string | null {
   return lastRound[0]?.winner_id ?? null;
 }
 
+function isDefHandle(handle: string | null | undefined) {
+  return String(handle ?? '').trim().toLowerCase() === 'def';
+}
+
+function uniqById<T extends { id: string }>(rows: T[]) {
+  const map = new Map<string, T>();
+  for (const r of rows) map.set(r.id, r);
+  return Array.from(map.values());
+}
+
+/**
+ * ✅ 参加者取得（最小修正）
+ * 1) tournament_entries → players リレーションがあればそれを優先
+ * 2) 0件 or 失敗なら match_details(winner_id/loser_id) から抽出して players を引く
+ */
+async function fetchParticipants(tournamentId: string): Promise<PlayerMini[]> {
+  // 1) tournament_entries 優先
+  const { data: entryRows, error: entryErr } = await supabase
+    .from('tournament_entries')
+    .select('player_id, players(id,handle_name,avatar_url)')
+    .eq('tournament_id', tournamentId);
+
+  if (!entryErr && entryRows && entryRows.length > 0) {
+    const direct = entryRows
+      .map((r: any) => r.players)
+      .filter(Boolean)
+      .map((p: any) => ({
+        id: String(p.id),
+        handle_name: (p.handle_name ?? null) as string | null,
+        avatar_url: (p.avatar_url ?? null) as string | null,
+      }))
+      .filter((p) => !isDefHandle(p.handle_name));
+
+    return uniqById(direct);
+  }
+
+  // 2) match_details フォールバック（winner/loser から抽出）
+  const { data: mdRows, error: mdErr } = await supabase
+    .from('match_details')
+    .select('winner_id,loser_id')
+    .eq('tournament_id', tournamentId)
+    .limit(2000);
+
+  if (mdErr || !mdRows || mdRows.length === 0) return [];
+
+  const ids = Array.from(
+    new Set(
+      mdRows
+        .flatMap((r: any) => [r?.winner_id, r?.loser_id])
+        .filter((v: any) => typeof v === 'string' && v.length > 0)
+    )
+  );
+
+  if (!ids.length) return [];
+
+  const { data: pRows, error: pErr } = await supabase
+    .from('players')
+    .select('id,handle_name,avatar_url,is_active,is_deleted')
+    .in('id', ids);
+
+  if (pErr || !pRows) return [];
+
+  return pRows
+    .filter((p: any) => p?.is_deleted !== true)
+    .filter((p: any) => p?.is_active !== false) // null は OK
+    .map((p: any) => ({
+      id: String(p.id),
+      handle_name: (p.handle_name ?? null) as string | null,
+      avatar_url: (p.avatar_url ?? null) as string | null,
+    }))
+    .filter((p) => !isDefHandle(p.handle_name));
+}
+
 export default function TournamentTopPage() {
   const params = useParams();
   const tournamentId = typeof params?.tournamentId === 'string' ? params.tournamentId : '';
@@ -99,6 +172,10 @@ export default function TournamentTopPage() {
   const [finalsStatus, setFinalsStatus] = useState<'none' | 'in_progress' | 'done'>('none');
 
   const [championImgError, setChampionImgError] = useState(false);
+
+  // ✅ 参加者帯
+  const [participants, setParticipants] = useState<PlayerMini[]>([]);
+  const [participantImgErrorIds, setParticipantImgErrorIds] = useState<Record<string, true>>({});
 
   const participantPlanned = useMemo(() => {
     if (!tournament) return 0;
@@ -118,6 +195,9 @@ export default function TournamentTopPage() {
       setFinalsStatus('none');
       setChampionImgError(false);
 
+      setParticipants([]);
+      setParticipantImgErrorIds({});
+
       try {
         const { data: tRow, error: tErr } = await supabase
           .from('tournaments')
@@ -130,6 +210,14 @@ export default function TournamentTopPage() {
 
         if (cancelled) return;
         setTournament(tRow as TournamentRow);
+
+        // ✅ 参加者取得（失敗しても落とさない）
+        try {
+          const rows = await fetchParticipants(tournamentId);
+          if (!cancelled) setParticipants(rows);
+        } catch {
+          // noop
+        }
 
         const { data: bRows, error: bErr } = await supabase
           .from('final_brackets')
@@ -209,14 +297,10 @@ export default function TournamentTopPage() {
             <div className="absolute -left-24 -bottom-24 w-72 h-72 rounded-full bg-pink-600 blur-3xl" />
           </div>
 
-          {/* ✅ ここから：ヘッダーを「情報→リンク→優勝者カード(下段)」の縦構成に変更 */}
           <div className="relative">
-            {/* 上段：大会情報 + ナビリンク（モバイルは縦、md で横） */}
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-xs text-gray-300">TOURNAMENT</div>
-
-                {/* ✅ モバイルでタイトルが縦潰れしないよう truncate を外し、折り返し許可 */}
                 <h1 className="text-2xl md:text-3xl font-bold break-words leading-tight">{title}</h1>
 
                 {tournament?.description && (
@@ -232,7 +316,6 @@ export default function TournamentTopPage() {
                 </div>
               </div>
 
-              {/* ✅ リンクは右寄せに集約（モバイルは左寄せ/折り返し） */}
               <div className="flex items-center md:justify-end gap-3 text-xs flex-wrap">
                 <Link href="/tournaments" className="text-blue-300 hover:text-blue-200 underline">
                   大会一覧へ
@@ -246,14 +329,12 @@ export default function TournamentTopPage() {
               </div>
             </div>
 
-            {/* 下段：優勝者カード（✅ここへ移動） */}
             <div className="mt-4 flex md:justify-end">
               <div className="w-full md:w-[420px] rounded-xl border border-white/10 bg-black/20 px-4 py-3">
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="text-base md:text-lg font-bold flex items-center gap-2">
                       <FaTrophy className="text-yellow-300" />
-                      {/* ✅ 省略しすぎない（折り返しOK） */}
                       <span className="break-words leading-snug">{winnerLabel}</span>
                     </div>
                   </div>
@@ -278,7 +359,6 @@ export default function TournamentTopPage() {
               </div>
             </div>
           </div>
-          {/* ✅ ここまで */}
         </div>
 
         {error && (
@@ -328,6 +408,88 @@ export default function TournamentTopPage() {
                 </div>
               </div>
             </div>
+
+            {/* ✅ INDEX の直前に「参加者帯」 */}
+            {participants.length > 0 && (
+              <div className="mt-6 bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-gray-300">PLAYERS</div>
+                  <div className="text-[11px] text-gray-400">{participants.length} 人</div>
+                </div>
+
+                {/* ✅ ここだけ最小修正：優勝者を先頭＆👑表示 */}
+                <div className="mt-3 -mx-1 overflow-x-auto">
+                  <div className="px-1 flex items-center gap-3 min-w-max">
+                    {(() => {
+                      const championId = champion?.id ?? null;
+
+                      const ordered = (() => {
+                        if (!championId) return participants;
+                        const idx = participants.findIndex((p) => p.id === championId);
+                        if (idx < 0) return participants;
+                        const copy = participants.slice();
+                        const [ch] = copy.splice(idx, 1);
+                        return [ch, ...copy];
+                      })();
+
+                      return ordered.map((p) => {
+                        const name = p.handle_name ?? 'NoName';
+                        const avatar = p.avatar_url ?? null;
+                        const imgErr = !!participantImgErrorIds[p.id];
+                        const isChampion = championId === p.id;
+
+                        return (
+                          <div
+                            key={p.id}
+                            className="shrink-0 flex flex-col items-center gap-2 w-[86px]"
+                            title={isChampion ? `👑 ${name}` : name}
+                          >
+                            {avatar && !imgErr ? (
+                              <div className="relative w-14 h-14 rounded-full overflow-hidden border border-white/15 bg-black/20">
+                                {isChampion && (
+                                  <div className="absolute -top-2 -right-2 text-[14px] leading-none select-none">
+                                    👑
+                                  </div>
+                                )}
+
+                                <Image
+                                  loader={passthroughLoader}
+                                  unoptimized
+                                  src={avatar}
+                                  alt={name}
+                                  fill
+                                  sizes="56px"
+                                  className="object-cover"
+                                  onError={() =>
+                                    setParticipantImgErrorIds((prev) => ({ ...prev, [p.id]: true }))
+                                  }
+                                />
+                              </div>
+                            ) : (
+                              <div className="relative w-14 h-14 rounded-full border border-white/15 bg-white/10">
+                                {isChampion && (
+                                  <div className="absolute -top-2 -right-2 text-[14px] leading-none select-none">
+                                    👑
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="text-[11px] text-gray-200 text-center break-words leading-snug line-clamp-2">
+                              {name}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
+                <div className="mt-2 text-[11px] text-gray-400">
+                  ※ 参加者が明示登録されていない大会は、試合結果（winner/loser）から自動抽出して表示します
+                </div>
+              </div>
+            )}
 
             <div className="mt-6 bg-gray-900/60 backdrop-blur-md rounded-2xl border border-purple-500/30 p-5">
               <div className="text-xs text-gray-300">INDEX</div>
