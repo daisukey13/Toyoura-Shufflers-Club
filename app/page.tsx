@@ -23,6 +23,7 @@ import {
 
 const supabase = createClient();
 
+/* ===================== Types ===================== */
 interface Stats {
   totalMatches: number;
   activeMembers: number;
@@ -93,6 +94,7 @@ type TournamentLite = {
 
 type MemberLite = { id: string; handle_name: string; avatar_url: string | null };
 
+/* ===================== Small UI helpers ===================== */
 function AvatarImg({
   src,
   alt,
@@ -122,6 +124,73 @@ function AvatarImg({
   );
 }
 
+/* ===================== Tournament banner card helpers (OUTSIDE HomePage) ===================== */
+const tournamentTitleOf = (t: TournamentLite) => t.name ?? t.title ?? '大会';
+
+const tournamentDateLabel = (t: TournamentLite) => {
+  const raw = t.start_date || t.created_at;
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+};
+
+const tournamentBannerUrlOf = (t: TournamentLite) =>
+  (t as any).banner_url ?? (t as any).banner_image_url ?? (t as any).image_url ?? null;
+
+const TournamentBannerCard = ({ t }: { t: TournamentLite }) => {
+  const title = tournamentTitleOf(t);
+  const dateLabel = tournamentDateLabel(t);
+  const bannerUrl = tournamentBannerUrlOf(t);
+
+  return (
+    <Link href={`/tournaments/${t.id}`} className="w-full sm:w-[300px] lg:w-[320px]" aria-label={title}>
+      <div className="glass-card rounded-xl overflow-hidden border border-amber-500/25 hover:border-amber-400/40 hover:shadow-lg hover:shadow-amber-500/10 transition-all group">
+        <div className="relative h-24 sm:h-28">
+          {bannerUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={bannerUrl}
+              alt={title}
+              className="absolute inset-0 w-full h-full object-cover"
+              loading="lazy"
+              decoding="async"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-r from-amber-500/20 via-purple-500/15 to-pink-500/15" />
+          )}
+
+          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
+          <div className="absolute inset-0 bg-white/5 group-hover:bg-white/10 transition-colors" />
+
+          <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[11px] border bg-amber-900/25 border-amber-500/40 text-amber-200">
+            <FaMedal className="inline mr-1" />
+            大会
+          </div>
+
+          <div className="absolute inset-0 p-3 flex flex-col justify-end">
+            <div className="text-[11px] sm:text-xs text-gray-200/90 flex items-center gap-1">
+              <FaCalendar className="opacity-80" />
+              <span>{dateLabel || '近日'}</span>
+              {t.venue && (
+                <>
+                  <span className="opacity-60">・</span>
+                  <span className="truncate max-w-[12rem]">{t.venue}</span>
+                </>
+              )}
+            </div>
+            <div className="text-sm sm:text-base font-bold text-yellow-100 truncate">{title}</div>
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+};
+
+/* ===================== Page ===================== */
 export default function HomePage() {
   const [stats, setStats] = useState<Stats>({
     totalMatches: 0,
@@ -138,11 +207,11 @@ export default function HomePage() {
   const { user, player, loading } = useAuth();
 
   useEffect(() => {
-    fetchStats();
-    fetchTopPlayers();
-    fetchRecentMatches();
-    fetchNotices();
-    fetchRecentTournaments();
+    void fetchStats();
+    void fetchTopPlayers();
+    void fetchRecentMatches();
+    void fetchNotices();
+    void fetchRecentTournaments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -167,9 +236,7 @@ export default function HomePage() {
 
       const avgPoints =
         activePlayers.length > 0
-          ? Math.round(
-              activePlayers.reduce((sum: number, p: any) => sum + (p.ranking_points ?? 0), 0) / activePlayers.length,
-            )
+          ? Math.round(activePlayers.reduce((sum: number, p: any) => sum + (p.ranking_points ?? 0), 0) / activePlayers.length)
           : 1000;
 
       setStats({
@@ -178,6 +245,7 @@ export default function HomePage() {
         avgRankingPoint: avgPoints,
       });
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error('Error fetching stats:', error);
     }
   };
@@ -194,6 +262,7 @@ export default function HomePage() {
       const filtered = (data ?? []).filter(isActiveMemberRow) as TopPlayer[];
       setTopPlayers(filtered.slice(0, 5));
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error('Error fetching top players:', error);
     }
   };
@@ -205,6 +274,7 @@ export default function HomePage() {
       const json = await res.json().catch(() => null);
 
       if (!res.ok || !json?.ok) {
+        // eslint-disable-next-line no-console
         console.error('recent-matches api failed:', json?.message ?? res.statusText);
         setRecentMatches([]);
         return;
@@ -212,6 +282,7 @@ export default function HomePage() {
 
       setRecentMatches((json.matches ?? []) as RecentMatch[]);
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error('Error fetching recent matches:', error);
       setRecentMatches([]);
     }
@@ -227,11 +298,13 @@ export default function HomePage() {
         .limit(3);
 
       if (error) {
+        // eslint-disable-next-line no-console
         console.error('Error fetching notices:', error);
         return;
       }
       setNotices(data ?? []);
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error('Error fetching notices:', error);
     }
   };
@@ -246,12 +319,14 @@ export default function HomePage() {
         .limit(3);
 
       if (error) {
+        // eslint-disable-next-line no-console
         console.error('Error fetching recent tournaments:', error);
         return;
       }
 
       setRecentTournaments((data ?? []) as any);
     } catch (e) {
+      // eslint-disable-next-line no-console
       console.error('fetchRecentTournaments unexpected error:', e);
     }
   };
@@ -292,12 +367,10 @@ export default function HomePage() {
         const missing = ids.filter((id) => !(id in teamMembersMap));
         if (missing.length === 0) return;
 
-        const { data: tm, error: tmErr } = await supabase
-          .from('team_members')
-          .select('team_id, player_id')
-          .in('team_id', missing);
+        const { data: tm, error: tmErr } = await supabase.from('team_members').select('team_id, player_id').in('team_id', missing);
 
         if (tmErr) {
+          // eslint-disable-next-line no-console
           console.error('fetch team_members error:', tmErr);
           return;
         }
@@ -305,12 +378,10 @@ export default function HomePage() {
         const playerIds = Array.from(new Set((tm ?? []).map((r) => (r as any).player_id)));
         if (playerIds.length === 0) return;
 
-        const { data: ps, error: pErr } = await supabase
-          .from('players')
-          .select('id, handle_name, avatar_url')
-          .in('id', playerIds);
+        const { data: ps, error: pErr } = await supabase.from('players').select('id, handle_name, avatar_url').in('id', playerIds);
 
         if (pErr) {
+          // eslint-disable-next-line no-console
           console.error('fetch players error:', pErr);
           return;
         }
@@ -335,13 +406,12 @@ export default function HomePage() {
         });
 
         Object.keys(grouped).forEach((tid) => {
-          grouped[tid] = grouped[tid]
-            .sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja'))
-            .slice(0, 4);
+          grouped[tid] = grouped[tid].sort((a, b) => a.handle_name.localeCompare(b.handle_name, 'ja')).slice(0, 4);
         });
 
         setTeamMembersMap((prev) => ({ ...prev, ...grouped }));
       } catch (e) {
+        // eslint-disable-next-line no-console
         console.error('loadTeamMembers unexpected error:', e);
       }
     };
@@ -377,76 +447,10 @@ export default function HomePage() {
   const winnerAvatarOf = (m: RecentMatch) => m.winner_avatar ?? m.winner_avatar_url ?? null;
   const loserAvatarOf = (m: RecentMatch) => m.loser_avatar ?? m.loser_avatar_url ?? null;
 
-  const tournamentTitleOf = (t: TournamentLite) => t.name ?? t.title ?? '大会';
-
-  const tournamentDateLabel = (t: TournamentLite) => {
-    const raw = t.start_date || t.created_at;
-    if (!raw) return '';
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
-  };
-
-  const tournamentBannerUrlOf = (t: TournamentLite) =>
-    (t as any).banner_url ?? (t as any).banner_image_url ?? (t as any).image_url ?? null;
-
-  const TournamentBannerCard = ({ t }: { t: TournamentLite }) => {
-    const title = tournamentTitleOf(t);
-    const dateLabel = tournamentDateLabel(t);
-    const bannerUrl = tournamentBannerUrlOf(t);
-
-    return (
-      <Link href={`/tournaments/${t.id}`} className="w-full sm:w-[300px] lg:w-[320px]" aria-label={title}>
-        <div className="glass-card rounded-xl overflow-hidden border border-amber-500/25 hover:border-amber-400/40 hover:shadow-lg hover:shadow-amber-500/10 transition-all group">
-          <div className="relative h-24 sm:h-28">
-            {bannerUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={bannerUrl}
-                alt={title}
-                className="absolute inset-0 w-full h-full object-cover"
-                loading="lazy"
-                decoding="async"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            ) : (
-              <div className="absolute inset-0 bg-gradient-to-r from-amber-500/20 via-purple-500/15 to-pink-500/15" />
-            )}
-
-            <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
-            <div className="absolute inset-0 bg-white/5 group-hover:bg-white/10 transition-colors" />
-
-            <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[11px] border bg-amber-900/25 border-amber-500/40 text-amber-200">
-              <FaMedal className="inline mr-1" />
-              大会
-            </div>
-
-            <div className="absolute inset-0 p-3 flex flex-col justify-end">
-              <div className="text-[11px] sm:text-xs text-gray-200/90 flex items-center gap-1">
-                <FaCalendar className="opacity-80" />
-                <span>{dateLabel || '近日'}</span>
-                {t.venue && (
-                  <>
-                    <span className="opacity-60">・</span>
-                    <span className="truncate max-w-[12rem]">{t.venue}</span>
-                  </>
-                )}
-              </div>
-              <div className="text-sm sm:text-base font-bold text-yellow-100 truncate">{title}</div>
-            </div>
-          </div>
-        </div>
-      </Link>
-    );
-  };
-
   return (
     <div className="min-h-screen">
       {/* ヒーローセクション */}
       <div className="relative pt-[calc(env(safe-area-inset-top)+0.35rem)] pb-8 sm:pt-10 sm:pb-12 text-center">
-
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute -inset-24 bg-[radial-gradient(ellipse_at_top_right,rgba(168,85,247,0.20),transparent_60%)]" />
           <div className="absolute -inset-24 bg-[radial-gradient(ellipse_at_bottom_left,rgba(236,72,153,0.18),transparent_60%)]" />
@@ -457,7 +461,6 @@ export default function HomePage() {
           <div className="mb-6 sm:mb-8">
             {/* ✅ 追加：ロゴ（トップ中央・レスポンシブ・失敗時非表示） */}
             <div className="flex justify-center mb-4 sm:mb-6">
-              
               <div className="w-full max-w-[680px]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -467,13 +470,11 @@ export default function HomePage() {
                   loading="eager"
                   decoding="async"
                   onError={(e) => {
-                    // 画像が無い/壊れてる場合でも UI を崩さない
                     (e.currentTarget as HTMLImageElement).style.display = 'none';
                   }}
                 />
               </div>
             </div>
-
 
             <div className="flex items-center justify-center gap-1 mb-3">
               <div className="w-8 h-px bg-gradient-to-r from-transparent to-yellow-400/50" />
@@ -481,20 +482,15 @@ export default function HomePage() {
               <div className="w-8 h-px bg-gradient-to-l from-transparent to-yellow-400/50" />
             </div>
 
-            <p className="text-sm sm:text-lg text-gray-300 max-w-xs sm:max-w-md mx-auto">
-              みんなで楽しくテーブルシャッフルボード！
-            </p>
+            <p className="text-sm sm:text-lg text-gray-300 max-w-xs sm:max-w-md mx-auto">みんなで楽しくテーブルシャッフルボード！</p>
           </div>
-
-        
-
 
           {/* お知らせ */}
           {notices.length > 0 && (
             <div className="mt-8 sm:mt-12 max-w-2xl mx-auto">
               <h3 className="text-base sm:text-lg font-semibold text-yellow-300 mb-3 sm:mb-4 flex items-center justify-center gap-2">
-  <span>お知らせ</span>
-</h3>
+                <span>お知らせ</span>
+              </h3>
               <div className="space-y-2">
                 {notices.map((notice) => (
                   <Link
@@ -511,9 +507,7 @@ export default function HomePage() {
                           {notice.title}
                         </span>
                       </div>
-                      <span className="text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-sm">
-                        →
-                      </span>
+                      <span className="text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-sm">→</span>
                     </div>
                   </Link>
                 ))}
@@ -529,12 +523,33 @@ export default function HomePage() {
           {menuItems.map((item, index) => {
             const cardClass =
               index === 0 ? 'ranking-card' : index === 1 ? 'members-card' : index === 2 ? 'teams-card' : 'matches-card';
+
+            const isTeams = index === 2;
+
             return (
-              <Link key={index} href={item.href}>
+              <Link key={item.href} href={item.href}>
                 <div
-                  className={`${cardClass} glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer group h-full`}
+                  className={[
+                    cardClass,
+                    'glass-card rounded-xl p-4 sm:p-6 hover:scale-105 transition-transform cursor-pointer group h-full relative overflow-hidden',
+                  ].join(' ')}
                 >
-                  <div className="flex flex-col items-center text-center">
+                  {/* ✅ チームカード専用背景（指定URL） */}
+                  {isTeams && (
+                    <>
+                      <div
+                        className="absolute inset-0 bg-center bg-cover opacity-30"
+                        style={{
+                          backgroundImage:
+                            "url('https://cpfyaezsyvjjwpbuhewa.supabase.co/storage/v1/object/public/avatars/preset/61.jpg')",
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/50 to-black/65" />
+                      <div className="absolute inset-0 bg-white/5 group-hover:bg-white/10 transition-colors" />
+                    </>
+                  )}
+
+                  <div className="relative flex flex-col items-center text-center">
                     <div className="p-3 sm:p-4 rounded-full bg-gradient-to-br from-purple-600/20 to-pink-600/20 mb-2 sm:mb-4 group-hover:scale-110 transition-transform">
                       <item.icon className="text-xl sm:text-3xl text-purple-400" />
                     </div>
@@ -566,73 +581,59 @@ export default function HomePage() {
           </div>
         </div>
 
- {/* CTA（Mobile: 2段グリッド / PC: 横並び） */}
-<div className="mt-6 sm:mt-8">
-  {/* Mobile */}
-  <div className="sm:hidden max-w-xs mx-auto space-y-3">
-    {/* 1) Primary: 新規登録（横幅いっぱいで強調） */}
-    <Link
-      href="/register"
-      className="gradient-button w-full px-6 py-3 rounded-2xl text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20"
-    >
-      <FaUserPlus className="text-sm" />
-      メンバー登録
-    </Link>
+        {/* CTA（Mobile: 2段グリッド / PC: 横並び） */}
+        <div className="mt-6 sm:mt-8">
+          {/* Mobile */}
+          <div className="sm:hidden max-w-xs mx-auto space-y-3">
+            <Link
+              href="/register"
+              className="gradient-button w-full px-6 py-3 rounded-2xl text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20"
+            >
+              <FaUserPlus className="text-sm" />
+              メンバー登録
+            </Link>
 
-    {/* 2) Secondary: 試合登録（2列で整理） */}
-    <div className="grid grid-cols-2 gap-3">
-      <Link
-        href="/matches/register/singles"
-        className="w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white
-          bg-gradient-to-r from-purple-600/80 to-pink-600/80
-          border border-white/10 shadow-md shadow-purple-600/10
-          flex items-center justify-center gap-2"
-      >
-        
-        個人戦登録
-      </Link>
+            <div className="grid grid-cols-2 gap-3">
+              <Link
+                href="/matches/register/singles"
+                className="w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white
+                  bg-gradient-to-r from-purple-600/80 to-pink-600/80
+                  border border-white/10 shadow-md shadow-purple-600/10
+                  flex items-center justify-center gap-2"
+              >
+                個人戦登録
+              </Link>
 
-      <Link
-        href="/matches/register/teams"
-        className="w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white
-          bg-gradient-to-r from-amber-500/80 to-orange-600/80
-          border border-white/10 shadow-md shadow-orange-600/10
-          flex items-center justify-center gap-2"
-      >
-       
-        チーム戦登録
-      </Link>
-    </div>
+              <Link
+                href="/matches/register/teams"
+                className="w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white
+                  bg-gradient-to-r from-amber-500/80 to-orange-600/80
+                  border border-white/10 shadow-md shadow-orange-600/10
+                  flex items-center justify-center gap-2"
+              >
+                チーム戦登録
+              </Link>
+            </div>
 
-    {/* 3) Login（横幅いっぱい・落ち着いた存在感） */}
-    <div className="pt-1">
-   
-    </div>
+            <div className="pt-2">
+              <div className="h-px w-full bg-gradient-to-r from-transparent via-purple-500/30 to-transparent" />
+            </div>
+          </div>
 
-    {/* 4) 区切り線（お知らせへ自然につなぐ） */}
-    <div className="pt-2">
-      <div className="h-px w-full bg-gradient-to-r from-transparent via-purple-500/30 to-transparent" />
-    </div>
-  </div>
+          {/* PC/Tablet */}
+          <div className="hidden sm:flex flex-row gap-3 justify-center max-w-xs mx-auto sm:max-w-none">
+            <Link
+              href="/register"
+              className="gradient-button px-6 py-2.5 sm:px-8 sm:py-3 rounded-full text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
+            >
+              <FaUserPlus className="text-sm" /> メンバー登録
+            </Link>
 
-  {/* PC/Tablet（従来どおり横並び） */}
-  <div className="hidden sm:flex flex-row gap-3 justify-center max-w-xs mx-auto sm:max-w-none">
-    <Link
-      href="/register"
-      className="gradient-button px-6 py-2.5 sm:px-8 sm:py-3 rounded-full text-white font-medium text-sm sm:text-base flex items-center justify-center gap-2"
-    >
-      <FaUserPlus className="text-sm" /> メンバー登録
-    </Link>
-
-    <div className="px-0 sm:px-0">
-      <RegisterButtons />
-    </div>
-
-  </div>
-</div>
-
-
-
+            <div className="px-0 sm:px-0">
+              <RegisterButtons />
+            </div>
+          </div>
+        </div>
 
         {/* トッププレーヤー */}
         <div className="mb-8 sm:mb-12">
@@ -671,26 +672,20 @@ export default function HomePage() {
                     } ${s.h}`}
                   >
                     <div className="flex items-center gap-3">
-                      <div
-                        className={`rounded-full ${badgeColor} ${s.badge} font-extrabold flex items-center justify-center shrink-0`}
-                      >
+                      <div className={`rounded-full ${badgeColor} ${s.badge} font-extrabold flex items-center justify-center shrink-0`}>
                         {rank}
                       </div>
                       <AvatarImg
                         src={p?.avatar_url}
                         alt={p?.handle_name || `Rank ${rank}`}
                         size={s.av}
-                        className={`rounded-full object-cover border-2 ${
-                          rank === 1 ? 'border-yellow-400' : 'border-purple-500'
-                        }`}
+                        className={`rounded-full object-cover border-2 ${rank === 1 ? 'border-yellow-400' : 'border-purple-500'}`}
                       />
                       <div className="flex-1 min-w-0">
                         <div className={`font-semibold text-yellow-100 truncate ${s.name}`}>{p?.handle_name ?? '—'}</div>
                         <div className="text-xs text-gray-400">HC {p?.handicap ?? '—'}</div>
                         <div className="mt-1 flex items-center gap-2">
-                          <span
-                            className={`px-2 py-0.5 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${s.rp}`}
-                          >
+                          <span className={`px-2 py-0.5 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${s.rp}`}>
                             RP <b className="text-yellow-100 ml-1">{p?.ranking_points ?? '—'}</b>
                           </span>
                           <span className="px-2 py-0.5 rounded-full bg-blue-900/40 text-blue-200 border border-blue-500/30 text-xs">
@@ -710,6 +705,7 @@ export default function HomePage() {
             {[3, 1, 0, 2, 4].map((idx) => {
               const p = topPlayers[idx];
               const rank = idx + 1;
+
               const sizeByRank = (r: number) => {
                 switch (r) {
                   case 1:
@@ -764,6 +760,7 @@ export default function HomePage() {
                     };
                 }
               };
+
               const S = sizeByRank(rank);
               const frame =
                 rank === 1
@@ -773,6 +770,7 @@ export default function HomePage() {
                     : rank === 3
                       ? 'from-orange-400/20 to-orange-600/20'
                       : 'from-purple-600/10 to-pink-600/10';
+
               const badgeColor =
                 rank === 1
                   ? 'bg-yellow-400 text-gray-900'
@@ -795,9 +793,7 @@ export default function HomePage() {
                     ].join(' ')}
                     aria-label={`第${rank}位 ${p?.handle_name ?? ''}`}
                   >
-                    <div
-                      className={`absolute -top-3 -right-3 ${badgeColor} ${S.badge} rounded-full font-extrabold flex items-center justify-center shadow`}
-                    >
+                    <div className={`absolute -top-3 -right-3 ${badgeColor} ${S.badge} rounded-full font-extrabold flex items-center justify-center shadow`}>
                       {rank}
                     </div>
                     {rank === 1 && (
@@ -814,20 +810,14 @@ export default function HomePage() {
                     />
                     <div className={`absolute inset-0 rounded-full ring-yellow-400/40 ${S.ring} pointer-events-none`} />
                     <div className="mt-3">
-                      <div className="font-semibold text-yellow-100 text-base truncate max-w-[10rem]">
-                        {p?.handle_name ?? '—'}
-                      </div>
+                      <div className="font-semibold text-yellow-100 text-base truncate max-w-[10rem]">{p?.handle_name ?? '—'}</div>
                       <div className="text-xs text-gray-400 mt-0.5">HC {p?.handicap ?? '—'}</div>
                     </div>
                     <div className="mt-3 flex items-center justify-center gap-2">
-                      <span
-                        className={`px-2 py-1 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${S.pill}`}
-                      >
+                      <span className={`px-2 py-1 rounded-full bg-purple-900/40 text-purple-200 border border-purple-500/30 ${S.pill}`}>
                         RP <b className="text-yellow-100 ml-1">{p?.ranking_points ?? '—'}</b>
                       </span>
-                      <span
-                        className={`px-2 py-1 rounded-full bg-blue-900/40 text-blue-200 border border-blue-500/30 ${S.pill}`}
-                      >
+                      <span className={`px-2 py-1 rounded-full bg-blue-900/40 text-blue-200 border border-blue-500/30 ${S.pill}`}>
                         勝率 <b className="text-yellow-100 ml-1">{winRate(p?.wins, p?.losses)}%</b>
                       </span>
                     </div>
@@ -849,6 +839,7 @@ export default function HomePage() {
           <div className="mb-8 sm:mb-10">
             <div className="text-center mb-4">
               <h2 className="text-lg sm:text-xl font-bold text-yellow-100 inline-flex items-center gap-2">
+                <FaTrophy className="text-amber-300" />
                 直近の大会
               </h2>
               <div className="mt-2 flex items-center justify-center gap-1">
@@ -886,28 +877,11 @@ export default function HomePage() {
               const d = new Date(m.match_date);
               const dateLabel = Number.isNaN(d.getTime())
                 ? ''
-                : d.toLocaleString('ja-JP', {
-                    month: 'numeric',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  });
+                : d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
               const team = isTeamMatch(m);
-              const winnerHref = team
-                ? m.winner_team_id
-                  ? `/teams/${m.winner_team_id}`
-                  : undefined
-                : m.winner_id
-                  ? `/players/${m.winner_id}`
-                  : undefined;
-              const loserHref = team
-                ? m.loser_team_id
-                  ? `/teams/${m.loser_team_id}`
-                  : undefined
-                : m.loser_id
-                  ? `/players/${m.loser_id}`
-                  : undefined;
+              const winnerHref = team ? (m.winner_team_id ? `/teams/${m.winner_team_id}` : undefined) : m.winner_id ? `/players/${m.winner_id}` : undefined;
+              const loserHref = team ? (m.loser_team_id ? `/teams/${m.loser_team_id}` : undefined) : m.loser_id ? `/players/${m.loser_id}` : undefined;
 
               const winnerName = team ? m.winner_team_name ?? m.winner_name ?? '—' : m.winner_name ?? '—';
               const loserName = team ? m.loser_team_name ?? m.loser_name ?? '—' : m.loser_name ?? '—';

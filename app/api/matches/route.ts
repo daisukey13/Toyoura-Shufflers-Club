@@ -89,17 +89,21 @@ async function ensureReporterPlayer(reporterId: string, displayName: string | nu
   const baseName = (displayName || '').trim();
   const handle_name = baseName || `user_${reporterId.slice(0, 8)}`;
   const { error } = await supabaseAdmin.from('players').upsert(
-    {
-      id: reporterId,
-      handle_name,
-      ranking_points: 1000,
-      handicap: 0,
-      matches_played: 0,
-      wins: 0,
-      losses: 0,
-    },
-    { onConflict: 'id' }
-  );
+  {
+    id: reporterId,
+    handle_name,
+    ranking_points: 1000,
+    handicap: 0,
+    matches_played: 0,
+    wins: 0,
+    losses: 0,
+
+    // ✅ 追加：記録者の自動生成は“非表示”にする（ランキング/一覧から除外）
+    is_active: false,
+  },
+  { onConflict: 'id' }
+);
+
   if (error) throw new Error(`reporter の players 作成に失敗: ${error.message}`);
 }
 

@@ -524,16 +524,37 @@ export default function AdminTournamentLeaguePage() {
     setCreating(true);
 
     try {
-      // 1) league_blocks
-      const { data: block, error: blockErr } = await db
-        .from('league_blocks')
-        .insert({
-          tournament_id: tournamentId,
-          label: blockLabel.trim(),
-          status: 'pending',
-        })
-        .select('id')
-        .single();
+    // 1) league_blocks
+// ✅ sort_order を必ず採番して保存する（全部0事故＝1ブロック扱いを永久に防ぐ）
+const { data: maxRow, error: maxErr } = await db
+  .from('league_blocks')
+  .select('sort_order')
+  .eq('tournament_id', tournamentId)
+  .order('sort_order', { ascending: false })
+  .limit(1)
+  .maybeSingle();
+
+if (maxErr) {
+  console.error(maxErr);
+  setError('リーグブロックの作成準備に失敗しました（sort_order取得）');
+  setCreating(false);
+  return;
+}
+
+const nextSortOrder =
+  typeof (maxRow as any)?.sort_order === 'number' ? (maxRow as any).sort_order + 1 : 0;
+
+const { data: block, error: blockErr } = await db
+  .from('league_blocks')
+  .insert({
+    tournament_id: tournamentId,
+    label: blockLabel.trim(),
+    sort_order: nextSortOrder, // ✅ ここが決定打
+    status: 'pending',
+  })
+  .select('id')
+  .single();
+
 
       if (blockErr || !block) {
         console.error(blockErr);

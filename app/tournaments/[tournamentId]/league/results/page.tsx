@@ -9,6 +9,8 @@ import { FaTrophy } from 'react-icons/fa';
 import { createClient } from '@/lib/supabase/client';
 
 const supabase = createClient();
+
+// ✅ remotePatterns 不要にする（Supabase Storage 等でも落ちない）
 const passthroughLoader = ({ src }: ImageLoaderProps) => src;
 
 /* ========= Types ========= */
@@ -63,8 +65,12 @@ function getPointDiffSafe(r: any): number {
   const direct = Number(r.point_diff ?? (r as any).pointDiff);
   if (Number.isFinite(direct)) return direct;
 
-  const pf = Number(r.points_for ?? (r as any).pointsFor ?? (r as any).gf ?? (r as any).goals_for ?? 0);
-  const pa = Number(r.points_against ?? (r as any).pointsAgainst ?? (r as any).ga ?? (r as any).goals_against ?? 0);
+  const pf = Number(
+    r.points_for ?? (r as any).pointsFor ?? (r as any).gf ?? (r as any).goals_for ?? 0
+  );
+  const pa = Number(
+    r.points_against ?? (r as any).pointsAgainst ?? (r as any).ga ?? (r as any).goals_against ?? 0
+  );
   const calc = pf - pa;
   return Number.isFinite(calc) ? calc : 0;
 }
@@ -170,9 +176,10 @@ function EndReasonBadge({
   );
 }
 
+// ✅ finalized を完了扱いに含める（DB側が finalized で揃っていても勝者表示できる）
 const isFinishedStatus = (s: string | null) => {
   const v = String(s ?? '').trim().toLowerCase();
-  return v === 'finished' || v === 'done' || v === 'complete' || v === 'completed';
+  return v === 'finished' || v === 'done' || v === 'complete' || v === 'completed' || v === 'finalized';
 };
 
 export default function TournamentLeagueResultsPage() {
@@ -185,6 +192,9 @@ export default function TournamentLeagueResultsPage() {
   const [matchCards, setMatchCards] = useState<MatchCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // ✅ league_block_members から「ブロック所属メンバー」を保持（ranking_json が空でも順位表を作るため）
+  const [memberIdsByBlock, setMemberIdsByBlock] = useState<Record<string, string[]>>({});
 
   // ✅ ブロック勝者アバターのエラー保持
   const [blockWinnerImgError, setBlockWinnerImgError] = useState<Record<string, boolean>>({});
@@ -223,6 +233,69 @@ export default function TournamentLeagueResultsPage() {
     return !isDefPlayerId(pid);
   };
 
+  /**
+   * ✅ ranking_json が空でも「メンバー + 試合」から順位を作る（UIは同じテーブルを使う）
+   */
+  const buildRankingFromMatches = (memberIds: string[], blockMatches: MatchCard[]): RankingRow[] => {
+    const ids = memberIds.filter((id) => isRealPlayerId(id));
+    if (ids.length === 0) return [];
+
+    const stats = new Map<string, { wins: number; losses: number; pf: number; pa: number }>();
+    const touch = (pid: string) => {
+      if (!stats.has(pid)) stats.set(pid, { wins: 0, losses: 0, pf: 0, pa: 0 });
+      return stats.get(pid)!;
+    };
+
+    // 初期化（0行でも順位表に名前を出せる）
+    for (const pid of ids) touch(pid);
+
+    for (const m of blockMatches) {
+      if (!m.winner_id || !m.loser_id) continue;
+      if (m.winner_score == null || m.loser_score == null) continue;
+
+      const w = String(m.winner_id);
+      const l = String(m.loser_id);
+      if (!stats.has(w) || !stats.has(l)) continue; // ブロック外は無視
+      if (!isRealPlayerId(w) || !isRealPlayerId(l)) continue;
+
+      touch(w).wins += 1;
+      touch(l).losses += 1;
+
+      const ws = Number(m.winner_score);
+      const ls = Number(m.loser_score);
+      if (Number.isFinite(ws) && Number.isFinite(ls)) {
+        touch(w).pf += ws;
+        touch(w).pa += ls;
+        touch(l).pf += ls;
+        touch(l).pa += ws;
+      }
+    }
+
+    const list: RankingRow[] = Array.from(stats.entries()).map(([player_id, s]) => ({
+      player_id,
+      wins: s.wins,
+      losses: s.losses,
+      points_for: s.pf,
+      points_against: s.pa,
+      point_diff: s.pf - s.pa,
+    }));
+
+    list.sort((a, b) => {
+      if (b.wins !== a.wins) return b.wins - a.wins;
+      const bd = b.point_diff ?? 0;
+      const ad = a.point_diff ?? 0;
+      if (bd !== ad) return bd - ad;
+      if (b.points_for !== a.points_for) return b.points_for - a.points_for;
+
+      // 最後は名前で安定化（同率のとき表示がガタつかない）
+      const an = String(players[a.player_id]?.handle_name ?? '');
+      const bn = String(players[b.player_id]?.handle_name ?? '');
+      return bn.localeCompare(an, 'ja');
+    });
+
+    return list;
+  };
+
   // ranking_json が空でも、カードから def を除いて勝者を推定する（2人ブロック等）
   const inferWinnerFromCards = (blockMatches: MatchCard[]) => {
     const completed = blockMatches.filter(
@@ -237,7 +310,6 @@ export default function TournamentLeagueResultsPage() {
 
     if (completed.length === 0) return null;
 
-    // 総当たりにも対応（wins → diff → pf の順で一意なら採用）
     const stats = new Map<string, { wins: number; diff: number; pf: number }>();
     const touch = (pid: string) => {
       if (!stats.has(pid)) stats.set(pid, { wins: 0, diff: 0, pf: 0 });
@@ -307,8 +379,10 @@ export default function TournamentLeagueResultsPage() {
         admin = Boolean(r1?.data?.user_id);
 
         if (!admin) {
-          // is_admin 列が無い環境もあるので、失敗しても無視
-          const r2 = await (supabase.from('players') as any).select('is_admin').eq('id', user.id).maybeSingle();
+          const r2 = await (supabase.from('players') as any)
+            .select('id,is_admin')
+            .eq('auth_user_id', user.id)
+            .maybeSingle();
           admin = r2?.data?.is_admin === true;
         }
 
@@ -361,19 +435,46 @@ export default function TournamentLeagueResultsPage() {
         return;
       }
 
-      const lbList: LeagueBlock[] = blockRows.map((row: any) => ({
+      console.log('[league/results] blockRows', Array.isArray(blockRows) ? blockRows.length : blockRows, blockRows);
+
+      const lbList: LeagueBlock[] = (blockRows as any[]).map((row: any) => ({
         id: row.id,
         label: row.label,
         status: row.status,
         tournament_id: row.tournament_id,
         winner_player_id: row.winner_player_id,
-        ranking_json: (row.ranking_json ?? []) as RankingRow[],
+        ranking_json: (row.ranking_json ?? null) as RankingRow[] | null,
       }));
+      console.log('[league/results] lbList', lbList.length, lbList.map(b => ({ id: b.id, label: b.label, status: b.status })));
+
       setBlocks(lbList);
 
       const blockIds = lbList.map((lb) => lb.id);
-      let cards: MatchCard[] = [];
 
+      // ✅ league_block_members を読み、ローカルmapも保持して「このloadAll内で」使う（state反映待ちによる欠落を防ぐ）
+      let localMemberMap: Record<string, string[]> = {};
+      if (blockIds.length > 0) {
+        const { data: memRows, error: memErr } = await supabase
+          .from('league_block_members')
+          .select('league_block_id,player_id,sort_order')
+          .in('league_block_id', blockIds)
+          .order('sort_order', { ascending: true });
+
+        if (memErr) {
+          console.error('[league/results] league_block_members fetch error:', memErr);
+        } else if (memRows) {
+          for (const r of memRows as any[]) {
+            const bid = String(r.league_block_id);
+            const pid = String(r.player_id);
+            if (!localMemberMap[bid]) localMemberMap[bid] = [];
+            localMemberMap[bid].push(pid);
+          }
+        }
+      }
+      setMemberIdsByBlock(localMemberMap);
+
+      // ✅ matches を取得（ブロックIDで絞り、同一ペアは最新だけ採用）
+      let cards: MatchCard[] = [];
       if (blockIds.length > 0) {
         const { data: matchesData, error: mErr } = await supabase
           .from('matches')
@@ -394,7 +495,7 @@ export default function TournamentLeagueResultsPage() {
 
           for (const m of raw) {
             if (!m.league_block_id || !m.player_a_id || !m.player_b_id) continue;
-            const key = m.league_block_id + '::' + pairKey(String(m.player_a_id), String(m.player_b_id));
+            const key = String(m.league_block_id) + '::' + pairKey(String(m.player_a_id), String(m.player_b_id));
             const prev = latestByBlockPair.get(key);
             if (!prev) latestByBlockPair.set(key, m);
             else {
@@ -409,7 +510,7 @@ export default function TournamentLeagueResultsPage() {
             const [blockIdForCard] = key.split('::');
             cards.push({
               id: m.id ?? `card-${idx}`,
-              league_block_id: blockIdForCard,
+              league_block_id: String(blockIdForCard),
               player_a_id: String(m.player_a_id),
               player_b_id: String(m.player_b_id),
               winner_id: m.winner_id ?? null,
@@ -424,13 +525,15 @@ export default function TournamentLeagueResultsPage() {
           }
         }
       }
-
       setMatchCards(cards);
 
+      // ✅ players 取得（ranking_json / members / cards から必要IDを集める）
       const idsFromRanking = lbList.flatMap((lb) => [
-        ...(lb.ranking_json ?? []).map((r) => r.player_id),
+        ...((lb.ranking_json ?? []) as any[]).map((r: any) => String(r.player_id)),
         lb.winner_player_id ?? undefined,
       ]);
+
+      const idsFromMembers = lbList.flatMap((lb) => (localMemberMap[lb.id] ?? []).map((pid) => String(pid)));
 
       const idsFromCards = cards.flatMap((c) => [
         c.player_a_id,
@@ -439,7 +542,9 @@ export default function TournamentLeagueResultsPage() {
         c.loser_id ?? undefined,
       ]);
 
-      const allPlayerIds = Array.from(new Set([...idsFromRanking, ...idsFromCards].filter(Boolean))) as string[];
+      const allPlayerIds = Array.from(
+        new Set([...idsFromRanking, ...idsFromMembers, ...idsFromCards].filter(Boolean))
+      ) as string[];
 
       if (allPlayerIds.length > 0) {
         const { data: pRows, error: pErr } = await supabase
@@ -451,7 +556,7 @@ export default function TournamentLeagueResultsPage() {
           console.error('[league/results] players fetch error:', pErr);
         } else if (pRows) {
           const dict: Record<string, Player> = {};
-          pRows.forEach((p: any) => {
+          (pRows as any[]).forEach((p: any) => {
             dict[String(p.id)] = {
               id: String(p.id),
               handle_name: p.handle_name ?? null,
@@ -477,40 +582,36 @@ export default function TournamentLeagueResultsPage() {
     setWinnerSaveErrorByBlock((prev) => ({ ...prev, [blockId]: '' }));
 
     try {
-      // 1) まずはクライアントから update を試す（RLSで通る環境なら最小）
-      {
-        const { error: upErr } = await (supabase.from('league_blocks') as any)
-  .update({ winner_player_id: winnerPlayerId })
-  .eq('id', blockId);
+      const { error: upErr } = await (supabase.from('league_blocks') as any)
+        .update({ winner_player_id: winnerPlayerId })
+        .eq('id', blockId);
 
-        if (!upErr) {
+      if (!upErr) {
+        await loadAll();
+        return;
+      }
+
+      const { data: ses } = await supabase.auth.getSession();
+      const token = ses.session?.access_token;
+
+      if (token) {
+        const res = await fetch('/api/league/blocks/set-winner', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ block_id: blockId, winner_player_id: winnerPlayerId }),
+        });
+
+        const j = await res.json().catch(() => null);
+        if (res.ok && j?.ok !== false) {
           await loadAll();
           return;
         }
-
-        // 2) RLS 等で弾かれた場合は API へフォールバック（存在する場合）
-        const { data: ses } = await supabase.auth.getSession();
-        const token = ses.session?.access_token;
-
-        if (token) {
-          const res = await fetch('/api/league/blocks/set-winner', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ block_id: blockId, winner_player_id: winnerPlayerId }),
-          });
-
-          const j = await res.json().catch(() => null);
-          if (res.ok && j?.ok !== false) {
-            await loadAll();
-            return;
-          }
-        }
-
-        throw new Error(upErr.message || 'winner update failed');
       }
+
+      throw new Error(upErr.message || 'winner update failed');
     } catch (e: any) {
       setWinnerSaveErrorByBlock((prev) => ({
         ...prev,
@@ -555,32 +656,40 @@ export default function TournamentLeagueResultsPage() {
         </div>
 
         {blocks.map((block) => {
-          const ranking = (block.ranking_json ?? []) as RankingRow[];
           const blockMatches = matchCardsByBlock.get(block.id) ?? [];
 
-          const n = ranking.length;
+          // ✅ ranking_json が空なら「members + matches」から順位を作る
+          const rankingFromJson = (block.ranking_json ?? []) as RankingRow[];
+
+          // memberIds は「members優先、無ければmatchesから」
+          const memberIdsFromMembers = memberIdsByBlock[block.id] ?? [];
+          const memberIdsFromMatches = Array.from(
+            new Set(blockMatches.flatMap((m) => [String(m.player_a_id), String(m.player_b_id)]).filter(Boolean))
+          );
+          const memberIds = memberIdsFromMembers.length > 0 ? memberIdsFromMembers : memberIdsFromMatches;
+
+          // ✅ ranking を先に確定
+          const ranking =
+            rankingFromJson.length > 0 ? rankingFromJson : buildRankingFromMatches(memberIds, blockMatches);
+
+          const n = ranking.length > 0 ? ranking.length : memberIds.length;
           const expectedMatches = n >= 2 ? (n * (n - 1)) / 2 : 0;
 
           const completedMatches = blockMatches.filter(
             (m) => m.winner_id && m.loser_id && m.winner_score != null && m.loser_score != null
           ).length;
 
-          // ranking_json が空でも「カードが埋まっている」なら finished 扱いできるように（表示側の救済）
           const statusFinished = isFinishedStatus(block.status);
           const isComplete = expectedMatches > 0 ? completedMatches >= expectedMatches : statusFinished;
 
           const winnerIdFromRanking = resolveBlockWinner(block, ranking, isComplete);
-
-          // ✅ ranking_json が空/未確定でも「実プレーヤー同士の勝敗」から推定
-          const winnerIdFromCards =
-            !winnerIdFromRanking && statusFinished ? inferWinnerFromCards(blockMatches) : null;
+          const winnerIdFromCards = !winnerIdFromRanking && statusFinished ? inferWinnerFromCards(blockMatches) : null;
 
           const winnerId = winnerIdFromRanking ?? winnerIdFromCards;
           const winnerInferred = !winnerIdFromRanking && !!winnerIdFromCards && !block.winner_player_id;
 
           const winnerPlayer = winnerId ? players[winnerId] : undefined;
 
-          // 表示対象は finished かつ def ではない winner のみ
           const showWinnerCard = statusFinished && !!winnerId && (winnerPlayer ? isRealPlayerId(winnerId) : true);
 
           let winnerBlockRank: number | null = null;
@@ -589,14 +698,8 @@ export default function TournamentLeagueResultsPage() {
             if (idx >= 0) winnerBlockRank = computeDisplayRank(ranking, idx);
           }
 
-          // 手動確定候補（ranking または match から拾う / def を除外）
           const candidateIds = Array.from(
-            new Set<string>(
-              [
-                ...(ranking?.map((r) => String(r.player_id)) ?? []),
-                ...blockMatches.flatMap((m) => [String(m.player_a_id), String(m.player_b_id)]),
-              ].filter(Boolean)
-            )
+            new Set<string>([...memberIds, ...ranking.map((r) => String(r.player_id))].filter(Boolean))
           ).filter((pid) => isRealPlayerId(pid));
 
           const picked =
@@ -644,12 +747,7 @@ export default function TournamentLeagueResultsPage() {
                         {winnerBlockRank ? `ブロック内 ${winnerBlockRank}位` : '順位不明'}）
                       </div>
 
-                      {/* ✅ 管理者だけ：未確定ならDBへ反映ボタン */}
-                      {isAdmin &&
-                      statusFinished &&
-                      !block.winner_player_id &&
-                      winnerId &&
-                      isRealPlayerId(winnerId) ? (
+                      {isAdmin && statusFinished && !block.winner_player_id && winnerId && isRealPlayerId(winnerId) ? (
                         <div className="mt-2 flex items-center gap-3">
                           <button
                             type="button"
@@ -669,7 +767,6 @@ export default function TournamentLeagueResultsPage() {
                 </div>
               )}
 
-              {/* ✅ winner が出せない場合：管理者だけ手動確定 */}
               {statusFinished && !winnerId && (
                 <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
                   <div className="text-sm font-semibold">優勝者が未確定です</div>
@@ -712,9 +809,7 @@ export default function TournamentLeagueResultsPage() {
                       </div>
                     </div>
                   ) : (
-                    <div className="mt-2 text-[11px] text-gray-300">
-                      ※ 管理者が優勝者を確定するとここに表示されます。
-                    </div>
+                    <div className="mt-2 text-[11px] text-gray-300">※ 管理者が優勝者を確定するとここに表示されます。</div>
                   )}
                 </div>
               )}
@@ -749,7 +844,9 @@ export default function TournamentLeagueResultsPage() {
                             <td className="border border-white/10 px-2 py-1 text-right">{row.losses}</td>
                             <td className="border border-white/10 px-2 py-1 text-right">{row.points_for}</td>
                             <td className="border border-white/10 px-2 py-1 text-right">{row.points_against}</td>
-                            <td className="border border-white/10 px-2 py-1 text-right">{formatSigned(calcPointDiff(row))}</td>
+                            <td className="border border-white/10 px-2 py-1 text-right">
+                              {formatSigned(calcPointDiff(row))}
+                            </td>
                           </tr>
                         );
                       })}

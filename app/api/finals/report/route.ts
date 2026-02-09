@@ -96,34 +96,65 @@ async function safeWriteFinalMatch(
 
   let current = { ...payload };
 
-  for (let i = 0; i < 16; i++) {
-    const fm = (supabase.from('final_matches') as any);
+  // ✅ insert→duplicate の場合は、既存行を探して update に切り替える
+  let writeMode: 'insert' | 'update' = mode;
+  let writeId: string | null = idOrNull;
 
-const q =
-  mode === 'update'
-    ? fm.update(current).eq('id', idOrNull!)
-    : fm.insert(current).select('id').single();
+  for (let i = 0; i < 16; i++) {
+    const fm = supabase.from('final_matches') as any;
+
+    const q =
+      writeMode === 'update'
+        ? fm.update(current).eq('id', writeId!)
+        : fm.insert(current).select('id').single();
 
     const { data, error } = await q;
 
     if (!error) {
-      if (mode === 'insert') return { ok: true as const, id: data?.id ? String(data.id) : null };
-      return { ok: true as const, id: idOrNull };
+      if (writeMode === 'insert') {
+        return { ok: true as const, id: data?.id ? String(data.id) : null };
+      }
+      return { ok: true as const, id: writeId };
     }
 
     const msg = String(error.message || '');
+
+    // ✅ ここが本件：unique重複なら「既存行idを拾って update」に切り替えてリトライ
+    const isDup =
+      msg.includes('duplicate key value') ||
+      msg.includes('final_matches_unique') ||
+      msg.includes('final_matches_bracket_round_match_uk') ||
+      msg.includes('final_matches_unique_bracket_round_match');
+
+    if (writeMode === 'insert' && isDup) {
+      const bracket_id = String((current as any).bracket_id ?? '');
+      const round_no = Number((current as any).round_no);
+      const match_no_raw = (current as any).match_no ?? (current as any).match_index;
+      const match_no = Number(match_no_raw);
+
+      if (bracket_id && Number.isFinite(round_no) && Number.isFinite(match_no)) {
+        const sel = await safeSelectId(supabase, { bracket_id, round_no, match_no });
+        if (sel.ok && sel.id) {
+          writeMode = 'update';
+          writeId = sel.id;
+          continue; // ★ update に切り替えて再試行
+        }
+      }
+      // 既存が見つからないなら、そのままエラーとして返す
+      return { ok: false as const, message: msg };
+    }
+
     const missing = removableCols.find((c) => c in current && isMissingColumnErrorMessage(msg, c));
     if (!missing) return { ok: false as const, message: msg };
 
     // 列が無い → その列だけ落としてリトライ
-// eslint-disable-next-line no-unused-vars
-const rest = Object.fromEntries(Object.entries(current).filter(([k]) => k !== missing));
-current = rest as any;
-
+    const rest = Object.fromEntries(Object.entries(current).filter(([k]) => k !== missing));
+    current = rest as any;
   }
 
   return { ok: false as const, message: 'write retry exceeded' };
 }
+
 
 export async function GET() {
   return NextResponse.json({ ok: true, route: '/api/finals/report', methods: ['POST'] });

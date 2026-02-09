@@ -20,6 +20,7 @@ import {
   FaEye,
   FaEyeSlash,
   FaListUl,
+  FaDatabase, // ✅ 追加
 } from 'react-icons/fa';
 
 import { createClient } from '@/lib/supabase/client';
@@ -256,17 +257,12 @@ export default function AdminDashboard() {
     }
   };
 
-  /* ==============================
-     ★ ランキング設定の API 連携
-     ============================== */
-
   const loadConfig = async () => {
     try {
       const r = await fetch('/api/admin/ranking-config', { cache: 'no-store' });
       const j = await r.json();
 
       if (r.ok && j?.ok) {
-        // ① ELO
         if (j?.config) {
           const cfg = j.config as Partial<RankingConfig>;
           const normalized: RankingConfig = {
@@ -279,7 +275,6 @@ export default function AdminDashboard() {
           setConfig((prev) => ({ ...prev, ...normalized }));
         }
 
-        // ② trend（j.trend を優先。無ければ j.config 内にある場合も拾う）
         const tSrc = (j?.trend ?? j?.config ?? {}) as any;
         const modeRaw = String(tSrc?.trend_default_mode ?? 'daily').toLowerCase();
         const mode: TrendMode = modeRaw === 'weekly' || modeRaw === 'monthly' ? (modeRaw as TrendMode) : 'daily';
@@ -306,7 +301,6 @@ export default function AdminDashboard() {
         data: { user },
       } = await supabase.auth.getUser();
 
-      // ✅ ここが重要：config + trend を一緒に送る
       const res = await fetch('/api/admin/ranking-config', {
         method: 'PUT',
         headers: {
@@ -319,7 +313,6 @@ export default function AdminDashboard() {
       const j = await res.json();
       if (!res.ok || !j?.ok) throw new Error(j?.message || `HTTP ${res.status}`);
 
-      // ✅ 保存後に即リロード（ここで戻るなら API/DB が戻しているのが確定）
       await loadConfig();
 
       alert('設定を保存しました');
@@ -618,6 +611,25 @@ export default function AdminDashboard() {
                   <h3 className="text-2xl font-bold">大会管理</h3>
                 </div>
                 <p className="text-gray-400">大会インデックスからリーグブロックの作成・確認ができます</p>
+              </Link>
+
+              {/* ✅ 追加：バックアップ/復元（UI維持のままカード1枚追加） */}
+              <Link
+                href="/admin/backup"
+                className="group bg-gray-900/60 backdrop-blur-md rounded-xl border border-purple-500/30 p-8 hover:border-purple-400/50 transition-all transform hover:scale-105 md:col-span-2"
+              >
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="p-4 bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl group-hover:shadow-lg group-hover:shadow-blue-500/30 transition-all">
+                    <FaDatabase className="text-3xl text-white" />
+                  </div>
+                  <h3 className="text-2xl font-bold">バックアップ / 復元</h3>
+                </div>
+                <p className="text-gray-400">
+                  ボタンひとつでバックアップ（Downloadsへ保存）／バックアップJSONから復元
+                </p>
+                <p className="text-xs text-gray-500 mt-2">
+                  ※ 復元は「管理者1人だけ」の状態で実行（事故防止）
+                </p>
               </Link>
             </div>
 
