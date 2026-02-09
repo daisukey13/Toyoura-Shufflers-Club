@@ -138,6 +138,36 @@ function pickString(m: any, keys: string[]): string | null {
   return null;
 }
 
+/** ✅ バックアップ/復元ファイル名っぽい文字列を弾く（表示事故防止） */
+function looksLikeBackupFilename(s: string): boolean {
+  const t = (s || '').trim();
+  if (!t) return false;
+  if (/\.json$/i.test(t)) return true;
+  if (/(^|[^a-z])backup([^a-z]|$)/i.test(t)) return true;
+  if (/(^|[^a-z])restore([^a-z]|$)/i.test(t)) return true;
+  if (/バックアップ|復元/i.test(t)) return true;
+  return false;
+}
+
+/** ✅ 大会バッジに使う「表示して良い大会名」だけ返す（ファイル名っぽい場合は null） */
+function getTournamentBadgeLabel(m: any): string | null {
+  const raw =
+    pickString(m, [
+      'tournament_name',
+      'tournamentTitle',
+      'tournament_title',
+      'tournament',
+      'tournaments_name',
+      'tournament_display_name',
+    ]) ?? null;
+
+  if (!raw) return null;
+  const name = raw.trim();
+  if (!name) return null;
+  if (looksLikeBackupFilename(name)) return null;
+  return name;
+}
+
 /**
  * ✅ 日付降順のために「使える日付カラム」を優先順で拾う
  * match_date が無い/壊れているデータが混ざっても並びが崩れないようにする（UIは維持）
@@ -222,14 +252,21 @@ const MetaLine = ({ m }: { m: MatchDetails }) => {
     (m as any).updated_at,
   ]);
 
+  const tournamentLabel = useMemo(() => {
+    if (!m?.is_tournament) return null;
+    return getTournamentBadgeLabel(m);
+  }, [m?.is_tournament, (m as any).tournament_name, (m as any).tournamentTitle, (m as any).tournament_title, (m as any).tournament]);
+
   return (
     <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 sm:mb-4 text-xs sm:text-sm">
-      {m.is_tournament && m.tournament_name && (
+      {/* ✅ 大会試合は「大会名バッジ」のみ表示（バックアップ/復元ファイル名っぽいものは出さない） */}
+      {m.is_tournament && tournamentLabel && (
         <span className="px-2 sm:px-3 py-1 rounded-full bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 text-yellow-400 flex items-center gap-1">
           <FaMedal className="text-xs" />
-          <span className="truncate max-w-[150px] sm:max-w-none">{m.tournament_name}</span>
+          <span className="truncate max-w-[150px] sm:max-w-none">{tournamentLabel}</span>
         </span>
       )}
+
       <ModeChip mode={m.mode} />
       <FinishReasonChip reason={m.finish_reason} />
       <span className="text-gray-400 flex items-center gap-1">
