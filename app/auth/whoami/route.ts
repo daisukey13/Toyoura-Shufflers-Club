@@ -40,7 +40,7 @@ function getSupabaseServerClient(req: Request) {
 export async function GET(req: Request) {
   try {
     // 1) Clerk 最優先
-    const a = auth();
+    const a = await auth();
     const clerkUserId = (a?.userId as string | null) ?? null;
 
     if (clerkUserId) {

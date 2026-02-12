@@ -14,7 +14,7 @@ import {
   FaEdit,
   FaSpinner,
 } from 'react-icons/fa';
-import { useFetchPlayerDetail, useFetchPlayersData } from '@/lib/hooks/useFetchSupabaseData';
+import * as SBHooks from '@/lib/hooks/useFetchSupabaseData';
 import { createClient } from '@/lib/supabase/client';
 
 /* ───────────────────────────── Types / helpers ───────────────────────────── */
@@ -216,7 +216,7 @@ function MiniRankLine({
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-[120px]">
+      <svg viewBox={`0 0 ${w} 0 ${w} ${h}`} className="w-full h-[120px]">
         <rect x="0" y="0" width={w} height={h} rx="12" className="fill-black/20" />
         <path d={path} className="stroke-purple-300" strokeWidth="2.5" fill="none" />
         {coords.map(([x, y], i) => (
@@ -243,7 +243,7 @@ export default function PlayerProfilePage() {
   const playerId = params?.id;
 
   // 個別プレイヤー詳細（試合履歴など）
-  const { player, matches, loading, error } = useFetchPlayerDetail(playerId, { requireAuth: false });
+  const { player, matches, loading, error } = SBHooks.useFetchPlayerDetail(playerId, { requireAuth: false });
 
   // ★閲覧者（本人/管理者）判定：非表示プレイヤーのガード＆編集導線に使用
   const [viewerChecked, setViewerChecked] = useState(false);
@@ -301,7 +301,7 @@ export default function PlayerProfilePage() {
   }, [viewerIsAdmin, viewerId, playerId]);
 
   // 全プレイヤーから順位算出（RP降順）※useFetchPlayersData は inactive/deleted を既定で除外
-  const { players: allPlayers } = useFetchPlayersData({ requireAuth: false });
+  const { players: allPlayers } = SBHooks.useFetchPlayersData({ requireAuth: false });
   const { rank, totalActive } = useMemo(() => {
     const src = Array.isArray(allPlayers) ? allPlayers : [];
     const arr = [...src].sort((a: any, b: any) => (b.ranking_points ?? 0) - (a.ranking_points ?? 0));
@@ -820,20 +820,14 @@ export default function PlayerProfilePage() {
                       m?.result_type === 'final' ||
                       m?.kind === 'final';
 
-                    // ✅ ここが今回の要件：常に「自分のスコア」を左にする（IIFE禁止で安全）
+                    // ✅ ここが今回の要件：常に「自分のスコア」を左にする
                     const selfIsWinner = m.winner_id === playerId;
 
                     const winnerScore =
-                      toInt(m?.winner_score) ??
-                      toInt(m?.score_winner) ??
-                      toInt(m?.w_score) ??
-                      15;
+                      toInt(m?.winner_score) ?? toInt(m?.score_winner) ?? toInt(m?.w_score) ?? 15;
 
                     const loserScore =
-                      toInt(m?.loser_score) ??
-                      toInt(m?.score_loser) ??
-                      toInt(m?.l_score) ??
-                      0;
+                      toInt(m?.loser_score) ?? toInt(m?.score_loser) ?? toInt(m?.l_score) ?? 0;
 
                     const selfScore = selfIsWinner ? winnerScore : loserScore;
                     const oppScore = selfIsWinner ? loserScore : winnerScore;
@@ -877,7 +871,7 @@ export default function PlayerProfilePage() {
                             </div>
                           </div>
 
-                          {/* ✅ 自分が必ず左に来るスコア表示（最小修正・安全） */}
+                          {/* ✅ 自分が必ず左に来るスコア表示 */}
                           <div className="text-right">
                             <div className="text-lg sm:text-xl font-extrabold text-white">
                               {selfScore} - {oppScore}

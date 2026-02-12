@@ -13,9 +13,7 @@ import { createClient } from '@/lib/supabase/client';
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-type OrderBy =
-  | { column: string; ascending?: boolean }
-  | { columns: string[]; ascending?: boolean };
+type OrderBy = { column: string; ascending?: boolean } | { columns: string[]; ascending?: boolean };
 
 type BaseOptions = {
   tableName: string;
@@ -31,9 +29,7 @@ type BaseOptions = {
 
 function toOrderColumns(orderBy?: OrderBy): { cols: string[]; asc: boolean } {
   if (!orderBy) return { cols: [], asc: false };
-  if ('columns' in orderBy) {
-    return { cols: orderBy.columns, asc: !!orderBy.ascending };
-  }
+  if ('columns' in orderBy) return { cols: orderBy.columns, asc: !!orderBy.ascending };
   return { cols: [orderBy.column], asc: !!orderBy.ascending };
 }
 
@@ -59,6 +55,19 @@ function pickNumber(obj: any, keys: string[]): number | null {
   return null;
 }
 
+function pickStr(v: any): string | null {
+  return typeof v === 'string' && v.trim() ? v : null;
+}
+function pickBool(v: any): boolean | null {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+  }
+  return null;
+}
+
 /* ───────────────────────────── Players schema compatibility ─────────────────────────────
  * ✅ DBによって players.ranking_points が無い (rating だけ) ことがあるため、
  *    取得後に ranking_points を rating で補完して UI 互換を維持する。
@@ -77,6 +86,34 @@ function normalizePlayers(arr: any[]) {
 
 function hasPlayersRankingPointsError(errText: string) {
   return /players\.ranking_points/i.test(errText) && /does not exist/i.test(errText);
+}
+
+/**
+ * ✅ 追加（最小）: players の「列が無い」400を検出して select から除去する
+ * 例: column players.wins does not exist
+ */
+function parseMissingPlayersColumn(errText: string): string | null {
+  const m = errText.match(/column\s+players\.([a-zA-Z0-9_]+)\s+does not exist/i);
+  return m?.[1] ?? null;
+}
+
+function stripColumnFromSelect(select: string, col: string): string {
+  // select='*' の場合はそのまま（列不足で 400 にはならない想定）
+  if (!select || select.trim() === '*' || col.trim() === '') return select;
+
+  // PostgREST の select は "a,b,c" 形式が多い想定（埋め込み select は対象外）
+  // 最小方針：単純CSVのときだけ削る。複雑な select の場合は安全に "*" に退避する。
+  const s = select.trim();
+  const hasParen = s.includes('(') || s.includes(')');
+  if (hasParen) return '*';
+
+  const parts = s
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  const next = parts.filter((p) => p !== col);
+  return next.length ? next.join(',') : '*';
 }
 
 /**
@@ -135,9 +172,7 @@ function isMatchDetailsAlias(name: string) {
  */
 function resolveTableCandidates(tableName: string, requireAuth: boolean): string[] {
   if (tableName !== 'match_details') return [tableName];
-  return requireAuth
-    ? ['match_details_mv', 'match_details', 'match_details_public']
-    : ['match_details_public', 'match_details_mv', 'match_details'];
+  return requireAuth ? ['match_details_mv', 'match_details', 'match_details_public'] : ['match_details_public', 'match_details_mv', 'match_details'];
 }
 
 /** 内部: アクセストークン取得（必要なら少し待機してリトライ） */
@@ -299,13 +334,16 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
       const orderCandidates = orderCols.length ? [...orderCols] : [];
       orderCandidates.push('__NO_ORDER__');
 
+      // ✅ players の列差吸収のため、select を可変にする
+      let effectiveSelect = select;
+
       let lastErr: string | null = null;
 
       for (const tbl of tableCandidates) {
         for (const col of orderCandidates) {
           let url = `${SUPABASE_URL}/rest/v1/${tbl}?`;
           const params = new URLSearchParams();
-          params.set('select', select);
+          params.set('select', effectiveSelect);
 
           if (queryParams) {
             for (const [k, v] of Object.entries(queryParams)) {
@@ -348,10 +386,20 @@ export function useFetchSupabaseData<T = any>(options: BaseOptions) {
           const errorText = await res.text().catch(() => '');
           lastErr = `HTTP ${res.status}: ${errorText}`;
 
-          // ✅ players.ranking_points が無い環境: order で ranking_points を試していたら rating に差し替える
-          // ここは「order候補を変えて次へ」で十分なので、そのまま次候補へ落とす（400の扱いに乗る）
+          // ✅ players の「列が無い」400なら、selectから列を除外して同じ order/同じテーブルでリトライ
+          if (res.status === 400 && tableName === 'players') {
+            const missing = parseMissingPlayersColumn(errorText);
+            if (missing && effectiveSelect !== '*') {
+              const nextSel = stripColumnFromSelect(effectiveSelect, missing);
+              if (nextSel !== effectiveSelect) {
+                effectiveSelect = nextSel;
+                continue; // 同じ col でやり直す
+              }
+            }
+          }
+
+          // ✅ players.ranking_points が無い環境: order で ranking_points を試していたら次候補へ
           if (res.status === 400 && hasPlayersRankingPointsError(errorText) && col !== '__NO_ORDER__') {
-            // 次の order 候補へ
             continue;
           }
 
@@ -527,13 +575,7 @@ async function fetchPlayersLite(playerIds: string[], requireAuth: boolean) {
 export function useFetchMatchesData(limit?: number, opts?: { enabled?: boolean; requireAuth?: boolean }) {
   const requireAuth = opts?.requireAuth ?? false;
 
-  const {
-    data: rawMatches,
-    loading,
-    error,
-    retrying,
-    refetch,
-  } = useFetchSupabaseData({
+  const { data: rawMatches, loading, error, retrying, refetch } = useFetchSupabaseData({
     tableName: 'match_details', // ✅ alias: public/mv に自動フォールバック
     select: '*',
     orderBy: { columns: ['match_date', 'created_at', 'id'], ascending: false },
@@ -737,7 +779,13 @@ function normalizeMyDeltas(m: any, playerId: string) {
   const pointsBefore = pickNumber(
     m,
     isWinner
-      ? ['winner_prev_points', 'winner_previous_points', 'winner_points_before', 'winner_rp_before', 'winner_ranking_points_before']
+      ? [
+          'winner_prev_points',
+          'winner_previous_points',
+          'winner_points_before',
+          'winner_rp_before',
+          'winner_ranking_points_before',
+        ]
       : ['loser_prev_points', 'loser_previous_points', 'loser_points_before', 'loser_rp_before', 'loser_ranking_points_before'],
   );
 
@@ -751,16 +799,12 @@ function normalizeMyDeltas(m: any, playerId: string) {
 
   const hcAfter = pickNumber(
     m,
-    isWinner
-      ? ['winner_current_handicap', 'winner_handicap_after', 'winner_hc_after']
-      : ['loser_current_handicap', 'loser_handicap_after', 'loser_hc_after'],
+    isWinner ? ['winner_current_handicap', 'winner_handicap_after', 'winner_hc_after'] : ['loser_current_handicap', 'loser_handicap_after', 'loser_hc_after'],
   );
 
   const hcBefore = pickNumber(
     m,
-    isWinner
-      ? ['winner_prev_handicap', 'winner_previous_handicap', 'winner_handicap_before', 'winner_hc_before']
-      : ['loser_prev_handicap', 'loser_previous_handicap', 'loser_handicap_before', 'loser_hc_before'],
+    isWinner ? ['winner_prev_handicap', 'winner_previous_handicap', 'winner_handicap_before', 'winner_hc_before'] : ['loser_prev_handicap', 'loser_previous_handicap', 'loser_handicap_before', 'loser_hc_before'],
   );
 
   const hcDelta =
@@ -773,15 +817,10 @@ function normalizeMyDeltas(m: any, playerId: string) {
 
   const rankAfter = pickNumber(
     m,
-    isWinner
-      ? ['winner_rank_after', 'winner_rank', 'winner_position', 'winner_current_rank']
-      : ['loser_rank_after', 'loser_rank', 'loser_position', 'loser_current_rank'],
+    isWinner ? ['winner_rank_after', 'winner_rank', 'winner_position', 'winner_current_rank'] : ['loser_rank_after', 'loser_rank', 'loser_position', 'loser_current_rank'],
   );
 
-  const rankDelta = pickNumber(
-    m,
-    isWinner ? ['winner_rank_delta', 'winner_rank_change'] : ['loser_rank_delta', 'loser_rank_change'],
-  );
+  const rankDelta = pickNumber(m, isWinner ? ['winner_rank_delta', 'winner_rank_change'] : ['loser_rank_delta', 'loser_rank_change']);
 
   return {
     my_side: side,
@@ -795,11 +834,7 @@ function normalizeMyDeltas(m: any, playerId: string) {
 }
 
 // ✅ 400になったら select を切り替えて再試行（final_matches の列差吸収用）
-async function fetchJsonWithSelectFallback(
-  baseUrlWithoutSelect: string,
-  headers: Record<string, string>,
-  selectCandidates: string[],
-): Promise<any[]> {
+async function fetchJsonWithSelectFallback(baseUrlWithoutSelect: string, headers: Record<string, string>, selectCandidates: string[]): Promise<any[]> {
   let lastErr: any = null;
 
   for (const sel of selectCandidates) {
@@ -826,23 +861,6 @@ async function fetchJsonWithSelectFallback(
   console.warn('[fetchJsonWithSelectFallback] failed:', lastErr);
   return [];
 }
-
-function pickStr(v: any): string | null {
-  return typeof v === 'string' && v.trim() ? v : null;
-}
-function pickBool(v: any): boolean | null {
-  if (typeof v === 'boolean') return v;
-  if (typeof v === 'string') {
-    const s = v.trim().toLowerCase();
-    if (s === 'true') return true;
-    if (s === 'false') return false;
-  }
-  return null;
-}
-
-// （以下、あなたが貼ってくれたコードの残りは “そのまま” でOK）
-// ※ ここより下は players.ranking_points を REST で叩いていないため、今回の400原因とは無関係。
-//    既存ロジックを崩さないため、変更しません。
 
 async function fetchTournamentMatchesFromMatchesTable(playerId: string, token: string) {
   const headers = {
@@ -979,5 +997,324 @@ async function fetchTournamentMatchesFromMatchesTable(playerId: string, token: s
   });
 }
 
-// 以降（fetchFinalMatchesForPlayer / fetchMatchDetailsForPlayer / useFetchPlayerDetail / updatePlayer / createMatch）は
-// あなたの貼ってくれたコードをそのまま残してください（変更不要）。
+async function fetchFinalMatchesForPlayer(playerId: string, token: string) {
+  const headers = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+
+  const base =
+    `${SUPABASE_URL}/rest/v1/final_matches?` +
+    `or=(${encodeURIComponent(`winner_id.eq.${playerId},loser_id.eq.${playerId}`)})` +
+    `&order=created_at.desc` +
+    `&limit=200`;
+
+  const selects = [
+    [
+      'id',
+      'created_at',
+      'winner_id',
+      'loser_id',
+      'winner_score',
+      'loser_score',
+      'finish_reason',
+      'end_reason',
+      'affects_rating',
+      'winner_points_delta',
+      'loser_points_delta',
+      'winner_handicap_delta',
+      'loser_handicap_delta',
+      'winner_points_change',
+      'loser_points_change',
+      'winner_handicap_change',
+      'loser_handicap_change',
+    ].join(','),
+    ['id', 'created_at', 'winner_id', 'loser_id', 'winner_score', 'loser_score', 'finish_reason', 'end_reason', 'affects_rating'].join(','),
+    ['id', 'created_at', 'winner_id', 'loser_id', 'winner_score', 'loser_score'].join(','),
+  ];
+
+  const rows = await fetchJsonWithSelectFallback(base, headers, selects);
+
+  // players の最低限プロフィールを付ける（表示崩れ回避）
+  const pIds = Array.from(
+    new Set(
+      (rows ?? [])
+        .flatMap((r) => [r?.winner_id, r?.loser_id])
+        .map((x) => String(x ?? ''))
+        .filter((s) => s.length > 0),
+    ),
+  );
+  const pMap = new Map<string, any>();
+  if (pIds.length > 0) {
+    const inP = pIds.map((id) => `"${id}"`).join(',');
+    const pUrl = `${SUPABASE_URL}/rest/v1/players?id=in.(${encodeURIComponent(inP)})&select=id,handle_name,avatar_url`;
+    const pRes = await fetch(pUrl, { headers, cache: 'no-store' });
+    const pJson = pRes.ok ? ((await pRes.json()) as any[]) : [];
+    for (const p of pJson ?? []) pMap.set(String(p?.id ?? ''), p);
+  }
+
+  return (rows ?? []).map((r: any) => {
+    const wid = pickStr(r?.winner_id);
+    const lid = pickStr(r?.loser_id);
+
+    const wp = wid ? pMap.get(wid) : null;
+    const lp = lid ? pMap.get(lid) : null;
+
+    return normalizeMatchRow({
+      id: String(r?.id ?? ''),
+      match_date: pickStr(r?.created_at) ?? new Date().toISOString(),
+      mode: 'singles',
+      status: 'finalized',
+
+      winner_id: wid,
+      loser_id: lid,
+      winner_name: pickStr(wp?.handle_name) ?? null,
+      loser_name: pickStr(lp?.handle_name) ?? null,
+      winner_avatar_url: pickStr(wp?.avatar_url) ?? null,
+      loser_avatar_url: pickStr(lp?.avatar_url) ?? null,
+
+      winner_score: toNumber(r?.winner_score),
+      loser_score: toNumber(r?.loser_score),
+
+      winner_points_delta: toNumber(r?.winner_points_delta),
+      loser_points_delta: toNumber(r?.loser_points_delta),
+      winner_handicap_delta: toNumber(r?.winner_handicap_delta),
+      loser_handicap_delta: toNumber(r?.loser_handicap_delta),
+      winner_points_change: toNumber(r?.winner_points_change),
+      loser_points_change: toNumber(r?.loser_points_change),
+      winner_handicap_change: toNumber(r?.winner_handicap_change),
+      loser_handicap_change: toNumber(r?.loser_handicap_change),
+
+      finish_reason: pickStr(r?.finish_reason) ?? pickStr(r?.end_reason) ?? null,
+      affects_rating: pickBool(r?.affects_rating),
+
+      is_tournament: true,
+      tournament_name: 'Finals',
+    });
+  });
+}
+
+async function fetchMatchDetailsForPlayer(playerId: string, token: string, requireAuth: boolean) {
+  const tables = resolveTableCandidates('match_details', requireAuth);
+  const orderCandidates = ['match_date.desc,created_at.desc,id.desc', 'match_date.desc,id.desc', 'match_date.desc'];
+
+  let lastErr: any = null;
+
+  for (const tbl of tables) {
+    for (const ord of orderCandidates) {
+      const params = new URLSearchParams();
+      params.set('or', `(winner_id.eq.${playerId},loser_id.eq.${playerId})`);
+      params.set('order', ord);
+      params.set('limit', '50');
+
+      const url = `${SUPABASE_URL}/rest/v1/${tbl}?${params.toString()}`;
+
+      const res = await fetch(url, {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store',
+      });
+
+      if (res.ok) {
+        const json = (await res.json()) as any[];
+        const base = normalizeMatches(json ?? []);
+
+        try {
+          const ids = Array.from(new Set(base.map((m: any) => String(m?.id ?? '')).filter((x: string) => x.length > 0)));
+          const extras = await fetchMatchExtrasByIds(ids, token);
+          if (extras.size > 0) return mergeExtrasIntoMatchDetailsRows(base, extras);
+        } catch {}
+
+        return base;
+      }
+
+      const text = await res.text().catch(() => '');
+      lastErr = new Error(`[${tbl}] HTTP ${res.status}: ${text}`);
+
+      if (res.status === 400) continue;
+      if ([401, 403, 404].includes(res.status)) break;
+
+      throw lastErr;
+    }
+  }
+
+  console.warn('[useFetchPlayerDetail] match_details fetch failed:', lastErr);
+  return [];
+}
+
+export function useFetchPlayerDetail(playerId: string, opts?: { enabled?: boolean; requireAuth?: boolean }) {
+  const [player, setPlayer] = useState<any>(null);
+  const [matches, setMatches] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const enabled = opts?.enabled ?? true;
+  const requireAuth = opts?.requireAuth ?? false;
+
+  useEffect(() => {
+    if (!enabled || !playerId) {
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const supabase = createClient();
+
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const token =
+          (await supabase.auth.getSession()).data.session?.access_token ??
+          (requireAuth ? null : SUPABASE_ANON_KEY);
+
+        if (requireAuth && !token) throw new Error('認証トークンが見つかりません');
+
+        // player 本体は * で読む（列差に強い）
+        const playerUrl = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}&select=*`;
+        const playerRes = await fetch(playerUrl, {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store',
+        });
+        if (!playerRes.ok) throw new Error(`Failed to fetch player: ${playerRes.status}`);
+        const playerData = await playerRes.json();
+        if (!playerData?.[0]) throw new Error('Player not found');
+        if (cancelled) return;
+
+        const matchesData = await fetchMatchDetailsForPlayer(playerId, token, requireAuth);
+        if (cancelled) return;
+
+        let tournamentFromMatches: any[] = [];
+        let finalsFromFinalMatches: any[] = [];
+
+        try {
+          [tournamentFromMatches, finalsFromFinalMatches] = await Promise.all([
+            fetchTournamentMatchesFromMatchesTable(playerId, token),
+            fetchFinalMatchesForPlayer(playerId, token),
+          ]);
+        } catch {
+          // 取れない場合は黙ってスキップ（UIを壊さない）
+        }
+
+        if (cancelled) return;
+
+        const me = normalizePlayerRow(playerData[0]);
+        setPlayer(me);
+
+        // 重複除去（id）
+        const byId = new Map<string, any>();
+        for (const m of matchesData ?? []) {
+          const id = String(m?.id ?? '');
+          if (id) byId.set(id, m);
+        }
+        for (const m of tournamentFromMatches ?? []) {
+          const id = String(m?.id ?? '');
+          if (id && !byId.has(id)) byId.set(id, m);
+        }
+        for (const m of finalsFromFinalMatches ?? []) {
+          const id = String(m?.id ?? '');
+          if (id && !byId.has(id)) byId.set(id, m);
+        }
+
+        const combined = Array.from(byId.values()).sort((a: any, b: any) => {
+          const at = new Date(String(a?.match_date ?? '')).getTime();
+          const bt = new Date(String(b?.match_date ?? '')).getTime();
+          return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
+        });
+
+        const enriched = combined.slice(0, 50).map((m: any) => ({
+          ...m,
+          ...normalizeMyDeltas(m, playerId),
+        }));
+
+        setMatches(enriched);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || '読み込みに失敗しました');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [playerId, enabled, requireAuth]);
+
+  // UI側互換のため置いておく（現状 refetch を使っていないケースでも壊さない）
+  const refetch = useCallback(() => {}, []);
+
+  return { player, matches, loading, error, refetch };
+}
+
+/* =========================================================
+ * 変更系ユーティリティ（必ずユーザートークンで実行）
+ * =========================================================*/
+
+export async function updatePlayer(playerId: string, updates: any) {
+  try {
+    const supabase = createClient();
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token ?? null;
+    if (!token) throw new Error('ログインが必要です');
+
+    const url = `${SUPABASE_URL}/rest/v1/players?id=eq.${playerId}`;
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify(updates),
+    });
+
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Failed to update player: ${t}`);
+    }
+    const json = await res.json();
+    return { data: json?.[0] ?? null, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message || '更新に失敗しました' };
+  }
+}
+
+export async function createMatch(matchData: any) {
+  try {
+    const supabase = createClient();
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token ?? null;
+    if (!token) throw new Error('ログインが必要です');
+
+    const url = `${SUPABASE_URL}/rest/v1/matches`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify(matchData),
+    });
+
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Failed to create match: ${t}`);
+    }
+    const json = await res.json();
+    return { data: json?.[0] ?? null, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message || '登録に失敗しました' };
+  }
+}
