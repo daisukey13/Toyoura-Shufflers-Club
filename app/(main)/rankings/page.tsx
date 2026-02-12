@@ -89,7 +89,13 @@ type Player = {
   id: string;
   handle_name: string;
   avatar_url?: string | null;
+
+  // ✅ UI互換：ランキング表示/ソートで使う
   ranking_points?: number | null;
+
+  // ✅ DB差分吸収：ranking_points が無いDBでは rating がある
+  rating?: number | null;
+
   handicap?: number | null;
   matches_played?: number | null;
   wins?: number | null;
@@ -113,6 +119,39 @@ function eq(a: any, b: any) {
 // ✅ 追加（最小）：def 判定（大文字小文字/前後空白を吸収）
 function isDefName(name: any) {
   return String(name ?? '').trim().toLowerCase() === 'def';
+}
+
+function toNumber(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * ✅ 最小パッチ：players の列差吸収
+ * - ranking_points があるDB: それを優先
+ * - ranking_points が無いDB: rating を ranking_points に詰め替えて UI互換を維持
+ */
+function normalizePlayers(arr: Player[]): Player[] {
+  return (arr ?? []).map((p0) => {
+    const p: Player = { ...(p0 as any) };
+    const rp = toNumber((p as any).ranking_points);
+    if (typeof rp === 'number') return p;
+
+    const rating = toNumber((p as any).rating);
+    if (typeof rating === 'number') {
+      (p as any).ranking_points = rating;
+    } else if ((p as any).ranking_points == null) {
+      // null/undefined のままだと UI 上は 0 扱いされるので、ここでは null のままにしておく（表示側で ??0）
+      (p as any).ranking_points = null;
+    }
+    return p;
+  });
 }
 
 /** points同点は同順位（競技順位: 1,2,2,4...）。同点内はHC昇順。 */
@@ -421,28 +460,41 @@ function RankingsInner() {
 
   /* ── Players ── */
   // ★PATCH: 生の players を取得（is_active が null の既存会員も取れる）
-  const { data: rawPlayers, loading: pLoading, error: pError, retrying: pRetrying, refetch: pRefetch } =
-    useFetchSupabaseData<Player>({
-      tableName: 'players',
-      // 必要カラム + フィルタ用の is_active/is_deleted/is_admin
-      select:
-        'id,handle_name,avatar_url,ranking_points,handicap,matches_played,wins,losses,is_active,is_deleted,is_admin',
-      orderBy: { columns: ['ranking_points', 'id'], ascending: false },
-      requireAuth: false,
-    });
+  // ✅ ranking_points 列が無いDBがあるため rating を取る（ranking_points は select しない）
+  const {
+    data: rawPlayers,
+    loading: pLoading,
+    error: pError,
+    retrying: pRetrying,
+    refetch: pRefetch,
+  } = useFetchSupabaseData<Player>({
+    tableName: 'players',
+    select: 'id,handle_name,avatar_url,rating,handicap,is_active,is_admin',
+    orderBy: { columns: ['rating', 'id'], ascending: false },
+    requireAuth: false,
+  });
+
+  // ✅ UI互換：ranking_points を埋める（ranking_points列があるDBでも壊さない）
+  const normalizedPlayers = useMemo(() => normalizePlayers((rawPlayers ?? []) as Player[]), [rawPlayers]);
 
   // ★PATCH: null はアクティブ扱い（false のみ除外）
   // ✅ 追加：def も除外（ランキング一覧には出さない）
   const players = useMemo(() => {
-    const arr = (rawPlayers ?? []) as Player[];
-    return arr.filter(
-      (p) =>
-        p?.is_admin !== true &&
-        p?.is_deleted !== true &&
-        p?.is_active !== false &&
-        !isDefName(p?.handle_name)
-    );
-  }, [rawPlayers]);
+    const arr = (normalizedPlayers ?? []) as Player[];
+    return arr.filter((p) => {
+  if (p?.is_admin === true) return false;
+
+  // ✅ is_deleted 列が無いDBもある: あれば除外、なければ無視
+  if ((p as any)?.is_deleted === true) return false;
+
+  // is_active === false のみ除外（null/未設定はアクティブ扱い）
+  if ((p as any)?.is_active === false) return false;
+
+  if (isDefName(p?.handle_name)) return false;
+  return true;
+});
+
+  }, [normalizedPlayers]);
 
   const [sortByPlayers, setSortByPlayers] = useState<'points' | 'handicap'>('points');
   const [isPendingPlayers, startTransitionPlayers] = useTransition();
@@ -579,7 +631,7 @@ function RankingsInner() {
       const trend = trendById[r.player.id] ?? 'same';
       return <PlayerCard key={r.player.id} player={r.player} rank={r.rank} trend={trend} />;
     },
-    [rankedPlayers, trendById]
+    [rankedPlayers, trendById],
   );
 
   /* ── Teams ── */
@@ -635,7 +687,7 @@ function RankingsInner() {
       if (!t) return null;
       return <TeamCard key={t.id} team={t} rank={index + 1} />;
     },
-    [sortedTeams]
+    [sortedTeams],
   );
 
   /* ─────────────────────────── UI ─────────────────────────── */

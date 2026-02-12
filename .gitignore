@@ -39,3 +39,7 @@ next-env.d.ts
 # backups (local artifacts)
 backup*.json
 final_matches_keys*.json
+
+# backups (local artifacts)
+backup*.json
+final_matches_keys*.json

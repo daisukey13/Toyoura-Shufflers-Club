@@ -1,7 +1,7 @@
 // app/(auth)/login/page.tsx
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Script from 'next/script';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -155,7 +155,11 @@ function LoginPageInner() {
     router.replace(redirectSafe);
   }, [isAdminUser, redirectSafe, router, supabase]);
 
-  /** whoami で既ログイン判定 */
+  /**
+   * ✅ whoami で “Clerk セッションが確立しているか” を判定
+   * - authed=false の場合：Supabase 側の残セッションが /login をフラッシュさせるので、ここで必ず掃除して /login に留める
+   * - authed=true の場合：従来どおり、管理者/redirect を反映
+   */
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
@@ -169,17 +173,30 @@ function LoginPageInner() {
         const authed = !!j?.authenticated;
         setAlreadyAuthed(authed);
 
-        if (authed) {
-          const {
-            data: { user },
-          } = await supabase.auth.getUser();
-
-          if (user?.id && (await isAdminUser(user.id))) {
-            router.replace('/admin/dashboard');
-            return;
+        // ✅ ここが最重要：Clerk 未認証なら Supabase 残骸を必ず掃除してフラッシュを止める
+        if (!authed) {
+          try {
+            // Cookie/LS の残骸で勝手に「ログイン済み扱い」になるのを防ぐ
+            cleanupAuthStorage();
+            await supabase.auth.signOut({ scope: 'local' } as any);
+          } catch {
+            // ignore
           }
+          return;
+        }
 
-          if (hasRedirect) router.replace(redirectSafe);
+        // authed=true の場合のみ、従来の自動遷移を実施
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (user?.id && (await isAdminUser(user.id))) {
+          router.replace('/admin/dashboard');
+          return;
+        }
+
+        if (hasRedirect) {
+          router.replace(redirectSafe);
         }
       } catch {
         if (!cancelled) setAlreadyAuthed(false);
@@ -557,9 +574,7 @@ function LoginPageInner() {
             {mode === 'email' ? (
               <>
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    メールアドレス
-                  </label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">メールアドレス</label>
                   <input
                     type="email"
                     value={email}
@@ -572,9 +587,7 @@ function LoginPageInner() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    パスワード
-                  </label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">パスワード</label>
                   <input
                     type="password"
                     value={password}
@@ -611,9 +624,7 @@ function LoginPageInner() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    パスワード
-                  </label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">パスワード</label>
                   <input
                     type="password"
                     value={password}

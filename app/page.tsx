@@ -34,7 +34,7 @@ interface TopPlayer {
   id: string;
   handle_name: string;
   avatar_url: string | null;
-  ranking_points: number;
+  ranking_points: number; // ✅ UI互換（中身は rating を詰める）
   handicap: number;
   wins?: number | null;
   losses?: number | null;
@@ -224,14 +224,32 @@ export default function HomePage() {
 
   const isActiveMemberRow = (p: any) => p?.is_active !== false && p?.is_deleted !== true;
 
+  /** ✅ ranking_points が無いDBでも動くように、
+   *  - select は rating を取る
+   *  - JS側で ranking_points に詰め替える
+   */
+  const normalizePlayerRp = <T extends Record<string, any>>(p: T) => {
+    // 既に ranking_points を持っているDBでも壊さない
+    const rp =
+      typeof (p as any).ranking_points === 'number'
+        ? (p as any).ranking_points
+        : typeof (p as any).rating === 'number'
+          ? (p as any).rating
+          : 0;
+
+    return { ...p, ranking_points: rp };
+  };
+
   const fetchStats = async () => {
     try {
       const [matchesResult, playersResult] = await Promise.all([
         supabase.from('matches').select('id', { count: 'exact', head: true }),
-        supabase.from('players').select('id, ranking_points, is_active, is_deleted').eq('is_admin', false),
+        // ✅ rating を取得（ranking_points は存在しないDBがある）
+        supabase.from('players').select('id, rating, is_active, is_deleted').eq('is_admin', false),
       ]);
 
-      const players = playersResult.data ?? [];
+      const playersRaw = playersResult.data ?? [];
+      const players = playersRaw.map((p: any) => normalizePlayerRp(p));
       const activePlayers = players.filter(isActiveMemberRow);
 
       const avgPoints =
@@ -252,14 +270,23 @@ export default function HomePage() {
 
   const fetchTopPlayers = async () => {
     try {
-      const { data } = await supabase
+      // ✅ rating を取得して ranking_points に詰め替え
+      const { data, error } = await supabase
         .from('players')
-        .select('id, handle_name, avatar_url, ranking_points, handicap, wins, losses, is_active, is_deleted')
+        .select('id, handle_name, avatar_url, rating, handicap, wins, losses, is_active, is_deleted')
         .eq('is_admin', false)
-        .order('ranking_points', { ascending: false })
+        .order('rating', { ascending: false })
         .limit(20);
 
-      const filtered = (data ?? []).filter(isActiveMemberRow) as TopPlayer[];
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error fetching top players:', error);
+        setTopPlayers([]);
+        return;
+      }
+
+      const normalized = (data ?? []).map((p: any) => normalizePlayerRp(p));
+      const filtered = normalized.filter(isActiveMemberRow) as TopPlayer[];
       setTopPlayers(filtered.slice(0, 5));
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -297,15 +324,20 @@ export default function HomePage() {
         .order('date', { ascending: false })
         .limit(3);
 
+      // ✅ notices テーブルが無い環境がある（PGRST205など）
+      // UIは壊さず「お知らせを出さない」だけにする
       if (error) {
         // eslint-disable-next-line no-console
-        console.error('Error fetching notices:', error);
+        console.warn('[home] notices unavailable:', error);
+        setNotices([]);
         return;
       }
+
       setNotices(data ?? []);
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.error('Error fetching notices:', error);
+      console.warn('[home] notices unexpected error:', error);
+      setNotices([]);
     }
   };
 
@@ -880,8 +912,16 @@ export default function HomePage() {
                 : d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
               const team = isTeamMatch(m);
-              const winnerHref = team ? (m.winner_team_id ? `/teams/${m.winner_team_id}` : undefined) : m.winner_id ? `/players/${m.winner_id}` : undefined;
-              const loserHref = team ? (m.loser_team_id ? `/teams/${m.loser_team_id}` : undefined) : m.loser_id ? `/players/${m.loser_id}` : undefined;
+              const winnerHref = team
+                ? (m.winner_team_id ? `/teams/${m.winner_team_id}` : undefined)
+                : m.winner_id
+                  ? `/players/${m.winner_id}`
+                  : undefined;
+              const loserHref = team
+                ? (m.loser_team_id ? `/teams/${m.loser_team_id}` : undefined)
+                : m.loser_id
+                  ? `/players/${m.loser_id}`
+                  : undefined;
 
               const winnerName = team ? m.winner_team_name ?? m.winner_name ?? '—' : m.winner_name ?? '—';
               const loserName = team ? m.loser_team_name ?? m.loser_name ?? '—' : m.loser_name ?? '—';
