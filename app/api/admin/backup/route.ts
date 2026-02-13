@@ -1,143 +1,133 @@
 // app/api/admin/backup/route.ts
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { auth } from '@clerk/nextjs/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function env(name: string) {
-  const v = process.env[name];
-  return v && v.trim() ? v.trim() : null;
+function json(status: number, body: any) {
+  return NextResponse.json(body, { status });
 }
 
-function jsonError(message: string, status = 400) {
-  return NextResponse.json({ ok: false, message }, { status });
-}
-
-/**
- * ✅ Cookie セッションが無い環境でも動くように
- * - 1) Cookie で getUser()
- * - 2) だめなら Authorization: Bearer <access_token> で getUser()
- *
- * ✅ 追加（今回の決定打）：
- * - dev(ローカル)では admin 判定をバイパスしてバックアップを許可する
- *   ※本番は絶対にバイパスしない（NODE_ENV === 'production' の時だけ厳格）
- */
-async function assertAdmin(req: Request) {
-  // ✅ ローカル検証を止めない（DB全消し直後でも backup/restore を回すため）
-  // ※ production では絶対に通らない
-  if (process.env.NODE_ENV !== 'production') {
-    return 'dev-bypass';
-  }
-
-  const url = env('NEXT_PUBLIC_SUPABASE_URL') || env('SUPABASE_URL');
-  const anon = env('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-  if (!url || !anon) {
-    throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY');
-  }
-
-  // 1) Cookie セッション
-  const cookieStore = cookies();
-  const sbCookie = createServerClient(url, anon, {
-    cookies: { get: (key) => cookieStore.get(key)?.value },
-  });
-
-  const r1 = await sbCookie.auth.getUser();
-  const cookieUserId = r1?.data?.user?.id ? String(r1.data.user.id) : null;
-
-  // 2) Bearer
-  const authz = req.headers.get('authorization') || req.headers.get('Authorization') || '';
-  const m = authz.match(/^Bearer\s+(.+)$/i);
-  const bearer = m?.[1]?.trim() || null;
-
-  let userId: string | null = cookieUserId;
-  let sbForQuery: SupabaseClient<any, any, any, any> = sbCookie as any;
-
-  if (!userId) {
-    if (!bearer) throw new Error('Auth session missing!');
-
-    const sbBearer = createClient(url, anon, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${bearer}` } },
-    });
-
-    const r2 = await sbBearer.auth.getUser(bearer);
-    userId = r2?.data?.user?.id ? String(r2.data.user.id) : null;
-
-    if (!userId) throw new Error('Not authenticated');
-    sbForQuery = sbBearer as any;
-  }
-
-  const { data: me, error: pErr } = await (sbForQuery.from('players') as any)
-    .select('is_admin')
-    .eq('auth_user_id', userId)
-    .maybeSingle();
-
-  if (pErr) throw new Error(pErr.message || 'players lookup failed');
-  if (!me?.is_admin) throw new Error('Forbidden: admin only');
-
-  return userId;
-}
-
-// ✅ バックアップ対象（リーグ/決勝も含む）
-// ★ 追加: final_round_entries（決勝生成の材料として使われているため）
-const TABLES = [
-  'players',
-  'teams',
-  'team_members',
-  'tournaments',
-  'tournament_entries',
-  'league_blocks',
-  'league_block_members',
-  'matches',
-  'match_entries',
-  'final_brackets',
-  'final_round_entries',
-  'final_matches',
-] as const;
-
-async function fetchAll(svc: SupabaseClient<any, any, any, any>, table: string) {
-  const { data, error } = await (svc.from(table) as any).select('*');
-  if (error) throw new Error(`${table} select failed: ${error.message}`);
-  return (data ?? []) as any[];
-}
-
-function backupFilename() {
-  const pad = (n: number) => String(n).padStart(2, '0');
+function nowStamp() {
   const d = new Date();
-  return `backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(
-    d.getMinutes()
-  )}.json`;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 }
 
-export async function GET(req: Request) {
+function looksLikeMissingTableOrColumn(msg: string) {
+  return /does not exist/i.test(msg) || /column .* does not exist/i.test(msg) || /relation .* does not exist/i.test(msg);
+}
+
+function getAdminClient(): SupabaseClient<any> | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !service) return null;
+
+  return createClient(url, service, {
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+  });
+}
+
+async function isAdminByFallback(admin: SupabaseClient<any>, userId: string): Promise<boolean> {
+  // 1) players_private.is_admin
   try {
-    await assertAdmin(req);
+    const { data, error } = await admin
+      .from('players_private')
+      .select('is_admin')
+      .eq('player_id', userId)
+      .maybeSingle();
 
-    const url = env('NEXT_PUBLIC_SUPABASE_URL') || env('SUPABASE_URL');
-    const service = env('SUPABASE_SERVICE_ROLE_KEY') || env('SUPABASE_SERVICE_ROLE');
-    if (!url || !service) return jsonError('Missing service role env (local only)', 500);
+    if (!error) return !!(data as any)?.is_admin;
+    if (!looksLikeMissingTableOrColumn(error.message)) return false;
+  } catch {
+    // next
+  }
 
-    const svcRaw = createClient(url, service, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
+  // 2) players.is_admin fallback
+  try {
+    const { data, error } = await admin.from('players').select('id,is_admin').eq('id', userId).maybeSingle();
+    if (error) return false;
+    return !!(data as any)?.is_admin;
+  } catch {
+    return false;
+  }
+}
 
-    const svc = svcRaw as SupabaseClient<any, any, any, any>;
+async function fetchAll(admin: SupabaseClient<any>, table: string) {
+  // 大きいテーブルでも落ちないようにページング
+  const pageSize = 1000;
+  let from = 0;
+  const all: any[] = [];
 
-    const out: Record<string, any[]> = {};
-    for (const t of TABLES) out[t] = await fetchAll(svc, t);
+  // テーブルが存在しない dev/prod 差異もあり得るので、存在しない場合は空で返す
+  while (true) {
+    const { data, error } = await admin.from(table).select('*').range(from, from + pageSize - 1);
+    if (error) {
+      // テーブルが無い等は “空” 扱い（バックアップを止めない）
+      if (looksLikeMissingTableOrColumn(error.message)) return [];
+      throw new Error(`${table}: ${error.message}`);
+    }
+    all.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
 
-    return new NextResponse(JSON.stringify(out, null, 2), {
+export async function GET() {
+  try {
+    const admin = getAdminClient();
+    if (!admin) {
+      return json(500, { ok: false, message: 'SUPABASE_SERVICE_ROLE_KEY が未設定です（Vercel環境変数を確認してください）。' });
+    }
+
+    // ✅ 誰が呼んだかは Clerk で判定（Supabase Auth cookie に依存しない）
+    const { userId } = await auth();
+    if (!userId) return json(401, { ok: false, message: 'ログインしてください（Clerk）。' });
+
+    const okAdmin = await isAdminByFallback(admin, userId);
+    if (!okAdmin) return json(403, { ok: false, message: '管理者権限がありません。' });
+
+    // ✅ ここはあなたの既存バックアップ対象に合わせて増減OK（UIには影響なし）
+    const tables = [
+      'players',
+      'players_private',
+      'tournaments',
+      'tournament_entries',
+      'matches',
+      'match_entries',
+      'league_blocks',
+      'league_block_members',
+      'final_brackets',
+      'final_matches',
+    ];
+
+    const backup: Record<string, any> = {
+      ok: true,
+      meta: {
+        created_at: new Date().toISOString(),
+        by_user_id: userId,
+        tables,
+      },
+      data: {},
+    };
+
+    for (const t of tables) {
+      (backup.data as any)[t] = await fetchAll(admin, t);
+    }
+
+    const filename = `backup-${nowStamp()}.json`;
+    return new NextResponse(JSON.stringify(backup, null, 2), {
       status: 200,
       headers: {
         'content-type': 'application/json; charset=utf-8',
+        'content-disposition': `attachment; filename="${filename}"`,
         'cache-control': 'no-store',
-        'content-disposition': `attachment; filename="${backupFilename()}"`,
       },
     });
   } catch (e: any) {
-    return jsonError(e?.message || 'backup failed', 500);
+    return json(500, { ok: false, message: e?.message ?? 'backup failed' });
   }
 }
