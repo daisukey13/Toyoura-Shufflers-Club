@@ -1,7 +1,14 @@
 // app/api/admin/backup/route.ts
 import { NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { auth } from '@clerk/nextjs/server';
+// Clerkは「使えたら使う」程度に残す（ミドルウェア未成立でも落ちない）
+let clerkAuth: null | (() => Promise<{ userId: string | null }>) = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  clerkAuth = require('@clerk/nextjs/server').auth;
+} catch {
+  clerkAuth = null;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,42 +37,13 @@ function getAdminClient(): SupabaseClient<any> | null {
   });
 }
 
-async function isAdminByFallback(admin: SupabaseClient<any>, userId: string): Promise<boolean> {
-  // 1) players_private.is_admin
-  try {
-    const { data, error } = await admin
-      .from('players_private')
-      .select('is_admin')
-      .eq('player_id', userId)
-      .maybeSingle();
-
-    if (!error) return !!(data as any)?.is_admin;
-    if (!looksLikeMissingTableOrColumn(error.message)) return false;
-  } catch {
-    // next
-  }
-
-  // 2) players.is_admin fallback
-  try {
-    const { data, error } = await admin.from('players').select('id,is_admin').eq('id', userId).maybeSingle();
-    if (error) return false;
-    return !!(data as any)?.is_admin;
-  } catch {
-    return false;
-  }
-}
-
 async function fetchAll(admin: SupabaseClient<any>, table: string) {
-  // 大きいテーブルでも落ちないようにページング
   const pageSize = 1000;
   let from = 0;
   const all: any[] = [];
-
-  // テーブルが存在しない dev/prod 差異もあり得るので、存在しない場合は空で返す
   while (true) {
     const { data, error } = await admin.from(table).select('*').range(from, from + pageSize - 1);
     if (error) {
-      // テーブルが無い等は “空” 扱い（バックアップを止めない）
       if (looksLikeMissingTableOrColumn(error.message)) return [];
       throw new Error(`${table}: ${error.message}`);
     }
@@ -76,21 +54,37 @@ async function fetchAll(admin: SupabaseClient<any>, table: string) {
   return all;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const admin = getAdminClient();
     if (!admin) {
       return json(500, { ok: false, message: 'SUPABASE_SERVICE_ROLE_KEY が未設定です（Vercel環境変数を確認してください）。' });
     }
 
-    // ✅ 誰が呼んだかは Clerk で判定（Supabase Auth cookie に依存しない）
-    const { userId } = await auth();
-    if (!userId) return json(401, { ok: false, message: 'ログインしてください（Clerk）。' });
+    // ✅ 追加：管理者トークンでも許可（Clerkログイン不要）
+    const urlObj = new URL(req.url);
+    const tokenFromQuery = urlObj.searchParams.get('token') || '';
+    const tokenFromHeader = req.headers.get('x-admin-token') || '';
+    const expected = process.env.ADMIN_API_KEY || '';
 
-    const okAdmin = await isAdminByFallback(admin, userId);
-    if (!okAdmin) return json(403, { ok: false, message: '管理者権限がありません。' });
+    const tokenOk = !!expected && (tokenFromQuery === expected || tokenFromHeader === expected);
 
-    // ✅ ここはあなたの既存バックアップ対象に合わせて増減OK（UIには影響なし）
+    // ✅ 使えれば Clerk も見る（ただし必須にしない）
+    let clerkUserId: string | null = null;
+    if (clerkAuth) {
+      try {
+        const a: any = await clerkAuth();
+        clerkUserId = (a?.userId as string) ?? null;
+      } catch {
+        clerkUserId = null;
+      }
+    }
+
+    // どっちもダメなら拒否
+    if (!tokenOk && !clerkUserId) {
+      return json(401, { ok: false, message: '管理者トークン（ADMIN_API_KEY）を付けるか、Clerkでログインしてください。' });
+    }
+
     const tables = [
       'players',
       'players_private',
@@ -108,7 +102,8 @@ export async function GET() {
       ok: true,
       meta: {
         created_at: new Date().toISOString(),
-        by_user_id: userId,
+        by_user_id: clerkUserId,
+        via: tokenOk ? 'admin_token' : 'clerk',
         tables,
       },
       data: {},
