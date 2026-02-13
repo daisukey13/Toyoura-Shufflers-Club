@@ -11,8 +11,15 @@ function carryCookies(from: NextResponse, to: NextResponse) {
 export default clerkMiddleware(async (auth, req: NextRequest) => {
   const { pathname, searchParams } = req.nextUrl;
 
-  // ✅ 重要：/api と /trpc は middleware 対象外
-  if (pathname.startsWith('/api') || pathname.startsWith('/trpc')) {
+  // ✅ 重要：/api と /trpc は基本除外だが、/api/admin は Clerk を効かせたいので例外扱い
+  const isApiAdmin = pathname.startsWith('/api/admin');
+  if ((pathname.startsWith('/api') && !isApiAdmin) || pathname.startsWith('/trpc')) {
+    return NextResponse.next();
+  }
+
+  // ✅ /api/admin/* は “素通し” する（redirect等は一切しない）
+  // ただし clerkMiddleware は通すので、Route Handler の auth() が正常に動くようになる
+  if (isApiAdmin) {
     return NextResponse.next();
   }
 
@@ -100,8 +107,11 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
   return res;
 });
 
-// ✅ 重要：_next/static / _next/image / 拡張子付きファイルは除外
-// ✅ さらに重要：api / trpc も matcher から除外
+// ✅ 重要：通常のページは従来通り api/trpc を除外
+// ✅ ただし /api/admin/* だけは middleware を通す（Clerk auth() を Route Handler で使うため）
 export const config = {
-  matcher: ['/((?!api(?:/|$)|trpc(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)'],
+  matcher: [
+    '/api/admin/:path*',
+    '/((?!api(?:/|$)|trpc(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)',
+  ],
 };
