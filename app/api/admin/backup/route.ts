@@ -1,14 +1,6 @@
 // app/api/admin/backup/route.ts
 import { NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-// Clerkは「使えたら使う」程度に残す（ミドルウェア未成立でも落ちない）
-let clerkAuth: null | (() => Promise<{ userId: string | null }>) = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  clerkAuth = require('@clerk/nextjs/server').auth;
-} catch {
-  clerkAuth = null;
-}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,16 +33,21 @@ async function fetchAll(admin: SupabaseClient<any>, table: string) {
   const pageSize = 1000;
   let from = 0;
   const all: any[] = [];
+
   while (true) {
     const { data, error } = await admin.from(table).select('*').range(from, from + pageSize - 1);
+
     if (error) {
+      // テーブル/列が無い環境差は “空” 扱い（バックアップ自体を止めない）
       if (looksLikeMissingTableOrColumn(error.message)) return [];
       throw new Error(`${table}: ${error.message}`);
     }
+
     all.push(...(data ?? []));
     if (!data || data.length < pageSize) break;
     from += pageSize;
   }
+
   return all;
 }
 
@@ -58,31 +55,24 @@ export async function GET(req: Request) {
   try {
     const admin = getAdminClient();
     if (!admin) {
-      return json(500, { ok: false, message: 'SUPABASE_SERVICE_ROLE_KEY が未設定です（Vercel環境変数を確認してください）。' });
+      return json(500, {
+        ok: false,
+        message: 'SUPABASE_SERVICE_ROLE_KEY が未設定です（Vercel環境変数を確認してください）。',
+      });
     }
 
-    // ✅ 追加：管理者トークンでも許可（Clerkログイン不要）
+    // ✅ ADMIN_API_KEY による保護（Clerkに依存しない）
+    const expected = process.env.ADMIN_API_KEY || '';
+    if (!expected) {
+      return json(500, { ok: false, message: 'ADMIN_API_KEY が未設定です（Vercel環境変数を確認してください）。' });
+    }
+
     const urlObj = new URL(req.url);
     const tokenFromQuery = urlObj.searchParams.get('token') || '';
     const tokenFromHeader = req.headers.get('x-admin-token') || '';
-    const expected = process.env.ADMIN_API_KEY || '';
 
-    const tokenOk = !!expected && (tokenFromQuery === expected || tokenFromHeader === expected);
-
-    // ✅ 使えれば Clerk も見る（ただし必須にしない）
-    let clerkUserId: string | null = null;
-    if (clerkAuth) {
-      try {
-        const a: any = await clerkAuth();
-        clerkUserId = (a?.userId as string) ?? null;
-      } catch {
-        clerkUserId = null;
-      }
-    }
-
-    // どっちもダメなら拒否
-    if (!tokenOk && !clerkUserId) {
-      return json(401, { ok: false, message: '管理者トークン（ADMIN_API_KEY）を付けるか、Clerkでログインしてください。' });
+    if (tokenFromQuery !== expected && tokenFromHeader !== expected) {
+      return json(401, { ok: false, message: '管理者トークンが必要です。' });
     }
 
     const tables = [
@@ -102,8 +92,7 @@ export async function GET(req: Request) {
       ok: true,
       meta: {
         created_at: new Date().toISOString(),
-        by_user_id: clerkUserId,
-        via: tokenOk ? 'admin_token' : 'clerk',
+        via: 'admin_token',
         tables,
       },
       data: {},
